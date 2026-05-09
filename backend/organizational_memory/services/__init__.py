@@ -4,6 +4,10 @@ from organizational_memory.services.chunking_utils import (
     chunk_by_header,
     chunk_by_paragraph,
 )
+from organizational_memory.services.pipeline_integration import (
+    run_rag_pipeline,
+    build_rag_fallback_extra,
+)
 from organizational_memory.services.priority_engine import (
     PriorityScore,
     PriorityScoreEngine,
@@ -22,4 +26,6 @@ __all__ = [
     "PriorityScore",
     "PriorityScoreEngine",
     "RetrievalResult",
+    "run_rag_pipeline",
+    "build_rag_fallback_extra",
 ]

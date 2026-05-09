@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/auth/', include('authentication.urls')),
     path('api/integrations/', include('integrations.urls')),
     path('api/billing/', include('billing.urls')),
+    path('api/memory/', include('organizational_memory.urls')),
 ]
 
 if settings.DEBUG or settings.ENABLE_OPENAPI_SCHEMA:

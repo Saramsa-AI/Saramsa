@@ -98,6 +98,18 @@ class DevOpsService:
 
             # Enhanced validation of work items
             work_items = self._validate_and_clean_work_items(work_items, process_template)
+
+            # --- RAG metadata injection (task 6.3) ---
+            # If the analysis data contains RAG-enriched candidates, merge their
+            # extra metadata (priority_score, why_now, etc.) into the work items.
+            rag_enriched = None
+            if isinstance(analysis_data, dict):
+                rag_enriched = (
+                    analysis_data.get("rag_enriched_candidates")
+                    or (analysis_data.get("analysisData") or {}).get("rag_enriched_candidates")
+                )
+            if rag_enriched:
+                work_items = self._apply_rag_metadata(work_items, rag_enriched)
             
             # Generate summary in code (not from LLM)
             summary = self._generate_summary(work_items)
@@ -758,6 +770,81 @@ class DevOpsService:
             f"{label} has {pct_str} negative sentiment across {comment_count} comments. "
             f"Investigate the top concerns and prioritize fixes based on customer impact.",
         )
+
+    def _apply_rag_metadata(
+        self,
+        work_items: List[Dict[str, Any]],
+        rag_enriched_candidates: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Merge RAG metadata from enriched candidates into work items.
+
+        Matches enriched candidates to work items by aspect_key (case-insensitive).
+        When a match is found, the work item's extra dict is updated with the
+        full RAG metadata (rag_enabled, priority_score, priority_tier, etc.).
+
+        When RAG is active and a match is found, the work item's priority field
+        is also updated to the RAG-derived priority_tier (task 6.3).
+
+        Args:
+            work_items:              List of work item dicts to enrich.
+            rag_enriched_candidates: List of RAG-enriched candidate dicts from
+                                     the pipeline_integration module.
+
+        Returns:
+            Updated list of work item dicts with RAG metadata merged in.
+        """
+        if not rag_enriched_candidates:
+            return work_items
+
+        # Build a lookup map: normalised aspect_key → enriched candidate
+        rag_map: Dict[str, Dict[str, Any]] = {}
+        for candidate in rag_enriched_candidates:
+            key = (candidate.get("aspect_key") or "").lower().strip()
+            if key:
+                rag_map[key] = candidate
+            # Also index by title for fuzzy matching
+            title_key = (candidate.get("title") or "").lower().strip()
+            if title_key and title_key not in rag_map:
+                rag_map[title_key] = candidate
+
+        updated_items = []
+        for item in work_items:
+            item_key = (item.get("aspect_key") or "").lower().strip()
+            item_title = (item.get("title") or "").lower().strip()
+
+            enriched = rag_map.get(item_key) or rag_map.get(item_title)
+
+            if enriched:
+                enriched_extra = enriched.get("extra") or {}
+                rag_enabled = enriched_extra.get("rag_enabled", False)
+
+                # Merge RAG extra into item extra
+                item_extra = item.get("extra") or {}
+                item_extra.update(enriched_extra)
+                item["extra"] = item_extra
+
+                # When RAG is active, update priority to RAG-derived tier (task 6.3)
+                if rag_enabled:
+                    priority_tier = enriched_extra.get("priority_tier")
+                    if priority_tier:
+                        item["priority"] = priority_tier
+
+                    # Update title/description from RAG-enriched version if available
+                    if enriched.get("title"):
+                        item["title"] = enriched["title"]
+                    if enriched.get("description"):
+                        item["description"] = enriched["description"]
+
+                logger.debug(
+                    "Applied RAG metadata to work item '%s': rag_enabled=%s",
+                    item.get("title", "<unknown>"),
+                    rag_enabled,
+                )
+
+            updated_items.append(item)
+
+        return updated_items
 
 
 # Global service instance

@@ -50,6 +50,8 @@ class TaskService:
         logger.info(f"📈 Background task started: feedback analysis for project {project_id}")
         logger.info(f"🔍 Processing method: {'Local ML Pipeline' if USE_LOCAL_PIPELINE else 'LLM-based chunking'}")
         logger.info(f"🔍 Input: {len(comments)} comments, user: {user_id_str}, project: {project_id}")
+        health = PipelineHealth(analysis_id=analysis_id, task_id=task_id)
+        cache = get_cache_service()
         max_comments = int(os.getenv("MAX_COMMENTS_PER_ANALYSIS", "50000"))
         if len(comments) > max_comments:
             health.mark_failed("max_comments_per_analysis exceeded")
@@ -57,8 +59,6 @@ class TaskService:
                 cache.set(f"analysis_failed:{analysis_id}", True, ttl=86400)
                 cache.set(f"pipeline_health:{task_id}", health.to_dict(), ttl=3600)
             raise ValueError(f"Too many comments for one analysis (max {max_comments})")
-        health = PipelineHealth(analysis_id=analysis_id, task_id=task_id)
-        cache = get_cache_service()
         if task_id:
             cache.set(f"pipeline_health:{task_id}", health.to_dict(), ttl=3600)
         
@@ -76,6 +76,31 @@ class TaskService:
                     comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects
                 )
                 health.end_stage("llm_chunking")
+
+            # --- RAG Pipeline Integration (task 6.1) ---
+            # Check project-level feature flag before invoking the RAG pipeline.
+            # tenant_id is always derived server-side from project.user_id.
+            try:
+                health.start_stage("rag_pipeline")
+                rag_result = self._run_rag_enrichment(
+                    result=result,
+                    user_id_str=user_id_str,
+                    project_id=project_id,
+                    analysis_id=analysis_id,
+                )
+                if rag_result:
+                    result.update(rag_result)
+                health.end_stage("rag_pipeline")
+            except Exception as rag_exc:
+                # RAG pipeline failure must never abort work item generation (task 6.2)
+                logger.error(
+                    "RAG pipeline failed for project %s (analysis %s): %s",
+                    project_id,
+                    analysis_id,
+                    rag_exc,
+                    exc_info=True,
+                )
+                health.end_stage("rag_pipeline")
 
             # Record narration cost if available
             try:
@@ -356,7 +381,257 @@ class TaskService:
             "status": "complete",
             "processing_method": "llm_chunking"
         }
-    
+
+    # ------------------------------------------------------------------
+    # RAG Pipeline Integration (task 6.1 / 6.2 / 6.3)
+    # ------------------------------------------------------------------
+
+    def _run_rag_enrichment(
+        self,
+        result: dict,
+        user_id_str: str,
+        project_id: str,
+        analysis_id: str,
+    ) -> dict:
+        """
+        Check the project-level ``rag_enabled`` feature flag and, when set,
+        run the RAG enrichment pipeline over the work item candidates produced
+        by the main analysis.
+
+        The RAG pipeline:
+          1. Retrieves organisational context (ContextRetrievalEngine)
+          2. Computes enrichment signals (IssueEnrichmentService.compute_signals)
+          3. Scores priority (PriorityScoreEngine.compute_score)
+          4. Calls LLM 2 + LLM 3 (IssueEnrichmentService.enrich_and_generate)
+
+        On Azure embedding failure the retrieval step retries with exponential
+        backoff (max 3 retries, base delay 2 s).  After all retries are
+        exhausted the pipeline falls back to non-RAG generation and sets
+        ``extra["rag_enabled"] = False`` on each candidate (task 6.2).
+
+        Args:
+            result:       The dict returned by _process_with_llm_chunking or
+                          _process_with_local_pipeline.
+            user_id_str:  User UUID string for billing attribution.
+            project_id:   Project ID string.
+            analysis_id:  Analysis ID string.
+
+        Returns:
+            A dict with ``rag_enriched_candidates`` key when RAG ran
+            successfully, or an empty dict when RAG is disabled / not
+            applicable.
+        """
+        from integrations.models import Project as ProjectModel
+        from organizational_memory.services.pipeline_integration import (
+            run_rag_pipeline,
+            build_rag_fallback_extra,
+        )
+
+        # --- Check feature flag ---
+        try:
+            project = ProjectModel.objects.filter(id=str(project_id)).first()
+        except Exception as exc:
+            logger.warning("Could not fetch project %s for RAG flag check: %s", project_id, exc)
+            return {}
+
+        if not project:
+            logger.debug("Project %s not found; skipping RAG pipeline", project_id)
+            return {}
+
+        rag_enabled = (project.metadata or {}).get("rag_enabled", False)
+        if not rag_enabled:
+            logger.debug("RAG pipeline disabled for project %s", project_id)
+            return {}
+
+        # tenant_id is always derived server-side from project.user_id (never from client)
+        tenant_id = str(project.user_id) if project.user_id else None
+        if not tenant_id:
+            logger.warning(
+                "Project %s has no user_id; cannot derive tenant_id for RAG pipeline",
+                project_id,
+            )
+            return {}
+
+        logger.info(
+            "🧠 RAG pipeline enabled for project %s (tenant=%s, analysis=%s)",
+            project_id,
+            tenant_id,
+            analysis_id,
+        )
+
+        # --- Build extracted issues from analysis result ---
+        # The analysis result contains features which map to work item candidates.
+        # We build a minimal extracted_issues list from the features in the result.
+        extracted_issues = self._build_extracted_issues_from_result(result)
+        if not extracted_issues:
+            logger.info(
+                "No extracted issues found in analysis result for project %s; "
+                "skipping RAG pipeline",
+                project_id,
+            )
+            return {}
+
+        # --- Run RAG pipeline with fallback on total failure (task 6.2) ---
+        try:
+            enriched_candidates = run_rag_pipeline(
+                extracted_issues=extracted_issues,
+                project_id=project_id,
+                user_id=user_id_str,
+                tenant_id=tenant_id,
+            )
+            logger.info(
+                "✅ RAG pipeline completed: %d candidates enriched for project %s",
+                len(enriched_candidates),
+                project_id,
+            )
+            # Persist the enriched candidates back to the analysis record so that
+            # DevOpsService.generate_work_items_from_analysis can pick them up.
+            self._save_rag_candidates_to_analysis(
+                insight_id=result.get("insight_id"),
+                enriched_candidates=enriched_candidates,
+            )
+            return {"rag_enriched_candidates": enriched_candidates}
+
+        except ConnectionError as exc:
+            # Azure embedding failure after all retries — fall back to non-RAG (task 6.2)
+            logger.error(
+                "RAG pipeline: Azure embedding failed after all retries for project %s: %s",
+                project_id,
+                exc,
+            )
+            fallback_candidates = [
+                {**issue, "extra": {**issue.get("extra", {}), **build_rag_fallback_extra("azure_embedding_failure")}}
+                for issue in extracted_issues
+            ]
+            self._save_rag_candidates_to_analysis(
+                insight_id=result.get("insight_id"),
+                enriched_candidates=fallback_candidates,
+            )
+            return {"rag_enriched_candidates": fallback_candidates}
+
+        except Exception as exc:
+            # Any other RAG failure — fall back to non-RAG (task 6.2)
+            logger.error(
+                "RAG pipeline failed for project %s: %s",
+                project_id,
+                exc,
+                exc_info=True,
+            )
+            fallback_candidates = [
+                {**issue, "extra": {**issue.get("extra", {}), **build_rag_fallback_extra(str(exc)[:200])}}
+                for issue in extracted_issues
+            ]
+            self._save_rag_candidates_to_analysis(
+                insight_id=result.get("insight_id"),
+                enriched_candidates=fallback_candidates,
+            )
+            return {"rag_enriched_candidates": fallback_candidates}
+
+    def _save_rag_candidates_to_analysis(
+        self,
+        insight_id: str,
+        enriched_candidates: list,
+    ) -> None:
+        """
+        Persist RAG-enriched candidates back to the analysis record in the database.
+
+        This allows DevOpsService.generate_work_items_from_analysis to pick up
+        the RAG metadata when work items are generated.
+
+        Args:
+            insight_id:          The insight ID of the analysis record.
+            enriched_candidates: List of enriched work item dicts with RAG metadata.
+        """
+        if not insight_id or not enriched_candidates:
+            return
+        try:
+            analysis_service = get_analysis_service()
+            saved_analysis = analysis_service.get_analysis_by_id_any(insight_id)
+            if not saved_analysis:
+                logger.warning(
+                    "Cannot save RAG candidates: analysis %s not found", insight_id
+                )
+                return
+
+            # Merge enriched candidates into the analysis data
+            analysis_data = saved_analysis.get("analysisData") or {}
+            analysis_data["rag_enriched_candidates"] = enriched_candidates
+            saved_analysis["analysisData"] = analysis_data
+            saved_analysis["rag_enriched_candidates"] = enriched_candidates
+
+            analysis_service.save_analysis_data(saved_analysis)
+            logger.info(
+                "Saved %d RAG-enriched candidates to analysis %s",
+                len(enriched_candidates),
+                insight_id,
+            )
+        except Exception as exc:
+            # Non-fatal: log and continue
+            logger.warning(
+                "Failed to save RAG candidates to analysis %s: %s",
+                insight_id,
+                exc,
+            )
+
+    def _build_extracted_issues_from_result(self, result: dict) -> list:
+        """
+        Build a list of extracted issue dicts from the analysis result.
+
+        The analysis result contains features (from sentiment analysis) which
+        correspond to work item candidates.  We convert each feature into a
+        minimal extracted issue dict that the RAG pipeline can process.
+
+        Fetches the full analysis data from the database using the insight_id
+        in the result, since the result dict is intentionally minimal to avoid
+        Celery serialization issues.
+
+        Args:
+            result: The dict returned by _process_with_llm_chunking or
+                    _process_with_local_pipeline.
+
+        Returns:
+            List of extracted issue dicts with at minimum: title, description,
+            aspect_key.
+        """
+        # First try to get features from the result directly (if present)
+        analysis_data = result.get("analysisData") or {}
+        features = analysis_data.get("features") or []
+
+        # If not in result, fetch from database using insight_id
+        if not features:
+            insight_id = result.get("insight_id")
+            if insight_id:
+                try:
+                    analysis_service = get_analysis_service()
+                    saved_analysis = analysis_service.get_analysis_by_id_any(insight_id)
+                    if saved_analysis:
+                        analysis_data = saved_analysis.get("analysisData") or {}
+                        features = analysis_data.get("features") or []
+                except Exception as exc:
+                    logger.warning(
+                        "Could not fetch analysis data for insight %s: %s",
+                        insight_id,
+                        exc,
+                    )
+
+        extracted_issues = []
+        for feature in features:
+            name = feature.get("name") or feature.get("feature") or ""
+            if not name:
+                continue
+            description = feature.get("description") or ""
+            aspect_key = feature.get("aspect_key") or name.lower().replace(" ", "_")
+            extracted_issues.append({
+                "title": name,
+                "description": description,
+                "aspect_key": aspect_key,
+                "feature_area": name,
+                "type": "task",
+                "priority": "medium",
+            })
+
+        return extracted_issues
+
     def _resolve_taxonomy(self, comments, project_id, suggested_aspects=None):
         """
         Resolve project-owned taxonomy (Phase-1).
