@@ -8,6 +8,7 @@ from .views import (
     get_integration_accounts,
     create_azure_integration,
     create_jira_integration,
+    create_asana_integration,
     test_integration_connection,
     delete_integration_account,
     # Project views
@@ -21,8 +22,11 @@ from .views import (
     # External views
     get_azure_projects,
     get_jira_projects,
+    get_asana_workspaces,
+    get_asana_projects,
     get_dashboard_azure_projects,
     get_dashboard_jira_projects,
+    get_dashboard_asana_projects,
     get_external_projects,
     check_external_project,
     # Slack views
@@ -53,10 +57,13 @@ urlpatterns = [
     # External provider project fetching (for configuration) - most specific first
     path('azure/projects/', get_azure_projects, name='get_azure_projects'),
     path('jira/projects/', get_jira_projects, name='get_jira_projects'),
-    
+    path('asana/workspaces/', get_asana_workspaces, name='get_asana_workspaces'),
+    path('asana/projects/', get_asana_projects, name='get_asana_projects'),
+
     # Dashboard endpoints (fetch imported projects from database)
     path('dashboard/azure/projects/', get_dashboard_azure_projects, name='get_dashboard_azure_projects'),
     path('dashboard/jira/projects/', get_dashboard_jira_projects, name='get_dashboard_jira_projects'),
+    path('dashboard/asana/projects/', get_dashboard_asana_projects, name='get_dashboard_asana_projects'),
     
     # External project utilities
     path('external/projects/check/', check_external_project, name='check_external_project'),
@@ -75,6 +82,7 @@ urlpatterns = [
     # Integration account management - SPECIFIC ROUTES MUST COME BEFORE PARAMETERIZED ROUTES
     path('azure/', create_azure_integration, name='create_azure_integration'),
     path('jira/', create_jira_integration, name='create_jira_integration'),
+    path('asana/', create_asana_integration, name='create_asana_integration'),
     
     # PARAMETERIZED ROUTES MUST COME LAST
     path('<str:account_id>/test/', test_integration_connection, name='test_integration_connection'),

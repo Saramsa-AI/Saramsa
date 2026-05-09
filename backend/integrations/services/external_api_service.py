@@ -7,10 +7,14 @@ platforms like Azure DevOps and Jira APIs, including connection testing.
 
 from typing import Dict, List, Optional, Any
 import requests
+import httpx
 import base64
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+ASANA_API_BASE = "https://app.asana.com/api/1.0"
 
 
 class ExternalApiService:
@@ -270,6 +274,138 @@ class ExternalApiService:
         except Exception as e:
             logger.error(f"Error fetching Jira projects from API: {e}")
             raise Exception(f"Failed to fetch Jira projects: {str(e)}")
+
+
+    # ------------------------------------------------------------------
+    # Asana (PAT-based, mirrors Jira/Azure)
+    # ------------------------------------------------------------------
+
+    def _asana_headers(self, pat_token: str) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {pat_token}",
+            "Accept": "application/json",
+        }
+
+    def test_asana_connection(self, pat_token: str) -> Dict[str, Any]:
+        """Test Asana connection by hitting GET /users/me."""
+        try:
+            if not pat_token:
+                return {"success": False, "error": "PAT token is required"}
+
+            response = httpx.get(
+                f"{ASANA_API_BASE}/users/me",
+                headers=self._asana_headers(pat_token),
+                timeout=15,
+            )
+
+            if response.status_code == 200:
+                user = response.json().get("data", {}) or {}
+                return {
+                    "success": True,
+                    "message": "Connection successful",
+                    "user": user.get("name", ""),
+                    "user_gid": user.get("gid", ""),
+                    "email": user.get("email", ""),
+                }
+            if response.status_code == 401:
+                return {"success": False, "error": "Invalid Asana PAT or insufficient permissions"}
+            if response.status_code == 402:
+                return {
+                    "success": False,
+                    "error": "Asana workspace tier does not allow this operation. Upgrade required.",
+                }
+            return {
+                "success": False,
+                "error": f"Asana connection failed with status {response.status_code}",
+            }
+
+        except httpx.TimeoutException:
+            return {"success": False, "error": "Connection timeout - check your network"}
+        except httpx.RequestError as exc:
+            return {"success": False, "error": f"Network error: {exc}"}
+        except Exception as exc:
+            logger.error(f"Error testing Asana connection: {exc}")
+            return {"success": False, "error": "An unexpected error occurred"}
+
+    def fetch_asana_workspaces(self, pat_token: str) -> List[Dict[str, Any]]:
+        """List workspaces visible to the PAT user."""
+        if not pat_token:
+            raise ValueError("PAT token is required")
+
+        items: List[Dict[str, Any]] = []
+        offset: Optional[str] = None
+        while True:
+            params: Dict[str, Any] = {"limit": 100, "opt_fields": "name,resource_type,is_organization"}
+            if offset:
+                params["offset"] = offset
+
+            response = httpx.get(
+                f"{ASANA_API_BASE}/workspaces",
+                headers=self._asana_headers(pat_token),
+                params=params,
+                timeout=30,
+            )
+            if response.status_code != 200:
+                raise Exception(
+                    f"Asana API returned status {response.status_code}: {response.text}"
+                )
+            body = response.json() or {}
+            for ws in body.get("data", []) or []:
+                items.append({
+                    "gid": ws.get("gid"),
+                    "name": ws.get("name", ""),
+                    "is_organization": ws.get("is_organization", False),
+                })
+            next_page = body.get("next_page") or {}
+            offset = next_page.get("offset") if next_page else None
+            if not offset:
+                break
+
+        return items
+
+    def fetch_asana_projects(self, pat_token: str, workspace_gid: str) -> List[Dict[str, Any]]:
+        """List projects in a workspace, paginated."""
+        if not pat_token or not workspace_gid:
+            raise ValueError("PAT token and workspace GID are required")
+
+        items: List[Dict[str, Any]] = []
+        offset: Optional[str] = None
+        while True:
+            params: Dict[str, Any] = {
+                "workspace": workspace_gid,
+                "limit": 100,
+                "opt_fields": "name,resource_type,archived,team.name",
+                "archived": "false",
+            }
+            if offset:
+                params["offset"] = offset
+
+            response = httpx.get(
+                f"{ASANA_API_BASE}/projects",
+                headers=self._asana_headers(pat_token),
+                params=params,
+                timeout=30,
+            )
+            if response.status_code != 200:
+                raise Exception(
+                    f"Asana API returned status {response.status_code}: {response.text}"
+                )
+            body = response.json() or {}
+            for p in body.get("data", []) or []:
+                items.append({
+                    "gid": p.get("gid"),
+                    "id": p.get("gid"),
+                    "name": p.get("name", ""),
+                    "archived": p.get("archived", False),
+                    "team": (p.get("team") or {}).get("name", ""),
+                    "url": f"https://app.asana.com/0/{p.get('gid')}/list",
+                })
+            next_page = body.get("next_page") or {}
+            offset = next_page.get("offset") if next_page else None
+            if not offset:
+                break
+
+        return items
 
 
 # Global service instance

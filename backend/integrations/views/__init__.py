@@ -11,6 +11,7 @@ from .integration_views import (
     get_integration_accounts,
     create_azure_integration,
     create_jira_integration,
+    create_asana_integration,
     test_integration_connection,
     delete_integration_account,
 )
@@ -26,8 +27,11 @@ from .project_views import (
 from .external_views import (
     get_azure_projects,
     get_jira_projects,
+    get_asana_workspaces,
+    get_asana_projects,
     get_dashboard_azure_projects,
     get_dashboard_jira_projects,
+    get_dashboard_asana_projects,
     get_external_projects,
     check_external_project,
 )
@@ -49,6 +53,7 @@ __all__ = [
     'get_integration_accounts',
     'create_azure_integration',
     'create_jira_integration',
+    'create_asana_integration',
     'test_integration_connection',
     'delete_integration_account',
     # Project views
@@ -62,8 +67,11 @@ __all__ = [
     # External views
     'get_azure_projects',
     'get_jira_projects',
+    'get_asana_workspaces',
+    'get_asana_projects',
     'get_dashboard_azure_projects',
     'get_dashboard_jira_projects',
+    'get_dashboard_asana_projects',
     'get_external_projects',
     'check_external_project',
     # Slack views

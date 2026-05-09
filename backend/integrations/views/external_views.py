@@ -103,6 +103,81 @@ def get_jira_projects(request):
     )
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@handle_service_errors
+def get_asana_workspaces(request):
+    """List Asana workspaces visible to the supplied PAT (for config page)."""
+    pat_token = request.data.get('pat_token')
+    if not pat_token:
+        return StandardResponse.validation_error(
+            detail='PAT token is required',
+            errors=[{"field": "pat_token", "message": "This field is required."}],
+            instance=request.path,
+        )
+
+    integration_service = get_integration_service()
+    workspaces = integration_service.external_api_service.fetch_asana_workspaces(pat_token)
+
+    return StandardResponse.success(
+        data={'workspaces': workspaces},
+        message='Asana workspaces retrieved successfully',
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@handle_service_errors
+def get_asana_projects(request):
+    """List Asana projects in a workspace (for config page)."""
+    pat_token = request.data.get('pat_token')
+    workspace_gid = request.data.get('workspace_gid')
+    organization_id = _get_active_organization_id(request)
+
+    if not pat_token or not workspace_gid:
+        return StandardResponse.validation_error(
+            detail='PAT token and workspace GID are required',
+            errors=[
+                {"field": "pat_token", "message": "This field is required."} if not pat_token else None,
+                {"field": "workspace_gid", "message": "This field is required."} if not workspace_gid else None,
+            ],
+            instance=request.path,
+        )
+
+    integration_service = get_integration_service()
+    projects = integration_service.get_external_projects(
+        request.user.id,
+        "asana",
+        organization_id=organization_id,
+        pat_token=pat_token,
+        workspace_gid=workspace_gid,
+    )
+
+    return StandardResponse.success(
+        data={'projects': projects, 'workspace_gid': workspace_gid},
+        message='Asana projects retrieved successfully',
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@handle_service_errors
+def get_dashboard_asana_projects(request):
+    """Get user's imported Asana projects from database (for dashboard)."""
+    user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
+
+    project_service = get_project_service()
+    asana_projects = project_service.get_projects_by_provider(
+        str(user_id), 'asana', organization_id=organization_id,
+    )
+
+    return StandardResponse.success(
+        data={'projects': asana_projects},
+        message='Asana projects retrieved from database',
+    )
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 @handle_service_errors

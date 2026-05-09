@@ -176,6 +176,49 @@ def create_jira_integration(request):
         )
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@handle_service_errors
+def create_asana_integration(request):
+    """Create Asana integration account via PAT."""
+    user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
+    data = request.data
+
+    pat_token = data.get('pat_token', '').strip()
+    workspace_gid = data.get('workspace_gid', '').strip()
+    workspace_name = data.get('workspace_name', '').strip()
+
+    if not organization_id or not pat_token or not workspace_gid:
+        return StandardResponse.validation_error(
+            detail='Active organization, PAT token, and workspace GID are required',
+            errors=[
+                {"field": "organization_id", "message": "Active organization is required."} if not organization_id else None,
+                {"field": "pat_token", "message": "This field is required."} if not pat_token else None,
+                {"field": "workspace_gid", "message": "This field is required."} if not workspace_gid else None,
+            ],
+            instance=request.path,
+        )
+
+    try:
+        integration_service = get_integration_service()
+        account = integration_service.create_asana_integration(
+            user_id, organization_id, pat_token, workspace_gid, workspace_name,
+        )
+        return StandardResponse.created(
+            data={'account': account},
+            message='Asana integration configured successfully',
+        )
+    except ValueError as e:
+        return StandardResponse.error(
+            title="Connection test failed",
+            detail=str(e),
+            status_code=400,
+            error_type="connection-test-failed",
+            instance=request.path,
+        )
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 @handle_service_errors
