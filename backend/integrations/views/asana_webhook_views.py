@@ -81,6 +81,11 @@ def asana_webhook_receiver(request, project_id: str) -> HttpResponse:
         if request.body:
             logger.warning("Asana webhook handshake carried unexpected body for project=%s", project_id)
             return JsonResponse({"detail": "Invalid handshake payload"}, status=400)
+        if target.get("webhook_secret"):
+            logger.warning(
+                "Asana webhook handshake replay attempt for project=%s", project_id
+            )
+            return JsonResponse({"detail": "Handshake already completed"}, status=409)
         _persist_webhook_secret(integration, project_id, handshake_secret)
         response = HttpResponse(status=200)
         response.headers["X-Hook-Secret"] = handshake_secret

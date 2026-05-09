@@ -124,6 +124,25 @@ class AsanaWebhookHandshakeTest(AsanaWebhookTestBase):
         )
         self.assertEqual(response.status_code, 404)
 
+    def test_second_handshake_after_secret_persisted_returns_409(self):
+        """Once a webhook_secret is paired, replay handshakes must not overwrite it."""
+        config = dict(self.integration.config)
+        config["asanaProjectTargets"]["proj1"]["webhook_secret"] = "original-secret"
+        self.integration.config = config
+        self.integration.save()
+
+        response = self.client.post(
+            "/api/integrations/asana/webhook/proj1/?token=sub-token",
+            data="",
+            content_type="application/json",
+            HTTP_X_HOOK_SECRET="attacker-secret",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.integration.refresh_from_db()
+        target = self.integration.config["asanaProjectTargets"]["proj1"]
+        self.assertEqual(target["webhook_secret"], "original-secret")
+
 
 class AsanaWebhookDeliveryTest(AsanaWebhookTestBase):
     def setUp(self) -> None:

@@ -6,16 +6,13 @@ Bi-directional webhook handlers land in C3 (separate file).
 import logging
 
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from authentication.permissions import IsProjectAdmin
-from apis.infrastructure.storage_service import storage_service
-from feedback_analysis.models import Insight
+from authentication.permissions import IsProjectAdmin, IsProjectEditor
 from integrations.models import Project
 
 from apis.core.error_handlers import handle_service_errors
 from apis.core.response import StandardResponse
 
-from ..services import get_asana_service, get_organization_service
+from ..services import get_asana_service
 
 logger = logging.getLogger(__name__)
 
@@ -26,41 +23,6 @@ def _get_project_organization_id(project_id: str) -> str | None:
         return None
     organization_id = project.get("organization_id")
     return str(organization_id) if organization_id else None
-
-
-def _user_can_edit_project(user, project_id: str) -> bool:
-    if not user or not getattr(user, "is_authenticated", False):
-        return False
-
-    profile = getattr(user, "profile", {}) or {}
-    if isinstance(profile, dict) and profile.get("role") == "admin":
-        return True
-
-    user_id = getattr(user, "id", None)
-    if not user_id or not project_id:
-        return False
-
-    project = storage_service.get_project_by_id_any(project_id)
-    if not isinstance(project, dict):
-        return False
-
-    owner_id = project.get("owner_user_id") or project.get("userId")
-    if owner_id and str(owner_id) == str(user_id):
-        return True
-
-    organization_id = project.get("organizationId")
-    membership = None
-    if organization_id:
-        membership = get_organization_service().get_membership(str(organization_id), str(user_id))
-        if membership and membership.get("role") in ("owner", "admin"):
-            return True
-
-    if not membership:
-        return False
-
-    role_doc = storage_service.get_project_role_for_user(project_id, str(user_id))
-    role = role_doc.get("role") if isinstance(role_doc, dict) else role_doc
-    return role in ("editor", "admin", "owner")
 
 
 @api_view(["POST"])
@@ -113,7 +75,7 @@ def configure_asana_target(request, project_id):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsProjectEditor])
 @handle_service_errors
 def push_insight_to_asana(request, insight_id):
     """Manually trigger a push of one Insight to Asana.
@@ -121,20 +83,13 @@ def push_insight_to_asana(request, insight_id):
     Auto-trigger from feedback processing is intentionally deferred —
     this endpoint exists so customers can sync individual insights on
     demand and the C2 work is independently exercisable.
+
+    Permission: IsProjectEditor resolves the project from `insight_id`
+    via authentication.permissions._get_project_id_from_request, then
+    enforces editor-or-higher membership. Missing insights surface as
+    403 (the project lookup returns None) rather than 404 — acceptable
+    since the ID space is opaque.
     """
-    insight = Insight.objects.select_related("project").filter(id=insight_id).first()
-    if not insight or not insight.project_id:
-        return StandardResponse.not_found(
-            detail=f"Insight {insight_id} not found",
-            instance=request.path,
-        )
-
-    if not _user_can_edit_project(request.user, str(insight.project_id)):
-        return StandardResponse.forbidden(
-            detail="You do not have permission to push insights for this project.",
-            instance=request.path,
-        )
-
     try:
         result = get_asana_service().push_insight(insight_id=insight_id)
         return StandardResponse.success(

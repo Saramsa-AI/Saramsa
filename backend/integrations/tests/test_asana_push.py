@@ -20,7 +20,7 @@ from integrations.models import (
 )
 from integrations.services.asana_service import AsanaService
 from integrations.services.encryption_service import get_encryption_service
-from integrations.views.asana_views import configure_asana_target
+from integrations.views.asana_views import configure_asana_target, push_insight_to_asana
 
 
 def _resp(status: int, body: dict | None = None) -> MagicMock:
@@ -108,6 +108,25 @@ class AsanaConfigureTargetTest(AsanaPushTestBase):
             saramsa_project_id="proj1",
             asana_project_gid="ap-1",
         )
+
+    def test_push_view_grants_editor_via_insight_id_resolution(self):
+        """Editor on the insight's project must reach the service even
+        though the URL only carries `insight_id` (not `project_id`).
+        Regression test for B-1: IsProjectEditor's
+        _get_project_id_from_request must follow `insight_id`."""
+        factory = APIRequestFactory()
+        request = factory.post("/api/integrations/asana/insights/ins-1/push/")
+        force_authenticate(request, user=self.user)
+
+        with patch("integrations.views.asana_views.get_asana_service") as svc_mock:
+            svc_mock.return_value.push_insight.return_value = {
+                "asana_task_gid": "task-1",
+                "action": "created",
+            }
+            response = push_insight_to_asana(request, insight_id="ins-1")
+
+        self.assertEqual(response.status_code, 200)
+        svc_mock.return_value.push_insight.assert_called_once_with(insight_id="ins-1")
 
     @patch("integrations.services.asana_service.httpx.request")
     def test_configure_target_creates_custom_field_if_missing(self, mock_request):
