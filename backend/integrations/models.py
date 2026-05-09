@@ -35,7 +35,7 @@ class Organization(TimestampedModel):
 
 
 class OrganizationMembership(TimestampedModel):
-    id = models.CharField(max_length=128, primary_key=True)
+    id = models.CharField(max_length=255, primary_key=True)
     organization = models.ForeignKey(
         Organization,
         on_delete=models.CASCADE,
@@ -113,7 +113,7 @@ class OrganizationInvite(TimestampedModel):
 
 
 class PromptOverride(TimestampedModel):
-    id = models.CharField(max_length=128, primary_key=True)
+    id = models.CharField(max_length=255, primary_key=True)
     scope = models.CharField(max_length=32, db_index=True)
     prompt_type = models.CharField(max_length=64, db_index=True)
     organization = models.ForeignKey(
@@ -350,7 +350,7 @@ class AsanaTaskMapping(TimestampedModel):
         related_name="asana_task_mappings",
         db_index=True,
     )
-    asana_task_gid = models.CharField(max_length=64, unique=True, db_index=True)
+    asana_task_gid = models.CharField(max_length=64, db_index=True)
     asana_project_gid = models.CharField(max_length=64, db_index=True)
     last_known_state_hash = models.CharField(max_length=64, blank=True, default="")
     last_synced_at = models.DateTimeField(null=True, blank=True, db_index=True)
@@ -359,6 +359,10 @@ class AsanaTaskMapping(TimestampedModel):
         db_table = "asana_task_mappings"
         constraints = [
             models.UniqueConstraint(fields=["insight"], name="uq_asana_task_mapping_insight"),
+            models.UniqueConstraint(
+                fields=["organization", "asana_task_gid"],
+                name="uq_asana_task_mapping_org_gid",
+            ),
         ]
         indexes = [
             models.Index(fields=["organization", "asana_project_gid"]),

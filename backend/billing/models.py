@@ -15,8 +15,8 @@ class TimestampedModel(models.Model):
 class BillingProfile(TimestampedModel):
     user_id = models.CharField(max_length=64, db_index=True)
     organization_id = models.CharField(max_length=64, db_index=True, blank=True, default="")
-    stripe_customer_id = models.CharField(max_length=128, unique=True, blank=True, default="")
-    stripe_subscription_id = models.CharField(max_length=128, unique=True, blank=True, default="")
+    stripe_customer_id = models.CharField(max_length=128, blank=True, default="")
+    stripe_subscription_id = models.CharField(max_length=128, blank=True, default="")
     stripe_price_id = models.CharField(max_length=128, blank=True, default="")
     subscription_status = models.CharField(max_length=32, db_index=True, default="inactive")
     current_period_start = models.DateTimeField(null=True, blank=True)
@@ -36,6 +36,19 @@ class BillingProfile(TimestampedModel):
                 fields=["organization_id"],
                 name="uq_billing_profile_org",
                 condition=models.Q(organization_id__gt=""),
+            ),
+            # Partial uniques: empty default="" must not collide across rows
+            # that haven't been linked to Stripe yet, but real Stripe IDs
+            # must remain globally unique.
+            models.UniqueConstraint(
+                fields=["stripe_customer_id"],
+                name="uq_billing_profile_stripe_customer",
+                condition=models.Q(stripe_customer_id__gt=""),
+            ),
+            models.UniqueConstraint(
+                fields=["stripe_subscription_id"],
+                name="uq_billing_profile_stripe_subscription",
+                condition=models.Q(stripe_subscription_id__gt=""),
             ),
         ]
         indexes = [
