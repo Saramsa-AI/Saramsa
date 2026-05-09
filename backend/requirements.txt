@@ -144,3 +144,4 @@ websockets==16.0
 wrapt==1.17.2
 zipp==3.23.0
 bcrypt==4.2.1
+pgvector==0.3.6

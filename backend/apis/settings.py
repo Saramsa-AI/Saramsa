@@ -284,6 +284,7 @@ INSTALLED_APPS = [
     'authentication',
     'integrations',
     'billing',
+    'organizational_memory',
 ]
 
 # Custom authentication backend for PostgreSQL
