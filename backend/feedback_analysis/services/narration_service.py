@@ -85,9 +85,18 @@ class NarrationService:
         except Exception as e:
             logger.warning(f"Narration: could not parse raw GPT response for debug: {e}")
 
+        # Aspect keys can come from either feature analytics or work-item
+        # candidates (e.g. __taxonomy__, __overall__ sentinels). Narration
+        # prompt rule 10 permits any aspect_key "present in the input", so the
+        # validator must allow both sources.
+        allowed_aspect_keys = [
+            f.get("aspect_key") for f in trimmed.get("features", [])
+        ] + [
+            c.get("aspect_key") for c in trimmed.get("work_item_candidates", [])
+        ]
         parsed, errors = validate_narration_output(
             raw,
-            allowed_aspect_keys=[f.get("aspect_key") for f in trimmed.get("features", [])],
+            allowed_aspect_keys=allowed_aspect_keys,
             allowed_candidate_ids=expected_ids,
         )
         if parsed is None:
