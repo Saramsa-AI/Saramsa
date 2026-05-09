@@ -8,15 +8,26 @@ SLA without doing Asana API calls inline.
 import logging
 from typing import Any, Dict
 
+import httpx
 from celery import shared_task
 
 logger = logging.getLogger(__name__)
 
 
+# Retry only on transient HTTP failures from Asana. Permanent ValueErrors
+# from missing project/integration/token would otherwise burn 5 retries
+# with backoff for events that will never succeed.
+_RETRYABLE_EXCEPTIONS = (
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+)
+
+
 @shared_task(
     name="integrations.apply_asana_event",
     bind=True,
-    autoretry_for=(Exception,),
+    autoretry_for=_RETRYABLE_EXCEPTIONS,
     retry_backoff=True,
     retry_backoff_max=300,
     retry_jitter=True,
@@ -27,9 +38,10 @@ def apply_asana_event_task(self, saramsa_project_id: str, event: Dict[str, Any])
 
     Asana does NOT redeliver events on receiver-side failure beyond the
     initial 10s SLA window — once we ack the receiver, the event is
-    ours to retry. So the task wraps every exception in Celery's
-    autoretry with exponential backoff (capped at 5 minutes), retrying
-    up to 5 times before giving up.
+    ours to retry. So we autoretry only the network-shaped failures
+    where retrying might actually help (timeouts, connection drops,
+    protocol errors). ValueError, AttributeError, and any other
+    permanent failure surfaces immediately so the worker can move on.
     """
     from .services.asana_service import get_asana_service
 

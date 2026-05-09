@@ -29,11 +29,15 @@ def _get_active_organization_id(request):
 def _require_org_admin(request, organization_id):
     """Reject non-admin users. Returns a forbidden response, or None if allowed.
 
-    organization_id=None is a no-op so the existing validation paths can return
-    422 with the usual missing-org messaging.
+    organization_id=None is treated as a hard reject: these endpoints
+    forward customer-supplied PATs to third parties, so a caller with
+    no active org context has no business hitting them.
     """
     if not organization_id:
-        return None
+        return StandardResponse.forbidden(
+            detail='An active workspace is required to call this endpoint.',
+            instance=request.path,
+        )
     membership = get_organization_service().get_membership(organization_id, str(request.user.id))
     if not membership or membership.get('role') not in ('owner', 'admin'):
         return StandardResponse.forbidden(
