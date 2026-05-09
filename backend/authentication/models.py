@@ -13,7 +13,6 @@ class TimestampedModel(models.Model):
 
 class UserAccount(TimestampedModel):
     id = models.CharField(max_length=64, primary_key=True)
-    username = models.CharField(max_length=150, unique=True, db_index=True)
     email = models.EmailField(unique=True, db_index=True)
     password = models.TextField()
 
