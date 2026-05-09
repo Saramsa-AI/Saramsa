@@ -3,9 +3,8 @@ name: AI Auto-Fix (PR on failure)
 on:
   workflow_run:
     workflows:
-      - Saramsa-backend (master)
-      - Saramsa-frontend (master)
-      - Saramsa-celery-gpu (master)
+      - Saramsa-api (master)
+      - Deploy Celery Worker (master)
       - API Registry Tests
     types:
       - completed
