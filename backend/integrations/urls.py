@@ -39,6 +39,9 @@ from .views import (
     list_feedback_sources,
     feedback_source_detail,
     feedback_source_sync_now,
+    # Asana push views
+    configure_asana_target,
+    push_insight_to_asana,
 )
 
 urlpatterns = [
@@ -59,6 +62,8 @@ urlpatterns = [
     path('jira/projects/', get_jira_projects, name='get_jira_projects'),
     path('asana/workspaces/', get_asana_workspaces, name='get_asana_workspaces'),
     path('asana/projects/', get_asana_projects, name='get_asana_projects'),
+    path('asana/projects/<str:project_id>/target/', configure_asana_target, name='configure_asana_target'),
+    path('asana/insights/<str:insight_id>/push/', push_insight_to_asana, name='push_insight_to_asana'),
 
     # Dashboard endpoints (fetch imported projects from database)
     path('dashboard/azure/projects/', get_dashboard_azure_projects, name='get_dashboard_azure_projects'),

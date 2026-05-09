@@ -47,6 +47,10 @@ from .source_views import (
     feedback_source_detail,
     feedback_source_sync_now,
 )
+from .asana_views import (
+    configure_asana_target,
+    push_insight_to_asana,
+)
 
 __all__ = [
     # Integration views
@@ -84,4 +88,7 @@ __all__ = [
     'list_feedback_sources',
     'feedback_source_detail',
     'feedback_source_sync_now',
+    # Asana views
+    'configure_asana_target',
+    'push_insight_to_asana',
 ]

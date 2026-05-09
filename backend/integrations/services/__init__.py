@@ -14,6 +14,7 @@ from .external_api_service import ExternalApiService, get_external_api_service
 from .encryption_service import EncryptionService, get_encryption_service
 from .slack_service import SlackService, get_slack_service
 from .source_service import SourceService, get_source_service
+from .asana_service import AsanaService, get_asana_service
 
 __all__ = [
     'IntegrationService',
@@ -34,4 +35,6 @@ __all__ = [
     'get_slack_service',
     'SourceService',
     'get_source_service',
+    'AsanaService',
+    'get_asana_service',
 ]

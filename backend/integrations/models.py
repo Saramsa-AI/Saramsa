@@ -320,6 +320,52 @@ class SlackFeedbackItem(TimestampedModel):
         ]
 
 
+class AsanaTaskMapping(TimestampedModel):
+    """Links a Saramsa Insight to its Asana task counterpart.
+
+    Uniqueness on `insight` enforces one task per insight; uniqueness on
+    `asana_task_gid` prevents the same Asana task being claimed by two
+    different insights. The `last_known_state_hash` enables inbound
+    reconciliation in C3 (webhook handlers compute current hash and skip
+    no-op updates)."""
+
+    id = models.CharField(max_length=64, primary_key=True)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="asana_task_mappings",
+        db_column="organization_id",
+        null=True,
+        blank=True,
+    )
+    insight = models.ForeignKey(
+        "feedback_analysis.Insight",
+        on_delete=models.CASCADE,
+        related_name="asana_task_mappings",
+        db_index=True,
+    )
+    integration = models.ForeignKey(
+        IntegrationAccount,
+        on_delete=models.CASCADE,
+        related_name="asana_task_mappings",
+        db_index=True,
+    )
+    asana_task_gid = models.CharField(max_length=64, unique=True, db_index=True)
+    asana_project_gid = models.CharField(max_length=64, db_index=True)
+    last_known_state_hash = models.CharField(max_length=64, blank=True, default="")
+    last_synced_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        db_table = "asana_task_mappings"
+        constraints = [
+            models.UniqueConstraint(fields=["insight"], name="uq_asana_task_mapping_insight"),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "asana_project_gid"]),
+            models.Index(fields=["integration", "last_synced_at"]),
+        ]
+
+
 class ProjectRole(TimestampedModel):
     id = models.CharField(max_length=128, primary_key=True)
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="project_roles")

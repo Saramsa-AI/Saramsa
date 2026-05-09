@@ -1,0 +1,447 @@
+"""Asana integration service: target configuration and Insight push.
+
+Handles:
+- Configure-target: ensures the saramsa_insight_id custom field exists on
+  a customer's Asana project, caches the field GIDs in the integration's
+  config, and persists the saramsa-project ↔ asana-project link.
+- Push insight: idempotent create-or-update of an Asana task per Saramsa
+  Insight. Idempotency is keyed on the saramsa_insight_id custom field
+  value (Asana has no native idempotency-key header for PAT clients).
+
+Outbound calls go through httpx with simple 429 / 5xx retry. We don't
+wrap a full client class yet; do that in C3 when webhook reconciliation
+adds the next round of HTTP needs.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import time
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+import httpx
+from django.utils import timezone as dj_timezone
+
+from feedback_analysis.models import Insight
+from ..models import AsanaTaskMapping, IntegrationAccount, Project
+from ..repositories import IntegrationsRepository
+from .encryption_service import get_encryption_service
+
+logger = logging.getLogger(__name__)
+
+ASANA_API_BASE = "https://app.asana.com/api/1.0"
+SARAMSA_INSIGHT_FIELD_NAME = "saramsa_insight_id"
+HASHED_FIELDS_FOR_RECONCILIATION = ("name", "notes", "completed", "custom_fields")
+
+
+class AsanaService:
+    """Asana push pipeline. Inbound webhook handling lands in C3."""
+
+    def __init__(self) -> None:
+        self.integrations_repo = IntegrationsRepository()
+        self.encryption = get_encryption_service()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def configure_target(
+        self,
+        *,
+        user_id: str,
+        organization_id: str,
+        saramsa_project_id: str,
+        asana_project_gid: str,
+    ) -> Dict[str, Any]:
+        """Bind a Saramsa project to an Asana project, ensuring the
+        saramsa_insight_id custom field exists and is cached."""
+        integration_row, pat_token = self._load_integration(organization_id)
+
+        custom_field_gids = self._ensure_custom_fields(
+            pat_token=pat_token,
+            workspace_gid=self._workspace_gid(integration_row),
+            asana_project_gid=asana_project_gid,
+        )
+
+        config = dict(integration_row.config or {})
+        targets = dict(config.get("asanaProjectTargets") or {})
+        targets[saramsa_project_id] = {
+            "asana_project_gid": asana_project_gid,
+            "custom_field_gids": custom_field_gids,
+            "configured_at": datetime.now(timezone.utc).isoformat(),
+        }
+        config["asanaProjectTargets"] = targets
+        integration_row.config = config
+        integration_row.updated_at = dj_timezone.now()
+        integration_row.save(update_fields=["config", "updated_at"])
+
+        return targets[saramsa_project_id]
+
+    def push_insight(self, *, insight_id: str) -> Dict[str, Any]:
+        """Create or update an Asana task for the given Insight.
+
+        Resolution order:
+        1. Existing AsanaTaskMapping → GET task; PUT if changed.
+        2. Mapping points at deleted task (404) → search by custom field.
+        3. Search hit → adopt the task, persist mapping.
+        4. Search miss → POST /tasks, persist mapping.
+        """
+        insight = Insight.objects.select_related("project").filter(id=insight_id).first()
+        if not insight:
+            raise ValueError(f"Insight {insight_id} not found")
+        if not insight.project:
+            raise ValueError(f"Insight {insight_id} has no project")
+
+        organization_id = insight.project.organization_id
+        if not organization_id:
+            raise ValueError(f"Insight {insight_id} project has no organization")
+
+        integration_row, pat_token = self._load_integration(organization_id)
+        target = self._target_for_project(integration_row, insight.project_id)
+        asana_project_gid = target["asana_project_gid"]
+        insight_field_gid = target["custom_field_gids"][SARAMSA_INSIGHT_FIELD_NAME]
+
+        existing_mapping = AsanaTaskMapping.objects.filter(insight=insight).first()
+        body = self._task_body_for_insight(insight, asana_project_gid, insight_field_gid)
+
+        if existing_mapping:
+            current = self._fetch_task(pat_token, existing_mapping.asana_task_gid)
+            if current is not None:
+                return self._update_if_changed(
+                    pat_token=pat_token,
+                    mapping=existing_mapping,
+                    current_task=current,
+                    desired_body=body,
+                )
+            existing_mapping.delete()
+
+        adopted = self._search_by_insight_id(
+            pat_token=pat_token,
+            asana_project_gid=asana_project_gid,
+            insight_field_gid=insight_field_gid,
+            insight_id=insight.id,
+        )
+        if adopted:
+            mapping = self._persist_mapping(
+                insight=insight,
+                integration_row=integration_row,
+                asana_task_gid=adopted["gid"],
+                asana_project_gid=asana_project_gid,
+            )
+            return self._update_if_changed(
+                pat_token=pat_token,
+                mapping=mapping,
+                current_task=adopted,
+                desired_body=body,
+            )
+
+        created = self._create_task(pat_token, body)
+        mapping = self._persist_mapping(
+            insight=insight,
+            integration_row=integration_row,
+            asana_task_gid=created["gid"],
+            asana_project_gid=asana_project_gid,
+        )
+        return {
+            "asana_task_gid": created["gid"],
+            "permalink_url": created.get("permalink_url", ""),
+            "action": "created",
+            "mapping_id": mapping.id,
+        }
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _load_integration(self, organization_id: str) -> tuple[IntegrationAccount, str]:
+        row = IntegrationAccount.objects.filter(
+            organization_id=str(organization_id),
+            provider="asana",
+            is_active=True,
+        ).first()
+        if not row:
+            raise ValueError(f"Asana integration not configured for organization {organization_id}")
+        encrypted = (row.credentials or {}).get("tokenEncrypted")
+        if not encrypted:
+            raise ValueError("Asana integration has no stored token")
+        return row, self.encryption.decrypt_token(encrypted)
+
+    def _workspace_gid(self, integration_row: IntegrationAccount) -> str:
+        config = integration_row.config or {}
+        meta = config.get("metadata") or {}
+        gid = meta.get("workspaceGid")
+        if not gid:
+            raise ValueError("Asana integration has no workspace GID")
+        return gid
+
+    def _target_for_project(
+        self, integration_row: IntegrationAccount, saramsa_project_id: str
+    ) -> Dict[str, Any]:
+        targets = (integration_row.config or {}).get("asanaProjectTargets") or {}
+        target = targets.get(saramsa_project_id)
+        if not target:
+            raise ValueError(
+                f"No Asana target configured for project {saramsa_project_id}"
+            )
+        if not target.get("custom_field_gids", {}).get(SARAMSA_INSIGHT_FIELD_NAME):
+            raise ValueError(
+                f"Asana target for {saramsa_project_id} missing {SARAMSA_INSIGHT_FIELD_NAME} field"
+            )
+        return target
+
+    def _ensure_custom_fields(
+        self, *, pat_token: str, workspace_gid: str, asana_project_gid: str
+    ) -> Dict[str, str]:
+        """Make sure saramsa_insight_id text custom field exists on the
+        project. Returns {field_name: gid}."""
+        settings_response = self._request(
+            method="GET",
+            url=f"{ASANA_API_BASE}/projects/{asana_project_gid}/custom_field_settings",
+            pat_token=pat_token,
+            params={"opt_fields": "custom_field.name,custom_field.gid"},
+        )
+        existing = {}
+        for setting in (settings_response.get("data") or []):
+            cf = setting.get("custom_field") or {}
+            if cf.get("name") and cf.get("gid"):
+                existing[cf["name"]] = cf["gid"]
+
+        result: Dict[str, str] = {}
+        if SARAMSA_INSIGHT_FIELD_NAME in existing:
+            result[SARAMSA_INSIGHT_FIELD_NAME] = existing[SARAMSA_INSIGHT_FIELD_NAME]
+            return result
+
+        created = self._request(
+            method="POST",
+            url=f"{ASANA_API_BASE}/custom_fields",
+            pat_token=pat_token,
+            json={
+                "data": {
+                    "workspace": workspace_gid,
+                    "name": SARAMSA_INSIGHT_FIELD_NAME,
+                    "type": "text",
+                    "description": "Saramsa insight ID — managed by Saramsa, do not edit.",
+                }
+            },
+        )
+        new_gid = (created.get("data") or {}).get("gid")
+        if not new_gid:
+            raise ValueError("Asana custom field create returned no GID")
+
+        self._request(
+            method="POST",
+            url=f"{ASANA_API_BASE}/projects/{asana_project_gid}/addCustomFieldSetting",
+            pat_token=pat_token,
+            json={"data": {"custom_field": new_gid, "is_important": False}},
+        )
+        result[SARAMSA_INSIGHT_FIELD_NAME] = new_gid
+        return result
+
+    def _task_body_for_insight(
+        self, insight: Insight, asana_project_gid: str, insight_field_gid: str
+    ) -> Dict[str, Any]:
+        payload = insight.payload or {}
+        title = payload.get("title") or payload.get("theme") or f"Insight {insight.id[:12]}"
+        notes = payload.get("summary") or payload.get("description") or ""
+        return {
+            "name": title,
+            "notes": notes,
+            "projects": [asana_project_gid],
+            "custom_fields": {insight_field_gid: insight.id},
+        }
+
+    def _fetch_task(self, pat_token: str, gid: str) -> Optional[Dict[str, Any]]:
+        try:
+            response = self._request(
+                method="GET",
+                url=f"{ASANA_API_BASE}/tasks/{gid}",
+                pat_token=pat_token,
+                params={"opt_fields": "name,notes,completed,custom_fields,permalink_url"},
+            )
+            return response.get("data")
+        except _AsanaNotFound:
+            return None
+
+    def _search_by_insight_id(
+        self,
+        *,
+        pat_token: str,
+        asana_project_gid: str,
+        insight_field_gid: str,
+        insight_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Find an existing Asana task whose saramsa_insight_id custom
+        field equals insight_id. Returns the first match or None."""
+        response = self._request(
+            method="GET",
+            url=f"{ASANA_API_BASE}/projects/{asana_project_gid}/tasks",
+            pat_token=pat_token,
+            params={
+                "opt_fields": f"name,notes,completed,custom_fields.gid,custom_fields.text_value",
+                "limit": 100,
+            },
+        )
+        for task in response.get("data") or []:
+            for cf in task.get("custom_fields") or []:
+                if cf.get("gid") == insight_field_gid and cf.get("text_value") == insight_id:
+                    return task
+        return None
+
+    def _create_task(self, pat_token: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        response = self._request(
+            method="POST",
+            url=f"{ASANA_API_BASE}/tasks",
+            pat_token=pat_token,
+            json={"data": body},
+        )
+        return response.get("data") or {}
+
+    def _update_if_changed(
+        self,
+        *,
+        pat_token: str,
+        mapping: AsanaTaskMapping,
+        current_task: Dict[str, Any],
+        desired_body: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        new_hash = self._state_hash(desired_body)
+        if mapping.last_known_state_hash == new_hash and mapping.last_known_state_hash:
+            return {
+                "asana_task_gid": mapping.asana_task_gid,
+                "permalink_url": current_task.get("permalink_url", ""),
+                "action": "noop",
+                "mapping_id": mapping.id,
+            }
+
+        self._request(
+            method="PUT",
+            url=f"{ASANA_API_BASE}/tasks/{mapping.asana_task_gid}",
+            pat_token=pat_token,
+            json={
+                "data": {
+                    "name": desired_body["name"],
+                    "notes": desired_body["notes"],
+                    "custom_fields": desired_body["custom_fields"],
+                }
+            },
+        )
+        mapping.last_known_state_hash = new_hash
+        mapping.last_synced_at = dj_timezone.now()
+        mapping.save(update_fields=["last_known_state_hash", "last_synced_at", "updated_at"])
+        return {
+            "asana_task_gid": mapping.asana_task_gid,
+            "permalink_url": current_task.get("permalink_url", ""),
+            "action": "updated",
+            "mapping_id": mapping.id,
+        }
+
+    def _persist_mapping(
+        self,
+        *,
+        insight: Insight,
+        integration_row: IntegrationAccount,
+        asana_task_gid: str,
+        asana_project_gid: str,
+    ) -> AsanaTaskMapping:
+        mapping = AsanaTaskMapping.objects.create(
+            id=f"atm_{uuid.uuid4().hex[:12]}",
+            organization_id=insight.project.organization_id,
+            insight=insight,
+            integration=integration_row,
+            asana_task_gid=asana_task_gid,
+            asana_project_gid=asana_project_gid,
+            last_synced_at=dj_timezone.now(),
+        )
+        return mapping
+
+    def _state_hash(self, body: Dict[str, Any]) -> str:
+        canonical = json.dumps(
+            {k: body.get(k) for k in HASHED_FIELDS_FOR_RECONCILIATION if k in body},
+            sort_keys=True,
+            default=str,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    # ------------------------------------------------------------------
+    # HTTP plumbing
+    # ------------------------------------------------------------------
+
+    def _request(
+        self,
+        *,
+        method: str,
+        url: str,
+        pat_token: str,
+        params: Optional[Dict[str, Any]] = None,
+        json: Optional[Dict[str, Any]] = None,
+        max_attempts: int = 3,
+    ) -> Dict[str, Any]:
+        headers = {
+            "Authorization": f"Bearer {pat_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            try:
+                response = httpx.request(
+                    method,
+                    url,
+                    headers=headers,
+                    params=params,
+                    json=json,
+                    timeout=30,
+                )
+            except httpx.RequestError as exc:
+                last_exc = exc
+                if attempt + 1 == max_attempts:
+                    raise
+                time.sleep(min(2 ** attempt, 10))
+                continue
+
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", "5") or "5")
+                logger.warning("Asana 429 rate limited, retrying after %ss", retry_after)
+                time.sleep(retry_after)
+                continue
+            if 500 <= response.status_code < 600 and attempt + 1 < max_attempts:
+                time.sleep(min(2 ** attempt, 10))
+                continue
+            if response.status_code == 404:
+                raise _AsanaNotFound(f"Asana 404: {url}")
+            if response.status_code >= 400:
+                raise _AsanaError(
+                    f"Asana {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                )
+            return response.json() or {}
+
+        raise _AsanaError("Asana retries exhausted", status_code=0) from last_exc
+
+
+class _AsanaError(Exception):
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class _AsanaNotFound(_AsanaError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, status_code=404)
+
+
+# ---------------------------------------------------------------------------
+# Singleton accessor
+# ---------------------------------------------------------------------------
+_asana_service: Optional[AsanaService] = None
+
+
+def get_asana_service() -> AsanaService:
+    global _asana_service
+    if _asana_service is None:
+        _asana_service = AsanaService()
+    return _asana_service
