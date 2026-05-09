@@ -42,6 +42,7 @@ from .views import (
     # Asana push views
     configure_asana_target,
     push_insight_to_asana,
+    subscribe_asana_webhook,
     # Asana webhook receiver (public, signature-verified)
     asana_webhook_receiver,
 )
@@ -65,6 +66,7 @@ urlpatterns = [
     path('asana/workspaces/', get_asana_workspaces, name='get_asana_workspaces'),
     path('asana/projects/', get_asana_projects, name='get_asana_projects'),
     path('asana/projects/<str:project_id>/target/', configure_asana_target, name='configure_asana_target'),
+    path('asana/projects/<str:project_id>/webhook/subscribe/', subscribe_asana_webhook, name='subscribe_asana_webhook'),
     path('asana/insights/<str:insight_id>/push/', push_insight_to_asana, name='push_insight_to_asana'),
     path('asana/webhook/<str:project_id>/', asana_webhook_receiver, name='asana_webhook_receiver'),
 

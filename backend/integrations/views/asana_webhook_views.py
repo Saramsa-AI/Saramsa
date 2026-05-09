@@ -67,9 +67,20 @@ def asana_webhook_receiver(request, project_id: str) -> HttpResponse:
         return JsonResponse({"detail": "Asana integration not found"}, status=404)
 
     target = ((integration.config or {}).get("asanaProjectTargets") or {}).get(project_id) or {}
+    if not target:
+        return JsonResponse({"detail": "Asana target not configured"}, status=404)
+
+    expected_token = target.get("webhook_subscribe_token")
+    provided_token = (request.GET.get("token") or "").strip()
+    if not expected_token or not provided_token or not hmac.compare_digest(expected_token, provided_token):
+        logger.warning("Asana webhook token mismatch for project=%s", project_id)
+        return JsonResponse({"detail": "Invalid webhook token"}, status=401)
 
     handshake_secret = request.headers.get("X-Hook-Secret")
     if handshake_secret:
+        if request.body:
+            logger.warning("Asana webhook handshake carried unexpected body for project=%s", project_id)
+            return JsonResponse({"detail": "Invalid handshake payload"}, status=400)
         _persist_webhook_secret(integration, project_id, handshake_secret)
         response = HttpResponse(status=200)
         response.headers["X-Hook-Secret"] = handshake_secret

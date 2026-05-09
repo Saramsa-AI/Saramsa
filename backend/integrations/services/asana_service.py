@@ -18,10 +18,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import secrets
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
 
 import httpx
 from django.conf import settings
@@ -70,11 +72,13 @@ class AsanaService:
 
         config = dict(integration_row.config or {})
         targets = dict(config.get("asanaProjectTargets") or {})
-        targets[saramsa_project_id] = {
+        existing_target = dict(targets.get(saramsa_project_id) or {})
+        existing_target.update({
             "asana_project_gid": asana_project_gid,
             "custom_field_gids": custom_field_gids,
             "configured_at": datetime.now(timezone.utc).isoformat(),
-        }
+        })
+        targets[saramsa_project_id] = existing_target
         config["asanaProjectTargets"] = targets
         integration_row.config = config
         integration_row.updated_at = dj_timezone.now()
@@ -164,7 +168,25 @@ class AsanaService:
         response here."""
         integration_row, pat_token = self._load_integration_for_project(saramsa_project_id)
         target = self._target_for_project(integration_row, saramsa_project_id)
-        target_url = self._webhook_target_url(saramsa_project_id)
+        existing_webhook_gid = str(target.get("webhook_gid") or "").strip()
+        if existing_webhook_gid:
+            return {"webhook_gid": existing_webhook_gid, "active": True}
+        subscribe_token = secrets.token_urlsafe(24)
+
+        config = dict(integration_row.config or {})
+        targets = dict(config.get("asanaProjectTargets") or {})
+        target_entry = dict(targets.get(saramsa_project_id) or {})
+        target_entry["webhook_subscribe_token"] = subscribe_token
+        targets[saramsa_project_id] = target_entry
+        config["asanaProjectTargets"] = targets
+        integration_row.config = config
+        integration_row.updated_at = dj_timezone.now()
+        integration_row.save(update_fields=["config", "updated_at"])
+
+        target_url = self._webhook_target_url(
+            saramsa_project_id=saramsa_project_id,
+            subscribe_token=subscribe_token,
+        )
 
         response = self._request(
             method="POST",
@@ -187,6 +209,7 @@ class AsanaService:
         if not webhook_gid:
             raise ValueError("Asana webhook create returned no GID")
 
+        integration_row.refresh_from_db(fields=["config", "updated_at"])
         config = dict(integration_row.config or {})
         targets = dict(config.get("asanaProjectTargets") or {})
         target_entry = dict(targets.get(saramsa_project_id) or {})
@@ -214,13 +237,14 @@ class AsanaService:
         if not asana_task_gid:
             return {"action": "skipped", "reason": "no-gid"}
 
+        integration_row, pat_token = self._load_integration_for_project(saramsa_project_id)
+
         mapping = AsanaTaskMapping.objects.select_related("insight").filter(
-            asana_task_gid=asana_task_gid
+            asana_task_gid=asana_task_gid,
+            integration_id=integration_row.id,
         ).first()
         if not mapping:
             return {"action": "skipped", "reason": "untracked-task"}
-
-        integration_row, pat_token = self._load_integration_for_project(saramsa_project_id)
 
         try:
             current = self._fetch_task(pat_token, asana_task_gid)
@@ -244,7 +268,7 @@ class AsanaService:
         if current.get("completed"):
             payload["status"] = "resolved"
         elif current.get("completed") is False:
-            payload.setdefault("status", "open")
+            payload["status"] = "open"
         insight.payload = payload
         insight.save(update_fields=["payload", "updated_at"])
 
@@ -270,11 +294,11 @@ class AsanaService:
             raise ValueError(f"Project {saramsa_project_id} not found or has no organization")
         return self._load_integration(project.organization_id)
 
-    def _webhook_target_url(self, saramsa_project_id: str) -> str:
+    def _webhook_target_url(self, *, saramsa_project_id: str, subscribe_token: str) -> str:
         base = (getattr(settings, "ASANA_WEBHOOK_TARGET_URL", "") or "").rstrip("/")
         if not base:
             raise ValueError("ASANA_WEBHOOK_TARGET_URL is not configured")
-        return f"{base}/{saramsa_project_id}/"
+        return f"{base}/{saramsa_project_id}/?{urlencode({'token': subscribe_token})}"
 
     def _inbound_state_hash(self, task: Dict[str, Any]) -> str:
         canonical = json.dumps(

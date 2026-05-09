@@ -494,8 +494,11 @@ class IntegrationService:
         
         Args:
             user_id: User ID
-            provider: 'azure' or 'jira'
-            **kwargs: Provider-specific parameters (organization, pat_token for Azure; domain, email, api_token for Jira)
+            provider: 'azure', 'jira', or 'asana'
+            **kwargs: Provider-specific parameters
+                      (organization, pat_token for Azure;
+                       domain, email, api_token for Jira;
+                       pat_token, workspace_gid for Asana)
                       OR accountId to fetch from stored integration account
             
         Returns:
@@ -643,7 +646,7 @@ class IntegrationService:
         Check if an external project is already imported.
         
         Args:
-            provider: 'azure' or 'jira'
+            provider: 'azure', 'jira', or 'asana'
             external_id: External project ID
             user_id: User ID
             

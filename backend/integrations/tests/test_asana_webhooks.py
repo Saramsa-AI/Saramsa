@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import MagicMock, patch
 
 from django.test import Client, TestCase, override_settings
@@ -80,9 +81,16 @@ class AsanaWebhookTestBase(TestCase):
 
 
 class AsanaWebhookHandshakeTest(AsanaWebhookTestBase):
+    def setUp(self) -> None:
+        super().setUp()
+        config = dict(self.integration.config)
+        config["asanaProjectTargets"]["proj1"]["webhook_subscribe_token"] = "sub-token"
+        self.integration.config = config
+        self.integration.save()
+
     def test_handshake_echoes_secret_and_persists_it(self):
         response = self.client.post(
-            "/api/integrations/asana/webhook/proj1/",
+            "/api/integrations/asana/webhook/proj1/?token=sub-token",
             data="",
             content_type="application/json",
             HTTP_X_HOOK_SECRET="shh-secret",
@@ -94,9 +102,22 @@ class AsanaWebhookHandshakeTest(AsanaWebhookTestBase):
         target = self.integration.config["asanaProjectTargets"]["proj1"]
         self.assertEqual(target["webhook_secret"], "shh-secret")
 
+    def test_handshake_without_valid_token_returns_401(self):
+        response = self.client.post(
+            "/api/integrations/asana/webhook/proj1/",
+            data="",
+            content_type="application/json",
+            HTTP_X_HOOK_SECRET="shh-secret",
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.integration.refresh_from_db()
+        target = self.integration.config["asanaProjectTargets"]["proj1"]
+        self.assertNotIn("webhook_secret", target)
+
     def test_handshake_for_unknown_project_returns_404(self):
         response = self.client.post(
-            "/api/integrations/asana/webhook/nonexistent/",
+            "/api/integrations/asana/webhook/nonexistent/?token=sub-token",
             data="",
             content_type="application/json",
             HTTP_X_HOOK_SECRET="shh-secret",
@@ -108,6 +129,7 @@ class AsanaWebhookDeliveryTest(AsanaWebhookTestBase):
     def setUp(self) -> None:
         super().setUp()
         config = dict(self.integration.config)
+        config["asanaProjectTargets"]["proj1"]["webhook_subscribe_token"] = "sub-token"
         config["asanaProjectTargets"]["proj1"]["webhook_secret"] = "shh"
         self.integration.config = config
         self.integration.save()
@@ -151,7 +173,7 @@ class AsanaWebhookDeliveryTest(AsanaWebhookTestBase):
         ).encode()
 
         response = self.client.post(
-            "/api/integrations/asana/webhook/proj1/",
+            "/api/integrations/asana/webhook/proj1/?token=sub-token",
             data=body_bytes,
             content_type="application/json",
             HTTP_X_HOOK_SIGNATURE=self._sign(body_bytes),
@@ -165,7 +187,7 @@ class AsanaWebhookDeliveryTest(AsanaWebhookTestBase):
         body_bytes = json.dumps({"events": []}).encode()
 
         response = self.client.post(
-            "/api/integrations/asana/webhook/proj1/",
+            "/api/integrations/asana/webhook/proj1/?token=sub-token",
             data=body_bytes,
             content_type="application/json",
             HTTP_X_HOOK_SIGNATURE="deadbeef",
@@ -175,9 +197,18 @@ class AsanaWebhookDeliveryTest(AsanaWebhookTestBase):
 
     def test_missing_signature_returns_401(self):
         response = self.client.post(
+            "/api/integrations/asana/webhook/proj1/?token=sub-token",
+            data=json.dumps({"events": []}).encode(),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_missing_webhook_token_returns_401(self):
+        response = self.client.post(
             "/api/integrations/asana/webhook/proj1/",
             data=json.dumps({"events": []}).encode(),
             content_type="application/json",
+            HTTP_X_HOOK_SIGNATURE="deadbeef",
         )
         self.assertEqual(response.status_code, 401)
 
@@ -269,6 +300,36 @@ class AsanaApplyEventTest(AsanaWebhookTestBase):
         self.insight.refresh_from_db()
         self.assertEqual(self.insight.payload.get("title"), "Out-of-band change")
 
+    @patch("integrations.services.asana_service.httpx.request")
+    def test_apply_event_reopens_resolved_insight_when_task_reopens(self, mock_request):
+        self.insight.payload = {"title": "Resolved", "summary": "Done", "status": "resolved"}
+        self.insight.save()
+        mock_request.return_value = _resp(
+            200,
+            {
+                "data": {
+                    "gid": "task-1",
+                    "name": "Resolved",
+                    "notes": "Back again",
+                    "completed": False,
+                    "custom_fields": [],
+                }
+            },
+        )
+
+        self.svc.apply_event(
+            saramsa_project_id="proj1",
+            event={
+                "action": "changed",
+                "resource": {"gid": "task-1", "resource_type": "task"},
+                "change": {"field": "completed", "action": "changed"},
+                "created_at": "2026-05-09T00:00:00.000Z",
+            },
+        )
+
+        self.insight.refresh_from_db()
+        self.assertEqual(self.insight.payload.get("status"), "open")
+
     def test_apply_event_for_unknown_task_is_a_noop(self):
         with patch("integrations.services.asana_service.httpx.request") as mock_request:
             self.svc.apply_event(
@@ -281,6 +342,55 @@ class AsanaApplyEventTest(AsanaWebhookTestBase):
                 },
             )
             mock_request.assert_not_called()
+
+    def test_apply_event_skips_when_mapping_belongs_to_different_integration(self):
+        """A forged event in projectA must not mutate Insights mapped to projectB's integration."""
+        other_user = UserAccount.objects.create(id="u2", email="b@x.com", password="x")
+        other_org = Organization.objects.create(id="org2", name="Other", slug="other")
+        encrypted_pat = get_encryption_service().encrypt_token("pat-other")
+        other_integration = IntegrationAccount.objects.create(
+            id="ia-2",
+            organization=other_org,
+            user=other_user,
+            provider="asana",
+            type="integration_account",
+            credentials={"tokenEncrypted": encrypted_pat, "tokenType": "pat"},
+            config={"metadata": {"workspaceGid": "w2"}},
+            is_active=True,
+        )
+        other_project = Project.objects.create(
+            id="proj2", organization=other_org, user=other_user, name="Other"
+        )
+        other_insight = Insight.objects.create(
+            id="ins-2",
+            project=other_project,
+            user=other_user,
+            payload={"title": "Other org insight"},
+        )
+        AsanaTaskMapping.objects.create(
+            id="atm-2",
+            organization=other_org,
+            insight=other_insight,
+            integration=other_integration,
+            asana_task_gid="task-cross",
+            asana_project_gid="ap-2",
+        )
+
+        with patch("integrations.services.asana_service.httpx.request") as mock_request:
+            result = self.svc.apply_event(
+                saramsa_project_id="proj1",
+                event={
+                    "action": "changed",
+                    "resource": {"gid": "task-cross", "resource_type": "task"},
+                    "change": {"field": "name", "action": "changed"},
+                    "created_at": "2026-05-09T00:00:00.000Z",
+                },
+            )
+            mock_request.assert_not_called()
+
+        self.assertEqual(result.get("reason"), "untracked-task")
+        other_insight.refresh_from_db()
+        self.assertEqual(other_insight.payload.get("title"), "Other org insight")
 
 
 @override_settings(ASANA_WEBHOOK_TARGET_URL="https://saramsa.example.com/api/integrations/asana/webhook")
@@ -299,8 +409,11 @@ class AsanaSubscribeWebhookTest(AsanaWebhookTestBase):
         self.integration.refresh_from_db()
         target = self.integration.config["asanaProjectTargets"]["proj1"]
         self.assertEqual(target["webhook_gid"], "wh-1")
+        self.assertTrue(target.get("webhook_subscribe_token"))
 
         called_kwargs = mock_request.call_args.kwargs
         body = called_kwargs.get("json", {}).get("data", {})
         self.assertEqual(body["resource"], "ap-1")
         self.assertIn("proj1", body["target"])
+        query = parse_qs(urlparse(body["target"]).query)
+        self.assertEqual(query.get("token"), [target["webhook_subscribe_token"]])

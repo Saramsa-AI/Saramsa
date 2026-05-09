@@ -7,6 +7,7 @@ Covers configure-target (custom-field bootstrapping) and push_insight
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from authentication.models import UserAccount
 from feedback_analysis.models import Insight
@@ -19,6 +20,7 @@ from integrations.models import (
 )
 from integrations.services.asana_service import AsanaService
 from integrations.services.encryption_service import get_encryption_service
+from integrations.views.asana_views import configure_asana_target
 
 
 def _resp(status: int, body: dict | None = None) -> MagicMock:
@@ -75,6 +77,38 @@ class AsanaPushTestBase(TestCase):
 
 
 class AsanaConfigureTargetTest(AsanaPushTestBase):
+    def test_configure_target_view_uses_project_organization_not_active_workspace(self):
+        other_org = Organization.objects.create(id="org2", name="Other", slug="other")
+        self.user.profile = {"active_organization_id": "org2"}
+        self.user.save(update_fields=["profile"])
+        OrganizationMembership.objects.create(
+            id="m2",
+            organization=other_org,
+            user=self.user,
+            role="admin",
+            status="active",
+        )
+
+        factory = APIRequestFactory()
+        request = factory.post(
+            "/api/integrations/asana/projects/proj1/target/",
+            {"asana_project_gid": "ap-1"},
+            format="json",
+        )
+        force_authenticate(request, user=self.user)
+
+        with patch("integrations.views.asana_views.get_asana_service") as svc_mock:
+            svc_mock.return_value.configure_target.return_value = {"asana_project_gid": "ap-1"}
+            response = configure_asana_target(request, project_id="proj1")
+
+        self.assertEqual(response.status_code, 200)
+        svc_mock.return_value.configure_target.assert_called_once_with(
+            user_id="u1",
+            organization_id="org1",
+            saramsa_project_id="proj1",
+            asana_project_gid="ap-1",
+        )
+
     @patch("integrations.services.asana_service.httpx.request")
     def test_configure_target_creates_custom_field_if_missing(self, mock_request):
         mock_request.side_effect = [
@@ -234,7 +268,14 @@ class AsanaPushInsightTest(AsanaPushTestBase):
                 200,
                 {
                     "data": [
-                        {"gid": "task-existing", "name": "Existing task", "notes": ""}
+                        {
+                            "gid": "task-existing",
+                            "name": "Existing task",
+                            "notes": "",
+                            "custom_fields": [
+                                {"gid": "cf-1", "text_value": "ins-1"}
+                            ],
+                        }
                     ]
                 },
             ),
@@ -244,8 +285,25 @@ class AsanaPushInsightTest(AsanaPushTestBase):
         result = self.svc.push_insight(insight_id="ins-1")
 
         self.assertEqual(result["asana_task_gid"], "task-existing")
+        self.assertEqual(result["action"], "updated")
         mapping = AsanaTaskMapping.objects.get(insight_id="ins-1")
         self.assertEqual(mapping.asana_task_gid, "task-existing")
+
+        methods_and_urls = [
+            (
+                call.args[0] if call.args else call.kwargs.get("method"),
+                call.args[1] if len(call.args) > 1 else call.kwargs.get("url", ""),
+            )
+            for call in mock_request.call_args_list
+        ]
+        self.assertFalse(
+            any(method == "POST" and url.endswith("/tasks") for method, url in methods_and_urls),
+            f"Search-adoption branch must not POST a new task: {methods_and_urls}",
+        )
+        self.assertTrue(
+            any(method == "PUT" and "/tasks/task-existing" in url for method, url in methods_and_urls),
+            f"Expected PUT to existing task: {methods_and_urls}",
+        )
 
     def test_push_insight_raises_when_target_not_configured(self):
         with self.assertRaisesMessage(ValueError, "No Asana target configured"):
