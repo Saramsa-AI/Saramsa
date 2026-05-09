@@ -50,6 +50,8 @@ class TaskService:
         logger.info(f"📈 Background task started: feedback analysis for project {project_id}")
         logger.info(f"🔍 Processing method: {'Local ML Pipeline' if USE_LOCAL_PIPELINE else 'LLM-based chunking'}")
         logger.info(f"🔍 Input: {len(comments)} comments, user: {user_id_str}, project: {project_id}")
+        health = PipelineHealth(analysis_id=analysis_id, task_id=task_id)
+        cache = get_cache_service()
         max_comments = int(os.getenv("MAX_COMMENTS_PER_ANALYSIS", "50000"))
         if len(comments) > max_comments:
             health.mark_failed("max_comments_per_analysis exceeded")
@@ -57,8 +59,6 @@ class TaskService:
                 cache.set(f"analysis_failed:{analysis_id}", True, ttl=86400)
                 cache.set(f"pipeline_health:{task_id}", health.to_dict(), ttl=3600)
             raise ValueError(f"Too many comments for one analysis (max {max_comments})")
-        health = PipelineHealth(analysis_id=analysis_id, task_id=task_id)
-        cache = get_cache_service()
         if task_id:
             cache.set(f"pipeline_health:{task_id}", health.to_dict(), ttl=3600)
         

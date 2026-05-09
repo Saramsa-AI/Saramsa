@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 import uuid
 import logging
 
+from django.db import transaction
+
 from ..repositories import IntegrationsRepository
 from .external_api_service import get_external_api_service
 from .organization_service import get_organization_service
@@ -457,33 +459,38 @@ class IntegrationService:
     def delete_integration_account(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> bool:
         """
         Delete an integration account.
-        
+
+        Wraps the deletion in a database transaction so that any related
+        cleanup (e.g. feedback sources tied to this account) and the
+        account row itself either all succeed or all roll back together.
+
         Args:
             user_id: User ID
             account_id: Integration account ID
-            
+
         Returns:
             True if deleted successfully, False if not found
         """
         try:
-            if organization_id:
-                self._require_org_admin(str(organization_id), str(user_id))
-            account = self.integrations_repo.get_integration_account(
-                user_id,
-                account_id,
-                organization_id=organization_id,
-            )
-            if not account:
-                return False
+            with transaction.atomic():
+                if organization_id:
+                    self._require_org_admin(str(organization_id), str(user_id))
+                account = self.integrations_repo.get_integration_account(
+                    user_id,
+                    account_id,
+                    organization_id=organization_id,
+                )
+                if not account:
+                    return False
 
-            if account.get("provider") == "slack":
-                self.integrations_repo.delete_feedback_sources_by_account(account_id)
+                if account.get("provider") == "slack":
+                    self.integrations_repo.delete_feedback_sources_by_account(account_id)
 
-            return self.integrations_repo.delete_integration_account(
-                user_id,
-                account_id,
-                organization_id=organization_id,
-            )
+                return self.integrations_repo.delete_integration_account(
+                    user_id,
+                    account_id,
+                    organization_id=organization_id,
+                )
         except Exception as e:
             logger.error(f"Error deleting integration account {account_id}: {e}")
             raise
