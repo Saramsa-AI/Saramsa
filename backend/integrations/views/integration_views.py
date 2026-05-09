@@ -14,6 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from apis.core.response import StandardResponse
 from apis.core.error_handlers import handle_service_errors
 
+from ..models import IntegrationAccount
 from ..services import get_integration_service
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,14 @@ def _get_active_organization_id(request):
     return None
 
 
+def _get_account_organization_id(account_id):
+    record = IntegrationAccount.objects.filter(id=account_id).values('organization_id').first()
+    if not record:
+        return None
+    organization_id = record.get('organization_id')
+    return str(organization_id) if organization_id else None
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 @handle_service_errors
@@ -34,10 +43,16 @@ def get_integration_accounts(request):
     user_id = request.user.id
     organization_id = _get_active_organization_id(request)
     logger.info(f"Getting integration accounts for user_id: {user_id}")
-    
+
+    if not organization_id:
+        return StandardResponse.success(
+            data={'accounts': []},
+            message="Integration accounts retrieved successfully"
+        )
+
     integration_service = get_integration_service()
     accounts = integration_service.get_integration_accounts_by_user(user_id, organization_id=organization_id)
-    
+
     return StandardResponse.success(
         data={'accounts': accounts},
         message="Integration accounts retrieved successfully"
@@ -225,8 +240,14 @@ def create_asana_integration(request):
 def test_integration_connection(request, account_id):
     """Test connection for an existing integration account."""
     user_id = request.user.id
-    organization_id = _get_active_organization_id(request)
-    
+    organization_id = _get_account_organization_id(account_id)
+
+    if not organization_id:
+        return StandardResponse.not_found(
+            detail='Integration account not found',
+            instance=request.path
+        )
+
     try:
         integration_service = get_integration_service()
         test_result = integration_service.test_integration_connection(user_id, account_id, organization_id=organization_id)
@@ -258,11 +279,17 @@ def test_integration_connection(request, account_id):
 def delete_integration_account(request, account_id):
     """Delete an integration account."""
     user_id = request.user.id
-    organization_id = _get_active_organization_id(request)
-    
+    organization_id = _get_account_organization_id(account_id)
+
+    if not organization_id:
+        return StandardResponse.not_found(
+            detail='Integration account not found',
+            instance=request.path
+        )
+
     integration_service = get_integration_service()
     success = integration_service.delete_integration_account(user_id, account_id, organization_id=organization_id)
-    
+
     if success:
         return StandardResponse.success(
             data={},

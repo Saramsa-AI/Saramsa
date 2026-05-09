@@ -14,7 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from apis.core.response import StandardResponse
 from apis.core.error_handlers import handle_service_errors
 
-from ..services import get_project_service, get_integration_service
+from ..services import get_integration_service, get_organization_service, get_project_service
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,23 @@ def _get_active_organization_id(request):
     return None
 
 
+def _require_org_admin(request, organization_id):
+    """Reject non-admin users. Returns a forbidden response, or None if allowed.
+
+    organization_id=None is a no-op so the existing validation paths can return
+    422 with the usual missing-org messaging.
+    """
+    if not organization_id:
+        return None
+    membership = get_organization_service().get_membership(organization_id, str(request.user.id))
+    if not membership or membership.get('role') not in ('owner', 'admin'):
+        return StandardResponse.forbidden(
+            detail='Only workspace owners or admins can perform this action.',
+            instance=request.path,
+        )
+    return None
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 @handle_service_errors
@@ -34,7 +51,11 @@ def get_azure_projects(request):
     organization = request.data.get('organization')
     pat_token = request.data.get('pat_token')
     organization_id = _get_active_organization_id(request)
-    
+
+    forbidden = _require_org_admin(request, organization_id)
+    if forbidden is not None:
+        return forbidden
+
     if not organization or not pat_token:
         return StandardResponse.validation_error(
             detail='Organization and PAT token are required',
@@ -72,7 +93,11 @@ def get_jira_projects(request):
     email = request.data.get('email')
     api_token = request.data.get('api_token')
     organization_id = _get_active_organization_id(request)
-    
+
+    forbidden = _require_org_admin(request, organization_id)
+    if forbidden is not None:
+        return forbidden
+
     if not domain or not email or not api_token:
         return StandardResponse.validation_error(
             detail='Domain, email, and API token are required',
@@ -109,6 +134,12 @@ def get_jira_projects(request):
 def get_asana_workspaces(request):
     """List Asana workspaces visible to the supplied PAT (for config page)."""
     pat_token = request.data.get('pat_token')
+    organization_id = _get_active_organization_id(request)
+
+    forbidden = _require_org_admin(request, organization_id)
+    if forbidden is not None:
+        return forbidden
+
     if not pat_token:
         return StandardResponse.validation_error(
             detail='PAT token is required',
@@ -133,6 +164,10 @@ def get_asana_projects(request):
     pat_token = request.data.get('pat_token')
     workspace_gid = request.data.get('workspace_gid')
     organization_id = _get_active_organization_id(request)
+
+    forbidden = _require_org_admin(request, organization_id)
+    if forbidden is not None:
+        return forbidden
 
     if not pat_token or not workspace_gid:
         return StandardResponse.validation_error(
