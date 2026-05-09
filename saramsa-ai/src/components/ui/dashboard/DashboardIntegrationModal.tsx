@@ -16,9 +16,9 @@ export function DashboardIntegrationModal({
   projectId,
 }: DashboardIntegrationModalProps) {
   void projectId;
-  const [selectedPlatform, setSelectedPlatform] = useState<'azure' | 'jira' | null>(null);
+  const [selectedPlatform, setSelectedPlatform] = useState<'azure' | 'jira' | 'asana' | null>(null);
 
-  const handlePlatformSelect = (platform: 'azure' | 'jira') => {
+  const handlePlatformSelect = (platform: 'azure' | 'jira' | 'asana') => {
     setSelectedPlatform(platform);
     if (typeof window !== 'undefined') {
       localStorage.setItem('selected_platform', platform);

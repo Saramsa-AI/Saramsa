@@ -10,6 +10,7 @@ import {
   MoreVertical, 
   Trash2,
   Cloud,
+  CheckSquare,
   ArrowRight,
   Edit,
   RefreshCw,
@@ -25,7 +26,7 @@ interface ProjectCardProps {
   onClick: () => void;
   onDelete: (projectId: string) => void;
   onEdit?: (project: Project) => void;
-  onSync?: (project: Project, provider: 'azure' | 'jira') => void;
+  onSync?: (project: Project, provider: 'azure' | 'jira' | 'asana') => void;
   onGoToProject?: (project: Project) => void;
   isSelected?: boolean;
   deleteLoading?: boolean;
@@ -54,25 +55,42 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onSync, onGoTo
     }
   }, [showMenu]);
 
-  const getProviderIcon = (provider: 'azure' | 'jira') => {
+  const getProviderIcon = (provider: 'azure' | 'jira' | 'asana') => {
     switch (provider) {
       case 'azure':
         return <Cloud className="w-3 h-3" />;
       case 'jira':
         return <span className="text-xs font-bold">J</span>;
+      case 'asana':
+        return <CheckSquare className="w-3 h-3" />;
       default:
         return null;
     }
   };
 
-  const getProviderColor = (provider: 'azure' | 'jira') => {
+  const getProviderColor = (provider: 'azure' | 'jira' | 'asana') => {
     switch (provider) {
       case 'azure':
         return 'bg-secondary/80 text-foreground border border-border/60';
       case 'jira':
         return 'bg-secondary/80 text-foreground border border-border/60';
+      case 'asana':
+        return 'bg-secondary/80 text-foreground border border-border/60';
       default:
         return 'bg-secondary/60 text-foreground border border-border/60';
+    }
+  };
+
+  const getProviderLabel = (provider: 'azure' | 'jira' | 'asana') => {
+    switch (provider) {
+      case 'azure':
+        return 'Azure DevOps';
+      case 'jira':
+        return 'Jira';
+      case 'asana':
+        return 'Asana';
+      default:
+        return provider;
     }
   };
 
@@ -163,7 +181,7 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onSync, onGoTo
                   className="flex items-center gap-2 w-full px-3 py-2 text-sm text-foreground hover:bg-secondary/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     <RefreshCw className={`w-4 h-4 ${syncLoading ? 'animate-spin' : ''}`} />
-                    Sync with {project.externalLinks[0].provider === 'azure' ? 'Azure' : 'Jira'}
+                    Sync with {getProviderLabel(project.externalLinks[0].provider)}
                   </Button>
                 )}
                 <Button
@@ -204,7 +222,7 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onSync, onGoTo
                 className={`inline-flex items-center gap-1 px-2 py-0.5 ${getProviderColor(link.provider)} text-xs rounded-full h-5`}
               >
                 {getProviderIcon(link.provider)}
-                <span>{link.provider === 'azure' ? 'Azure DevOps' : 'Jira'}</span>
+                <span>{getProviderLabel(link.provider)}</span>
               </span>
             ))
           ) : null}
@@ -272,5 +290,4 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onSync, onGoTo
     </motion.div>
   );
 }
-
 

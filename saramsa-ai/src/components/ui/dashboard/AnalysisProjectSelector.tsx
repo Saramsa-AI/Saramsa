@@ -12,7 +12,7 @@ interface Project {
   description?: string;
   status?: string;
   externalLinks?: Array<{
-    provider: 'azure' | 'jira';
+    provider: 'azure' | 'jira' | 'asana';
     externalId: string;
     externalKey?: string;
   }>;
@@ -63,11 +63,18 @@ export function AnalysisProjectSelector({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const getProviderIcon = (provider: 'azure' | 'jira') => {
+  const getProviderIcon = (provider: 'azure' | 'jira' | 'asana') => {
     if (provider === 'azure') {
       return (
         <div className="w-4 h-4 bg-saramsa-brand rounded flex items-center justify-center">
           <span className="text-white text-xs font-bold">A</span>
+        </div>
+      );
+    }
+    if (provider === 'asana') {
+      return (
+        <div className="w-4 h-4 bg-saramsa-brand rounded flex items-center justify-center">
+          <span className="text-white text-xs font-bold">S</span>
         </div>
       );
     }
@@ -76,6 +83,19 @@ export function AnalysisProjectSelector({
         <span className="text-white text-xs font-bold">J</span>
       </div>
     );
+  };
+
+  const getProviderLabel = (provider: 'azure' | 'jira' | 'asana') => {
+    switch (provider) {
+      case 'azure':
+        return 'Azure DevOps';
+      case 'jira':
+        return 'Jira';
+      case 'asana':
+        return 'Asana';
+      default:
+        return provider;
+    }
   };
 
   const formatDate = (dateString?: string) => {
@@ -110,7 +130,7 @@ export function AnalysisProjectSelector({
                   <div className="flex items-center gap-1">
                     {getProviderIcon(selectedProject.externalLinks[0].provider)}
                     <span className="text-xs text-muted-foreground dark:text-muted-foreground">
-                      {selectedProject.externalLinks[0].provider === 'azure' ? 'Azure DevOps' : 'Jira'}
+                      {getProviderLabel(selectedProject.externalLinks[0].provider)}
                     </span>
                   </div>
                 )}
@@ -263,5 +283,4 @@ export function AnalysisProjectSelector({
     </div>
   );
 }
-
 

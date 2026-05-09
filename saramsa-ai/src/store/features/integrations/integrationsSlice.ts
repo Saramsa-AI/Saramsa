@@ -3,7 +3,7 @@ import { apiRequest } from '@/lib/apiRequest';
 
 export interface IntegrationAccount {
   id: string;
-  provider: 'azure' | 'jira' | 'slack';
+  provider: 'azure' | 'jira' | 'asana' | 'slack';
   displayName: string;
   status: 'active' | 'revoked' | 'expired' | 'error';
   metadata: {
@@ -14,6 +14,8 @@ export interface IntegrationAccount {
     teamId?: string;
     teamName?: string;
     workspace?: string;
+    workspaceGid?: string;
+    workspaceName?: string;
     team?: string;
   };
   scopes: string[];
@@ -95,7 +97,7 @@ export const fetchIntegrationAccounts = createAsyncThunk(
 export const createIntegrationAccount = createAsyncThunk(
   'integrations/createAccount',
   async (data: {
-    provider: 'azure' | 'jira';
+    provider: 'azure' | 'jira' | 'asana';
     credentials: any;
     metadata: any;
   }) => {
@@ -125,7 +127,7 @@ export const testIntegrationConnection = createAsyncThunk(
 
 export const fetchExternalProjects = createAsyncThunk(
   'integrations/fetchExternalProjects',
-  async (data: { provider: 'azure' | 'jira'; accountId: string }) => {
+  async (data: { provider: 'azure' | 'jira' | 'asana'; accountId: string }) => {
     const response = await apiRequest('get', `/integrations/external/projects/?provider=${data.provider}&accountId=${data.accountId}`, undefined, true);
     // StandardResponse format: response.data.data
     // Add provider information to each project for the UI

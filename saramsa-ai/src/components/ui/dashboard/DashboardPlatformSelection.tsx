@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import {
   Download,
   Globe,
+  CheckSquare,
   ArrowRight,
   CheckCircle,
   Shield,
@@ -14,7 +15,7 @@ import type { AppDispatch, RootState } from "@/store/store";
 import { fetchIntegrationAccounts } from "@/store/features/integrations/integrationsSlice";
 
 interface DashboardPlatformSelectionProps {
-  onPlatformSelect: (platform: "azure" | "jira") => void;
+  onPlatformSelect: (platform: "azure" | "jira" | "asana") => void;
   className?: string;
 }
 
@@ -36,6 +37,9 @@ export function DashboardPlatformSelection({
   );
   const hasJiraIntegration = accounts.some(
     (account) => account.provider === "jira"
+  );
+  const hasAsanaIntegration = accounts.some(
+    (account) => account.provider === "asana"
   );
 
   const platforms = [
@@ -71,6 +75,22 @@ export function DashboardPlatformSelection({
       ],
       status: hasJiraIntegration ? "configured" : "available",
     },
+    {
+      id: "asana",
+      name: "Asana",
+      description: hasAsanaIntegration
+        ? "Asana integration is already configured. You can link another workspace project."
+        : "Integrate your project with Asana for mapped task creation and sync readiness",
+      icon: <CheckSquare className="w-8 h-8" />,
+      color: "bg-secondary/70",
+      features: [
+        "Workspace Detection",
+        "Project Import",
+        "Task Mapping",
+        "Webhook Bootstrap",
+      ],
+      status: hasAsanaIntegration ? "configured" : "available",
+    },
   ];
 
   return (
@@ -88,6 +108,7 @@ export function DashboardPlatformSelection({
           </h2>
           <p className="text-sm text-muted-foreground dark:text-muted-foreground">
             Connect this project to Azure DevOps or Jira to enable automated work item creation and synchronization.
+            Asana is also available for task-based planning workflows.
           </p>
         </motion.div>
 
@@ -111,7 +132,7 @@ export function DashboardPlatformSelection({
                     ? "border-border/70 bg-secondary/40"
                     : "border-border/60"
                 }`}
-                onClick={() => onPlatformSelect(platform.id as "azure" | "jira")}
+                onClick={() => onPlatformSelect(platform.id as "azure" | "jira" | "asana")}
               >
                 {platform.status === "configured" && (
                   <div className="absolute top-3 right-3">
@@ -178,4 +199,3 @@ export function DashboardPlatformSelection({
     </div>
   );
 }
-

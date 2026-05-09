@@ -2,7 +2,7 @@ import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
 
 export interface ProjectExternalLink {
-  provider: 'azure' | 'jira';
+  provider: 'azure' | 'jira' | 'asana';
   integrationAccountId: string;
   externalId: string;
   url: string;
@@ -83,7 +83,12 @@ export const createProject = createAsyncThunk(
       // If external links provided, use the first one to set platform and integration details
       if (data.externalLinks && data.externalLinks.length > 0) {
         const link = data.externalLinks[0];
-        payload.platform = link.provider === 'azure' ? 'azure_devops' : 'jira';
+        payload.platform =
+          link.provider === 'azure'
+            ? 'azure_devops'
+            : link.provider === 'asana'
+            ? 'asana'
+            : 'jira';
         payload.external_project_id = link.externalId;
         payload.integration_account_id = link.integrationAccountId;
         payload.external_url = link.url;
@@ -111,7 +116,7 @@ export const createProject = createAsyncThunk(
 export const importProjectFromExternal = createAsyncThunk(
   'projects/importFromExternal',
   async (data: {
-    provider: 'azure' | 'jira';
+    provider: 'azure' | 'jira' | 'asana';
     integrationAccountId: string;
     externalProject: {
       id: string;
@@ -133,7 +138,12 @@ export const importProjectFromExternal = createAsyncThunk(
     const createData: any = {
       project_name: data.externalProject.name,
       description: data.externalProject.description,
-      platform: data.provider === 'azure' ? 'azure_devops' : 'jira',
+      platform:
+        data.provider === 'azure'
+          ? 'azure_devops'
+          : data.provider === 'asana'
+          ? 'asana'
+          : 'jira',
       external_project_id: data.externalProject.id,
       integration_account_id: data.integrationAccountId,
     };
@@ -150,6 +160,11 @@ export const importProjectFromExternal = createAsyncThunk(
       createData.jira_domain = jira_domain;
       createData.jira_email = jira_email;
       createData.jira_project_key = data.externalProject.key;
+    } else if (data.provider === 'asana') {
+      const workspaceGid = typeof window !== 'undefined' ? localStorage.getItem('asana_workspace_gid') : null;
+      const workspaceName = typeof window !== 'undefined' ? localStorage.getItem('asana_workspace_name') : null;
+      createData.asana_workspace_gid = workspaceGid;
+      createData.asana_workspace_name = workspaceName;
     }
     
     const response = await apiRequest('post', '/integrations/projects/create/', createData, true);
@@ -183,7 +198,7 @@ export const deleteProject = createAsyncThunk(
 
 export const syncProjectWithExternal = createAsyncThunk(
   'projects/syncWithExternal',
-  async (data: { projectId: string; provider: 'azure' | 'jira' }) => {
+  async (data: { projectId: string; provider: 'azure' | 'jira' | 'asana' }) => {
     const response = await apiRequest('post', `/integrations/projects/${data.projectId}/sync`, {
       provider: data.provider,
     }, true);

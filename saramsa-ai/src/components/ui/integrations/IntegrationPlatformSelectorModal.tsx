@@ -6,7 +6,7 @@ import { DashboardPlatformSelection } from "@/components/ui/dashboard/DashboardP
 interface IntegrationPlatformSelectorModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onPlatformSelect: (platform: "azure" | "jira") => void;
+  onPlatformSelect: (platform: "azure" | "jira" | "asana") => void;
 }
 
 export function IntegrationPlatformSelectorModal({
@@ -19,7 +19,7 @@ export function IntegrationPlatformSelectorModal({
       isOpen={isOpen}
       onClose={onClose}
       title="Configure Integration"
-      description="Connect your project to Azure DevOps or Jira to push work items"
+      description="Connect your project to Azure DevOps, Jira, or Asana to push work items"
       size="md"
       className="max-h-[90vh] overflow-y-auto"
     >
@@ -30,4 +30,3 @@ export function IntegrationPlatformSelectorModal({
     </BaseModal>
   );
 }
-

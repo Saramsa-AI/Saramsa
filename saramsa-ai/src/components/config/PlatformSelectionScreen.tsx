@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import {
   Download,
   Globe,
+  CheckSquare,
   Zap,
   Shield,
   ArrowRight,
@@ -15,7 +16,7 @@ import type { RootState } from "@/store/store";
 import { Button } from "@/components/ui/button";
 
 interface PlatformSelectionScreenProps {
-  onPlatformSelect: (platform: "azure" | "jira") => void;
+  onPlatformSelect: (platform: "azure" | "jira" | "asana") => void;
   onSkipConfig?: () => void;
 }
 
@@ -25,7 +26,7 @@ export function PlatformSelectionScreen({
 }: PlatformSelectionScreenProps) {
   const { accounts } = useSelector((state: RootState) => state.integrations);
   const [selectedPlatform, setSelectedPlatform] = useState<
-    "azure" | "jira" | null
+    "azure" | "jira" | "asana" | null
   >(null);
 
   // Check if integrations already exist
@@ -34,6 +35,9 @@ export function PlatformSelectionScreen({
   );
   const hasJiraIntegration = accounts.some(
     (account) => account.provider === "jira"
+  );
+  const hasAsanaIntegration = accounts.some(
+    (account) => account.provider === "asana"
   );
 
   const platforms = [
@@ -71,9 +75,26 @@ export function PlatformSelectionScreen({
       status: hasJiraIntegration ? "configured" : "available",
       comingSoon: false,
     },
+    {
+      id: "asana",
+      name: "Asana",
+      description: hasAsanaIntegration
+        ? "Asana integration is already configured"
+        : "Connect Asana to mirror customer insights into task planning",
+      icon: <CheckSquare className="w-8 h-8" />,
+      color: "from-saramsa-gradient-from to-saramsa-gradient-to",
+      features: [
+        "Workspace Import",
+        "Project-level Mapping",
+        "Task Sync Readiness",
+        "Webhook-backed Updates",
+      ],
+      status: hasAsanaIntegration ? "configured" : "available",
+      comingSoon: false,
+    },
   ];
 
-  const handlePlatformSelect = (platform: "azure" | "jira") => {
+  const handlePlatformSelect = (platform: "azure" | "jira" | "asana") => {
     setSelectedPlatform(platform);
     // Add a small delay for animation
     setTimeout(() => {
@@ -142,7 +163,7 @@ export function PlatformSelectionScreen({
                       }`}
                       onClick={() =>
                         !platform.comingSoon &&
-                        handlePlatformSelect(platform.id as "azure" | "jira")
+                        handlePlatformSelect(platform.id as "azure" | "jira" | "asana")
                       }
                     >
                       {platform.status === "configured" && (
@@ -233,4 +254,3 @@ export function PlatformSelectionScreen({
     </div>
   );
 }
-

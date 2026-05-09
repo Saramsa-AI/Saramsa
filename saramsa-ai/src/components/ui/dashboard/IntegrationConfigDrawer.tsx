@@ -5,12 +5,13 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AsanaIntegrationForm } from "@/components/config/asana/AsanaIntegrationForm";
 import { AzureDevOpsIntegrationForm } from "@/components/config/azure/AzureDevOpsIntegrationForm";
 import { JiraIntegrationForm } from "@/components/config/jira/JiraIntegrationForm";
 import { lockBodyScroll, unlockBodyScroll } from "@/lib/bodyScrollLock";
 
 interface IntegrationConfigDrawerProps {
-  platform: "jira" | "azure" | null;
+  platform: "jira" | "azure" | "asana" | null;
   open: boolean;
   onClose: () => void;
   onBackToSelector: () => void;
@@ -50,6 +51,8 @@ export function IntegrationConfigDrawer({
   const title =
     platform === "azure"
       ? "Configure Azure DevOps"
+      : platform === "asana"
+      ? "Configure Asana Integration"
       : "Configure Jira Integration";
 
   return createPortal(
@@ -105,6 +108,8 @@ export function IntegrationConfigDrawer({
         <div className="flex-1 overflow-y-auto p-0 lg:p-8">
           {platform === "azure" ? (
             <AzureDevOpsIntegrationForm onContinue={onConfigured} onBack={onBackToSelector} />
+          ) : platform === "asana" ? (
+            <AsanaIntegrationForm onContinue={onConfigured} onBack={onBackToSelector} />
           ) : (
             <JiraIntegrationForm onContinue={onConfigured} onBack={onBackToSelector} />
           )}

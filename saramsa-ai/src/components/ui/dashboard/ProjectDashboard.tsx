@@ -76,7 +76,7 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
   const handleCreateProject = async (
     name: string, 
     description?: string, 
-    externalLink?: { provider: 'azure' | 'jira', accountId: string, projectId: string, projectName: string, projectUrl?: string, projectKey?: string }
+    externalLink?: { provider: 'azure' | 'jira' | 'asana', accountId: string, projectId: string, projectName: string, projectUrl?: string, projectKey?: string }
   ) => {
     try {
       let result;
@@ -133,7 +133,8 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     
     if (!hasIntegration) {
       // Show error and redirect to settings
-      alert(`No ${provider === 'azure' ? 'Azure DevOps' : 'Jira'} integration found. Please go to Settings > Integrations to connect your account.`);
+      const providerLabel = provider === 'azure' ? 'Azure DevOps' : 'Jira';
+      alert(`No ${providerLabel} integration found. Please go to Settings > Integrations to connect your account.`);
       return;
     }
     
@@ -158,13 +159,14 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     }
   };
 
-  const handleSyncProject = async (project: Project, provider: 'azure' | 'jira') => {
+  const handleSyncProject = async (project: Project, provider: 'azure' | 'jira' | 'asana') => {
     try {
       setSyncingProjectId(project.id);
       await dispatch(syncProjectWithExternal({ projectId: project.id, provider })).unwrap();
       // Refresh projects to get updated data
       await dispatch(fetchProjects());
-      alert(`Successfully synced "${project.name}" with ${provider === 'azure' ? 'Azure DevOps' : 'Jira'}`);
+      const providerLabel = provider === 'azure' ? 'Azure DevOps' : provider === 'asana' ? 'Asana' : 'Jira';
+      alert(`Successfully synced "${project.name}" with ${providerLabel}`);
     } catch (err: any) {
       console.error('Failed to sync project:', err);
       alert(err?.message || 'Failed to sync project. Please try again.');
@@ -445,5 +447,3 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     </div>
   );
 }
-
-

@@ -29,6 +29,7 @@ import {
   Shield,
   Cloud,
   Download,
+  CheckSquare,
   Folder,
   Users,
   MessageSquare,
@@ -64,6 +65,9 @@ export function IntegrationsPage() {
   );
   const hasJiraIntegration = accounts.some(
     (account) => account.provider === "jira"
+  );
+  const hasAsanaIntegration = accounts.some(
+    (account) => account.provider === "asana"
   );
   const hasSlackIntegration = accounts.some(
     (account) => (account.provider as string) === "slack"
@@ -123,7 +127,7 @@ export function IntegrationsPage() {
     }
   };
 
-  const handleFetchProjects = async (provider: "azure" | "jira") => {
+  const handleFetchProjects = async (provider: "azure" | "jira" | "asana") => {
     const account = accounts.find((acc) => acc.provider === provider);
     if (account) {
       await dispatch(
@@ -150,7 +154,12 @@ export function IntegrationsPage() {
           description: `Imported from ${
             project.provider === "azure" ? "Azure DevOps" : "Jira"
           }`,
-          platform: project.provider === "azure" ? "azure_devops" : "jira",
+          platform:
+            project.provider === "azure"
+              ? "azure_devops"
+              : project.provider === "asana"
+              ? "asana"
+              : "jira",
           external_project_id: project.id,
           external_url: project.url || "",
           integration_account_id: account.id,
@@ -160,6 +169,10 @@ export function IntegrationsPage() {
             project.templateName && {
               azure_process_template: project.templateName,
             }),
+          ...(project.provider === "asana" && {
+            asana_workspace_gid: account.metadata?.workspaceGid,
+            asana_workspace_name: account.metadata?.workspaceName,
+          }),
         },
         true
       );
@@ -235,6 +248,12 @@ export function IntegrationsPage() {
             <MessageSquare className="w-4 h-4 text-white" />
           </div>
         );
+      case "asana":
+        return (
+          <div className="w-8 h-8 bg-gradient-to-br from-saramsa-gradient-from to-saramsa-gradient-to rounded-xl flex items-center justify-center shadow-lg">
+            <CheckSquare className="w-4 h-4 text-white" />
+          </div>
+        );
       default:
         return (
           <div className="w-8 h-8 bg-gradient-to-br from-saramsa-gradient-from to-saramsa-gradient-to rounded-xl flex items-center justify-center shadow-lg">
@@ -248,6 +267,7 @@ export function IntegrationsPage() {
     switch (provider) {
       case "azure": return "Azure DevOps";
       case "jira": return "Jira Cloud";
+      case "asana": return "Asana";
       case "slack": return "Slack";
       default: return provider;
     }
@@ -264,7 +284,7 @@ export function IntegrationsPage() {
         </div>
         {accounts.length > 0 && (
           <div className="flex gap-2 flex-shrink-0">
-            {(!hasAzureIntegration || !hasJiraIntegration) && (
+            {(!hasAzureIntegration || !hasJiraIntegration || !hasAsanaIntegration) && (
               <Button
                 onClick={handleOpenDashboardIntegrationModal}
                 variant="saramsa"
@@ -363,9 +383,10 @@ export function IntegrationsPage() {
             <p className="text-muted-foreground mb-6">
               Connect your Azure DevOps, Jira, or Slack accounts to start importing
               projects and feedback
+              . Asana task integrations are supported here as well.
             </p>
             <div className="flex gap-3 justify-center">
-              {(!hasAzureIntegration || !hasJiraIntegration) && (
+              {(!hasAzureIntegration || !hasJiraIntegration || !hasAsanaIntegration) && (
                 <Button
                   onClick={handleOpenDashboardIntegrationModal}
                   variant="saramsa"
@@ -433,7 +454,7 @@ export function IntegrationsPage() {
                   <div className="flex items-center gap-2">
                     {(account.provider as string) !== "slack" && (
                       <Button
-                        onClick={() => handleFetchProjects(account.provider as "azure" | "jira")}
+                        onClick={() => handleFetchProjects(account.provider as "azure" | "jira" | "asana")}
                         disabled={fetchingProjects[account.provider]}
                         variant="saramsa"
                         className="flex items-center gap-2 px-3 py-2 text-sm"
@@ -597,7 +618,7 @@ export function IntegrationsPage() {
                           <div className="flex items-center gap-1">
                             <Cloud className="w-3 h-3" />
                             <span className="capitalize">
-                              {(project as any).provider}
+                              {(project as any).provider === "asana" ? "Asana" : (project as any).provider}
                             </span>
                           </div>
                         </div>

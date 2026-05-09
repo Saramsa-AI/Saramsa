@@ -7,6 +7,7 @@ import { useDispatch } from 'react-redux';
 import type { AppDispatch } from '@/store/store';
 import { fetchIntegrationAccounts } from '@/store/features/integrations/integrationsSlice';
 import { PlatformSelectionScreen } from '@/components/config/PlatformSelectionScreen';
+import { AsanaConfigScreen } from '@/components/config/asana/AsanaConfigScreen';
 import { AzureDevOpsConfigScreen } from '@/components/config/azure/AzureDevOpsConfigScreen';
 import { JiraConfigScreen } from '@/components/config/jira/JiraConfigScreen';
 import { forceUnlockBodyScroll } from '@/lib/bodyScrollLock';
@@ -16,7 +17,7 @@ export default function ConfigPage() {
   const router = useRouter();
   const {} = useAuth();
   const dispatch = useDispatch<AppDispatch>();
-  const [selectedPlatform, setSelectedPlatform] = useState<'azure' | 'jira' | null>(null);
+  const [selectedPlatform, setSelectedPlatform] = useState<'azure' | 'jira' | 'asana' | null>(null);
 
   // checkk Fetch integration accounts once at the parent level
   useEffect(() => {
@@ -24,7 +25,7 @@ export default function ConfigPage() {
     dispatch(fetchIntegrationAccounts());
   }, [dispatch]);
 
-  const handlePlatformSelect = (platform: 'azure' | 'jira') => {
+  const handlePlatformSelect = (platform: 'azure' | 'jira' | 'asana') => {
     setSelectedPlatform(platform);
     if (typeof window !== 'undefined') {
       localStorage.setItem('selected_platform', platform);
@@ -92,6 +93,17 @@ export default function ConfigPage() {
     return (
       <div className="h-full overflow-y-auto bg-background">
         <JiraConfigScreen 
+          onContinue={handleContinue}
+          onBack={handleBackToPlatformSelection}
+        />
+      </div>
+    );
+  }
+
+  if (selectedPlatform === 'asana') {
+    return (
+      <div className="h-full overflow-y-auto bg-background">
+        <AsanaConfigScreen
           onContinue={handleContinue}
           onBack={handleBackToPlatformSelection}
         />
