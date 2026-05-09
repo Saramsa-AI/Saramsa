@@ -27,14 +27,18 @@ import hashlib
 class InsightsListView(APIView):
     """Get all insights from PostgreSQL"""
     permission_classes = [IsAdmin]
-    
+
     @handle_service_errors
     def get(self, request):
+        if not getattr(request.user, 'is_staff', False):
+            return StandardResponse.forbidden(
+                detail="Platform staff access required.", instance=request.path
+            )
         analysis_service = get_analysis_service()
-        
+
         # Get all insights from service layer
         insights = analysis_service.get_all_insights()
-        
+
         return StandardResponse.success(data={
             "insights": insights,
             "count": len(insights)
@@ -44,29 +48,37 @@ class InsightsListView(APIView):
 class InsightDetailView(APIView):
     """Get specific insight by ID from PostgreSQL"""
     permission_classes = [IsAdmin]
-    
+
     @handle_service_errors
     def get(self, request, insight_id):
+        if not getattr(request.user, 'is_staff', False):
+            return StandardResponse.forbidden(
+                detail="Platform staff access required.", instance=request.path
+            )
         analysis_service = get_analysis_service()
-        
+
         insight_data = analysis_service.get_insight_by_id(insight_id)
         if not insight_data:
             return StandardResponse.not_found(detail="Insight not found", instance=request.path)
-        
+
         return StandardResponse.success(data=insight_data, message="Insight retrieved successfully")
 
 
 class InsightsByTypeView(APIView):
     """Get insights by analysis type"""
     permission_classes = [IsAdmin]
-    
+
     @handle_service_errors
     def get(self, request, analysis_type):
+        if not getattr(request.user, 'is_staff', False):
+            return StandardResponse.forbidden(
+                detail="Platform staff access required.", instance=request.path
+            )
         analysis_service = get_analysis_service()
-        
+
         # Query insights by analysis type
         insights = analysis_service.get_insights_by_type(analysis_type)
-        
+
         return StandardResponse.success(data={
             "insights": insights,
             "count": len(insights),

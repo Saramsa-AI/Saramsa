@@ -19,7 +19,7 @@ from asgiref.sync import async_to_sync, sync_to_async
 import json
 import uuid
 
-from authentication.permissions import IsAdminOrUser, IsProjectViewer, IsProjectEditor, IsProjectAdmin
+from authentication.permissions import IsProjectViewer, IsProjectEditor, IsProjectAdmin
 from apis.core.response import StandardResponse
 from apis.core.error_handlers import handle_service_errors
 from ..services import get_devops_service, get_quality_gate_service
@@ -470,38 +470,6 @@ class WorkItemRemovalView(APIView):
         except Exception as e:
             logger.error(f"Error removing work items: {e}")
             return StandardResponse.internal_server_error(detail="Failed to remove work items.", instance=request.path)
-
-
-class WorkItemsByPlatformView(APIView):
-    """Get work items by platform (azure_devops, jira) - CONSOLIDATED"""
-    permission_classes = [IsAdminOrUser]
-    
-    @handle_service_errors
-    def get(self, request, platform):
-        """Get work items by platform"""
-        user_id = request.user.id if hasattr(request, 'user') and request.user.is_authenticated else None
-        if not user_id:
-            return StandardResponse.unauthorized(detail="User authentication required.", instance=request.path)
-        
-        try:
-            devops_service = get_devops_service()
-            user_work_items = devops_service.get_work_items_by_user(str(user_id))
-            
-            # Filter by platform
-            platform_work_items = [item for item in user_work_items if item.get('platform') == platform]
-            
-            return StandardResponse.success(data={
-                "work_items": platform_work_items,
-                "platform": platform,
-                "count": len(platform_work_items)
-            })
-            
-        except Exception as e:
-            logger.error(f"Error retrieving work items for platform {platform}: {e}")
-            return StandardResponse.internal_server_error(
-                detail=f"Failed to retrieve work items for {platform}", 
-                instance=request.path
-            )
 
 
 class WorkItemQualityRulesView(APIView):
