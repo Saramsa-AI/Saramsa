@@ -51,6 +51,7 @@ from .asana_views import (
     configure_asana_target,
     push_insight_to_asana,
 )
+from .asana_webhook_views import asana_webhook_receiver
 
 __all__ = [
     # Integration views
@@ -91,4 +92,5 @@ __all__ = [
     # Asana views
     'configure_asana_target',
     'push_insight_to_asana',
+    'asana_webhook_receiver',
 ]

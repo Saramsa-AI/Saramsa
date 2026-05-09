@@ -42,6 +42,8 @@ from .views import (
     # Asana push views
     configure_asana_target,
     push_insight_to_asana,
+    # Asana webhook receiver (public, signature-verified)
+    asana_webhook_receiver,
 )
 
 urlpatterns = [
@@ -64,6 +66,7 @@ urlpatterns = [
     path('asana/projects/', get_asana_projects, name='get_asana_projects'),
     path('asana/projects/<str:project_id>/target/', configure_asana_target, name='configure_asana_target'),
     path('asana/insights/<str:insight_id>/push/', push_insight_to_asana, name='push_insight_to_asana'),
+    path('asana/webhook/<str:project_id>/', asana_webhook_receiver, name='asana_webhook_receiver'),
 
     # Dashboard endpoints (fetch imported projects from database)
     path('dashboard/azure/projects/', get_dashboard_azure_projects, name='get_dashboard_azure_projects'),

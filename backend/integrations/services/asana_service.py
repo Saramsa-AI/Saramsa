@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+from django.conf import settings
 from django.utils import timezone as dj_timezone
 
 from feedback_analysis.models import Insight
@@ -153,9 +154,145 @@ class AsanaService:
             "mapping_id": mapping.id,
         }
 
+    def subscribe_webhook(self, *, saramsa_project_id: str) -> Dict[str, Any]:
+        """Create an Asana webhook on the configured target's project.
+
+        The handshake (X-Hook-Secret echo) happens on the receiver side
+        during this POST — Asana calls our webhook URL synchronously
+        before returning. We rely on the integration's webhook_secret
+        already being persisted by the receiver before we read the
+        response here."""
+        integration_row, pat_token = self._load_integration_for_project(saramsa_project_id)
+        target = self._target_for_project(integration_row, saramsa_project_id)
+        target_url = self._webhook_target_url(saramsa_project_id)
+
+        response = self._request(
+            method="POST",
+            url=f"{ASANA_API_BASE}/webhooks",
+            pat_token=pat_token,
+            json={
+                "data": {
+                    "resource": target["asana_project_gid"],
+                    "target": target_url,
+                    "filters": [
+                        {"resource_type": "task", "action": "changed"},
+                        {"resource_type": "task", "action": "added"},
+                        {"resource_type": "task", "action": "removed"},
+                    ],
+                }
+            },
+        )
+        webhook = response.get("data") or {}
+        webhook_gid = webhook.get("gid")
+        if not webhook_gid:
+            raise ValueError("Asana webhook create returned no GID")
+
+        config = dict(integration_row.config or {})
+        targets = dict(config.get("asanaProjectTargets") or {})
+        target_entry = dict(targets.get(saramsa_project_id) or {})
+        target_entry["webhook_gid"] = webhook_gid
+        targets[saramsa_project_id] = target_entry
+        config["asanaProjectTargets"] = targets
+        integration_row.config = config
+        integration_row.updated_at = dj_timezone.now()
+        integration_row.save(update_fields=["config", "updated_at"])
+
+        return {"webhook_gid": webhook_gid, "active": webhook.get("active", True)}
+
+    def apply_event(self, *, saramsa_project_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Reconcile a single Asana webhook event back to the linked Insight.
+
+        Events are notifications, not state — we always GET the resource
+        fresh. Skips work when the canonicalized state hash matches what
+        we last saw, so duplicate deliveries are cheap.
+        """
+        resource = event.get("resource") or {}
+        if resource.get("resource_type") != "task":
+            return {"action": "skipped", "reason": "non-task-resource"}
+
+        asana_task_gid = resource.get("gid")
+        if not asana_task_gid:
+            return {"action": "skipped", "reason": "no-gid"}
+
+        mapping = AsanaTaskMapping.objects.select_related("insight").filter(
+            asana_task_gid=asana_task_gid
+        ).first()
+        if not mapping:
+            return {"action": "skipped", "reason": "untracked-task"}
+
+        integration_row, pat_token = self._load_integration_for_project(saramsa_project_id)
+
+        try:
+            current = self._fetch_task(pat_token, asana_task_gid)
+        except _AsanaError as exc:
+            logger.warning("Asana fetch failed during webhook apply: %s", exc)
+            return {"action": "error", "reason": str(exc)}
+
+        if current is None:
+            return {"action": "skipped", "reason": "task-not-found"}
+
+        new_hash = self._inbound_state_hash(current)
+        if new_hash == mapping.last_known_state_hash and mapping.last_known_state_hash:
+            return {"action": "noop"}
+
+        insight = mapping.insight
+        payload = dict(insight.payload or {})
+        if current.get("name"):
+            payload["title"] = current["name"]
+        if "notes" in current:
+            payload["summary"] = current.get("notes") or ""
+        if current.get("completed"):
+            payload["status"] = "resolved"
+        elif current.get("completed") is False:
+            payload.setdefault("status", "open")
+        insight.payload = payload
+        insight.save(update_fields=["payload", "updated_at"])
+
+        mapping.last_known_state_hash = new_hash
+        mapping.last_synced_at = dj_timezone.now()
+        mapping.save(update_fields=["last_known_state_hash", "last_synced_at", "updated_at"])
+
+        return {
+            "action": "applied",
+            "asana_task_gid": asana_task_gid,
+            "insight_id": insight.id,
+        }
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _load_integration_for_project(
+        self, saramsa_project_id: str
+    ) -> tuple[IntegrationAccount, str]:
+        project = Project.objects.filter(id=saramsa_project_id).first()
+        if not project or not project.organization_id:
+            raise ValueError(f"Project {saramsa_project_id} not found or has no organization")
+        return self._load_integration(project.organization_id)
+
+    def _webhook_target_url(self, saramsa_project_id: str) -> str:
+        base = (getattr(settings, "ASANA_WEBHOOK_TARGET_URL", "") or "").rstrip("/")
+        if not base:
+            raise ValueError("ASANA_WEBHOOK_TARGET_URL is not configured")
+        return f"{base}/{saramsa_project_id}/"
+
+    def _inbound_state_hash(self, task: Dict[str, Any]) -> str:
+        canonical = json.dumps(
+            {
+                "name": task.get("name"),
+                "notes": task.get("notes"),
+                "completed": task.get("completed"),
+                "custom_fields": [
+                    {"gid": cf.get("gid"), "text_value": cf.get("text_value"),
+                     "enum_value": (cf.get("enum_value") or {}).get("gid"),
+                     "number_value": cf.get("number_value")}
+                    for cf in (task.get("custom_fields") or [])
+                ],
+            },
+            sort_keys=True,
+            default=str,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def _load_integration(self, organization_id: str) -> tuple[IntegrationAccount, str]:
         row = IntegrationAccount.objects.filter(

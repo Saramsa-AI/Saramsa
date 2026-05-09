@@ -8,7 +8,7 @@ import django.utils.timezone
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('feedback_analysis', '0002_rename_analysis_project_created_idx_analysis_project_718154_idx_and_more'),
+        ('feedback_analysis', '0001_initial'),
         ('integrations', '0005_organization_invite'),
     ]
 

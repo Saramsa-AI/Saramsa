@@ -488,6 +488,12 @@ SLACK_CLIENT_SECRET = os.getenv('SLACK_CLIENT_SECRET', '').strip()
 SLACK_REDIRECT_URI = os.getenv('SLACK_REDIRECT_URI', '').strip()
 SLACK_TEAM_ID = os.getenv('SLACK_TEAM_ID', '').strip()
 
+# Asana Configuration
+# Customer-pasted PATs are stored encrypted in IntegrationAccount.credentials,
+# so no client_id/secret is required. ASANA_WEBHOOK_TARGET_URL is the public
+# base of the webhook receiver — Asana POSTs to {base}/{saramsa_project_id}/.
+ASANA_WEBHOOK_TARGET_URL = os.getenv('ASANA_WEBHOOK_TARGET_URL', '').strip()
+
 # Stripe Billing Configuration
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '').strip()
 STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '').strip()
