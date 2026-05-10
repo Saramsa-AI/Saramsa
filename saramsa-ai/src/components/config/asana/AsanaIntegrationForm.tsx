@@ -7,6 +7,7 @@ import { fetchProjects, createProject } from '@/store/features/projects/projects
 import { fetchIntegrationAccounts } from '@/store/features/integrations/integrationsSlice';
 import { apiRequest } from '@/lib/apiRequest';
 import { AlertCircle, CheckCircle, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
+import type { KeyboardEvent } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
@@ -23,14 +24,31 @@ type AsanaProject = {
 };
 
 interface AsanaIntegrationFormProps {
-  onContinue: () => void;
+  onContinue: (projectId: string) => void;
   onBack: () => void;
+  targetProjectId?: string;
 }
 
-export function AsanaIntegrationForm({ onContinue, onBack }: AsanaIntegrationFormProps) {
+function handleProjectCardKeyDown(
+  event: KeyboardEvent<HTMLDivElement>,
+  onSelect: () => void
+) {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    onSelect();
+  }
+}
+
+export function AsanaIntegrationForm({ onContinue, onBack, targetProjectId }: AsanaIntegrationFormProps) {
   const dispatch = useDispatch<AppDispatch>();
   const { accounts } = useSelector((state: RootState) => state.integrations);
   const { projects: saramsaProjects } = useSelector((state: RootState) => state.projects);
+  const normalizedTargetProjectId = targetProjectId?.startsWith('project_')
+    ? targetProjectId.replace('project_', '')
+    : targetProjectId;
+  const currentSaramsaProject = normalizedTargetProjectId
+    ? saramsaProjects?.find((project) => project.id === normalizedTargetProjectId)
+    : null;
 
   const [patToken, setPatToken] = useState('');
   const [showToken, setShowToken] = useState(false);
@@ -102,16 +120,9 @@ export function AsanaIntegrationForm({ onContinue, onBack }: AsanaIntegrationFor
       );
     } catch (err: any) {
       const detail = err?.response?.data?.detail || err?.message || '';
-      // Local/dev setups may not expose a public webhook URL. Keep the project usable
-      // for manual push flows even if webhook bootstrap is unavailable.
-      if (
-        detail.includes('ASANA_WEBHOOK_TARGET_URL') ||
-        detail.includes('not configured')
-      ) {
-        console.warn('Asana webhook subscription skipped:', detail);
-        return;
-      }
-      throw err;
+      throw new Error(
+        detail || 'Failed to subscribe the Asana webhook for this project.'
+      );
     }
   };
 
@@ -245,6 +256,38 @@ export function AsanaIntegrationForm({ onContinue, onBack }: AsanaIntegrationFor
         await dispatch(fetchIntegrationAccounts());
       }
 
+      if (currentSaramsaProject && normalizedTargetProjectId) {
+        const asanaExternalLink = {
+          provider: 'asana',
+          integrationAccountId,
+          externalId: selectedProject.id,
+          url: selectedProject.url,
+          status: 'ok',
+          lastSyncedAt: null,
+          syncMetadata: {
+            workspaceGid: selectedWorkspaceGid,
+            workspaceName: selectedWorkspaceName,
+          },
+        };
+
+        const nextExternalLinks = [
+          ...(currentSaramsaProject.externalLinks || []).filter((link) => link.provider !== 'asana'),
+          asanaExternalLink,
+        ];
+
+        await apiRequest(
+          'patch',
+          `/integrations/projects/${normalizedTargetProjectId}/`,
+          { externalLinks: nextExternalLinks },
+          true
+        );
+        await dispatch(fetchProjects());
+        await ensureAsanaProjectSetup(normalizedTargetProjectId, selectedProject.id);
+
+        onContinue(normalizedTargetProjectId);
+        return;
+      }
+
       try {
         const checkResponse = await apiRequest(
           'get',
@@ -255,17 +298,15 @@ export function AsanaIntegrationForm({ onContinue, onBack }: AsanaIntegrationFor
         if (checkResponse.data.data.exists && checkResponse.data.data.project) {
           const existingProject = checkResponse.data.data.project;
           await ensureAsanaProjectSetup(existingProject.id, selectedProject.id);
-          localStorage.setItem('project_id', existingProject.id);
-          localStorage.setItem('selected_project_name', existingProject.name || selectedProject.name);
-          localStorage.setItem('asana_workspace_gid', selectedWorkspaceGid);
-          localStorage.setItem('asana_workspace_name', selectedWorkspaceName);
-          localStorage.setItem('asana_project_gid', selectedProject.id);
-          localStorage.setItem('asana_project_name', selectedProject.name);
-          onContinue();
+          onContinue(existingProject.id);
           return;
         }
-      } catch {
-        // Best-effort duplicate check; continue to create on lookup failure.
+      } catch (checkError: any) {
+        throw new Error(
+          checkError?.response?.data?.detail ||
+          checkError?.message ||
+          'Failed to verify whether this Asana project is already linked.'
+        );
       }
 
       const result = await dispatch(
@@ -296,13 +337,7 @@ export function AsanaIntegrationForm({ onContinue, onBack }: AsanaIntegrationFor
 
       await ensureAsanaProjectSetup(result.id, selectedProject.id);
 
-      localStorage.setItem('project_id', result.id);
-      localStorage.setItem('selected_project_name', selectedProject.name);
-      localStorage.setItem('asana_workspace_gid', selectedWorkspaceGid);
-      localStorage.setItem('asana_workspace_name', selectedWorkspaceName);
-      localStorage.setItem('asana_project_gid', selectedProject.id);
-      localStorage.setItem('asana_project_name', selectedProject.name);
-      onContinue();
+      onContinue(result.id);
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || 'Failed to create Asana project');
     } finally {
@@ -453,10 +488,15 @@ export function AsanaIntegrationForm({ onContinue, onBack }: AsanaIntegrationFor
               const isSelected = selectedProjectId === project.id;
               const isLinked = Boolean(linkedProject);
               return (
-                <button
+                <div
                   key={project.id}
-                  type="button"
                   onClick={() => setSelectedProjectId(project.id)}
+                  onKeyDown={(event) =>
+                    handleProjectCardKeyDown(event, () => setSelectedProjectId(project.id))
+                  }
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={isSelected}
                   className={`w-full rounded-2xl border p-4 text-left transition ${
                     isSelected
                       ? 'border-saramsa-brand/60 bg-saramsa-brand/10'
@@ -482,7 +522,7 @@ export function AsanaIntegrationForm({ onContinue, onBack }: AsanaIntegrationFor
                         </p>
                       )}
                     </div>
-                    {project.url && (
+                    {project.url ? (
                       <a
                         href={project.url}
                         target="_blank"
@@ -493,9 +533,9 @@ export function AsanaIntegrationForm({ onContinue, onBack }: AsanaIntegrationFor
                         <ExternalLink className="h-4 w-4" />
                         Open
                       </a>
-                    )}
+                    ) : null}
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

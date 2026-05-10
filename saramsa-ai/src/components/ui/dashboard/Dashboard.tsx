@@ -148,10 +148,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     if (!currentProjectId) {
       setCurrentProjectId(contextProjectId);
     }
-
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('project_id', contextProjectId);
-    }
   }, [projectContext]); // Removed currentProjectId from dependencies to prevent loop
 
   useEffect(() => {
@@ -164,8 +160,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const [wordCloudView, setWordCloudView] = useState<'split' | 'advanced'>('split');
   const [resultsTab, setResultsTab] = useState<'insights' | 'workitems'>('insights');
 
-  const projectId = typeof window !== 'undefined' ? localStorage.getItem('project_id') : null;
-  const selectedProjectName = projects?.find((p: any) => p.id === (currentProjectId || projectId))?.name;
+  const projectId = currentProjectId || initialProjectId || personalProjectId || projectContext?.project_id || '';
+  const selectedProjectName = projects?.find((p: any) => p.id === projectId)?.name;
   const slackAccount = useMemo(() => {
     return integrationAccounts.find((account: any) => account.provider === 'slack' && account.status === 'active');
   }, [integrationAccounts]);
@@ -201,13 +197,18 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       isGeneratingUserStories,
     [isTaskViewLoading, userStoriesLoading, isGeneratingUserStories]
   );
-  const selectedPlatform = useMemo((): 'azure' | 'jira' | null => {
+  const selectedPlatform = useMemo((): 'azure' | 'jira' | 'asana' | null => {
     if (!projects || !projects.length) return null;
-    const pid = currentProjectId || projectId || '';
-    const proj = projects.find((p: any) => p.id === pid);
+    const proj = projects.find((p: any) => p.id === projectId);
     const provider = proj?.externalLinks?.[0]?.provider;
-    return provider === 'jira' ? 'jira' : provider === 'azure' ? 'azure' : null;
-  }, [projects, currentProjectId, projectId]);
+    return provider === 'jira'
+      ? 'jira'
+      : provider === 'asana'
+      ? 'asana'
+      : provider === 'azure'
+      ? 'azure'
+      : null;
+  }, [projects, projectId]);
 
   const hasGeneratedWorkItems = useMemo(
     () =>
@@ -673,17 +674,15 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   useEffect(() => {
     // Prevent duplicate fetches
     if (hasConsolidatedFetchRef.current) return;
-    
-    const currentProjectId = typeof window !== 'undefined' ? localStorage.getItem('project_id') : null;
-    
-    if (currentProjectId) {
+
+    if (projectId) {
       hasConsolidatedFetchRef.current = true;
       // Mark latest fetch as satisfied for this project to avoid a subsequent getLatestAnalysis call
-      lastFetchedProjectRef.current = currentProjectId;
+      lastFetchedProjectRef.current = projectId;
       // Fetch consolidated dashboard data (analysis + user stories + comments + submission status)
-      dispatch(getConsolidatedDashboardData(currentProjectId));
+      dispatch(getConsolidatedDashboardData(projectId));
     }
-  }, [dispatch]);
+  }, [dispatch, projectId]);
 
   // Handle project selection
   const handleProjectSelect = (projectId: string) => {
@@ -695,9 +694,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     
     // Otherwise, use the original logic for backward compatibility
     setCurrentProjectId(projectId);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('project_id', projectId);
-    }
     
     // Clear current analysis data when switching projects
     dispatch(clearAnalysisData());
@@ -738,7 +734,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       if (!loadedComments && analysisData) {
         const effectiveProjectId =
           currentProjectId ||
-          projectId ||
+          initialProjectId ||
           personalProjectId ||
           '';
         const queryParam = effectiveProjectId
@@ -770,14 +766,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
 
 
-  // Set currentProjectId from initialProjectId prop or localStorage when component mounts
+  // Set currentProjectId from route or analysis context when component mounts
   useEffect(() => {
     if (initialProjectId && !currentProjectId) {
       setCurrentProjectId(initialProjectId);
-    } else if (projectId && !currentProjectId && !initialProjectId) {
-      setCurrentProjectId(projectId);
+    } else if (projectContext?.project_id && !currentProjectId && !initialProjectId) {
+      setCurrentProjectId(projectContext.project_id);
     }
-  }, [projectId, currentProjectId, initialProjectId]);
+  }, [currentProjectId, initialProjectId, projectContext?.project_id]);
 
 
   function parseDeepAnalysis(value: any): any {
@@ -790,7 +786,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         return JSON.parse(value);
       }
       return value;
-    } catch {
+    } catch (error) {
+      console.error('Failed to parse deep analysis payload:', error);
       return value;
     }
   }
@@ -944,8 +941,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           } else if (Array.isArray(parsed.comments)) {
             comments = parsed.comments.map(String).filter(Boolean);
           }
-        } catch {
-          // ignore, will error below if empty
+        } catch (parseError) {
+          console.error('Failed to parse uploaded JSON comments:', parseError);
+          throw new Error('The uploaded JSON file could not be parsed.');
         }
       } else if (lowerName.endsWith('.txt')) {
         // Strip UTF-8 BOM if present.
@@ -1058,9 +1056,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       if (!currentProjectId) {
         setCurrentProjectId(resolvedProjectId);
       }
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('project_id', resolvedProjectId);
-      }
     }
 
     dispatch(setAnalysisData(payload));
@@ -1153,7 +1148,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         if (commentsToUse && commentsToUse.length > 0) {
           // Step 1: Get Jira project metadata for better work item generation
           let jiraProjectMetadata = null;
-          const selectedJiraProjectId = typeof window !== 'undefined' ? localStorage.getItem('jira_selected_project') : null;
+          const selectedJiraProjectId = null;
           
           if (selectedJiraProjectId) {
             try {
@@ -1230,8 +1225,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         }
       } else {
         // For Azure DevOps, use the existing logic
-        const processTemplate = (typeof window !== 'undefined') ? 
-          localStorage.getItem('azure_process_template') || 'Agile' : 'Agile';
+        const processTemplate = 'Agile';
         
         
         // Check if we have comments and analysis data available
@@ -2056,7 +2050,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                                   
                                   // Step 1: Get Jira project metadata
                                   let jiraProjectMetadata = null;
-                                  const selectedJiraProjectId = typeof window !== 'undefined' ? localStorage.getItem('jira_selected_project') : null;
+                                  const selectedJiraProjectId = null;
                                   
                                   if (selectedJiraProjectId) {
                                     try {
@@ -2158,7 +2152,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                   </div>
                 )
               ) : (
-                /* Azure User Stories View */
+                /* Azure DevOps / Asana User Stories View */
                 (() => {
                   // Check if we have work items in the response
                   const hasWorkItems = deepAnalysis?.work_items && deepAnalysis.work_items.length > 0;
@@ -2183,7 +2177,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                         generated_at: deepAnalysis.generated_at,
                         comments_count: deepAnalysis.comments_count || 0
                       }] : currentProjectUserStories}
-                      platform="azure"
+                      platform={selectedPlatform ?? 'azure'}
                       projectId={currentProjectId}
                     />
                   ) : (
@@ -2227,6 +2221,3 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     </div>
   );
 }
-
-
-

@@ -59,7 +59,7 @@ interface WorkItem {
 
 interface UserStoryListProps {
   userStories?: UserStory[];
-  platform?: 'azure' | 'jira';
+  platform?: 'azure' | 'jira' | 'asana';
   projectId?: string;
   projectKey?: string;
   onRegenerateAnalysis?: () => void;
@@ -93,7 +93,9 @@ export const UserStoryList = ({
     (link: any) => link.provider === platform
   ) || false;
   const isDraftFromContext = projectContext?.is_draft === true || projectContext?.config_state === 'unconfigured';
-  const isDraftProject = isDraftFromContext || (!hasIntegrations && projectId) || (!hasPlatformIntegration && projectId);
+  const isDraftProject = currentProject
+    ? (!hasIntegrations || !hasPlatformIntegration)
+    : isDraftFromContext || (!hasIntegrations && projectId) || (!hasPlatformIntegration && projectId);
   const canManageAdminActions =
     !!projectId && (
       user?.role === 'admin' ||
@@ -1170,6 +1172,7 @@ export const UserStoryList = ({
         isOpen={showIntegrationModal}
         onClose={() => setShowIntegrationModal(false)}
         projectId={projectId || ''}
+        initialPlatform={platform}
       />
 
       <WorkItemReviewModal
@@ -1203,4 +1206,3 @@ export const UserStoryList = ({
     </div>
   );
 };
-

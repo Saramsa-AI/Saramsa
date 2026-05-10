@@ -8,11 +8,12 @@ import { JiraFormPanel } from './JiraFormPanel';
 import { apiRequest } from '@/lib/apiRequest';
 
 interface JiraIntegrationFormProps {
-  onContinue: () => void;
+  onContinue: (projectId: string) => void;
   onBack: () => void;
+  targetProjectId?: string;
 }
 
-export function JiraIntegrationForm({ onContinue, onBack }: JiraIntegrationFormProps) {
+export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: JiraIntegrationFormProps) {
   const dispatch = useDispatch<AppDispatch>();
   const { accounts } = useSelector((state: RootState) => state.integrations);
   const { projects: saramsaProjects } = useSelector((state: RootState) => state.projects);
@@ -30,6 +31,13 @@ export function JiraIntegrationForm({ onContinue, onBack }: JiraIntegrationFormP
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState('');
   const [isExistingIntegration, setIsExistingIntegration] = useState(false);
+
+  const normalizedTargetProjectId = targetProjectId?.startsWith('project_')
+    ? targetProjectId.replace('project_', '')
+    : targetProjectId;
+  const currentSaramsaProject = normalizedTargetProjectId
+    ? saramsaProjects?.find(project => project.id === normalizedTargetProjectId)
+    : null;
 
   const linkedProjects: { [key: string]: { id: string; name: string } } = {};
   saramsaProjects?.forEach(project => {
@@ -145,13 +153,6 @@ export function JiraIntegrationForm({ onContinue, onBack }: JiraIntegrationFormP
     }
 
     const selectedProjectData = projects.find(p => p.id === selectedProject);
-    if (selectedProjectData) {
-      localStorage.setItem('jira_email', config.email);
-      localStorage.setItem('jira_domain', config.domain);
-      localStorage.setItem('jira_project_key', selectedProjectData.key);
-      localStorage.setItem('jira_project_id', selectedProject);
-      localStorage.setItem('jira_project_name', selectedProjectData.name);
-    }
 
     setIsCreatingProject(true);
     setErrorMessage("");
@@ -176,6 +177,32 @@ export function JiraIntegrationForm({ onContinue, onBack }: JiraIntegrationFormP
         integrationAccountId = integrationResponse.data.data.account.id;
       }
 
+      if (currentSaramsaProject && normalizedTargetProjectId) {
+        const jiraExternalLink = {
+          provider: 'jira',
+          integrationAccountId: integrationAccountId,
+          externalId: selectedProject,
+          externalKey: selectedProjectData?.key,
+          url: `https://${config.domain}/browse/${selectedProjectData?.key}`,
+          status: 'ok',
+          lastSyncedAt: null,
+          syncMetadata: {}
+        };
+
+        const nextExternalLinks = [
+          ...(currentSaramsaProject.externalLinks || []).filter(link => link.provider !== 'jira'),
+          jiraExternalLink,
+        ];
+
+        await apiRequest('patch', `/integrations/projects/${normalizedTargetProjectId}/`, {
+          externalLinks: nextExternalLinks,
+        }, true);
+        await dispatch(fetchProjects());
+
+        onContinue(normalizedTargetProjectId);
+        return;
+      }
+
       try {
         const checkResponse = await apiRequest(
           'get',
@@ -186,13 +213,17 @@ export function JiraIntegrationForm({ onContinue, onBack }: JiraIntegrationFormP
 
         if (checkResponse.data.data.exists && checkResponse.data.data.project) {
           const existingSaramsaProject = checkResponse.data.data.project;
-          localStorage.setItem('project_id', existingSaramsaProject.id);
-          localStorage.setItem('selected_project_name', existingSaramsaProject.name || selectedProjectData?.name || '');
-          onContinue();
+          onContinue(existingSaramsaProject.id);
           return;
         }
-      } catch {
-        // Best-effort check; proceed with creation
+      } catch (checkError: any) {
+        const message =
+          checkError?.response?.data?.error ||
+          checkError?.message ||
+          'Failed to verify whether this Jira project is already linked.';
+        setErrorMessage(message);
+        setValidationStatus('error');
+        throw new Error(message);
       }
 
       const projectData = {
@@ -211,9 +242,7 @@ export function JiraIntegrationForm({ onContinue, onBack }: JiraIntegrationFormP
       };
 
       const result = await dispatch(createProject(projectData)).unwrap();
-      localStorage.setItem('project_id', result.id);
-      localStorage.setItem('selected_project_name', selectedProjectData?.name || '');
-      onContinue();
+      onContinue(result.id);
     } catch (e: any) {
       if (e.response?.status === 409) {
         try {
@@ -225,13 +254,17 @@ export function JiraIntegrationForm({ onContinue, onBack }: JiraIntegrationFormP
           );
           if (checkResponse.data.data.exists && checkResponse.data.data.project) {
             const existingProject = checkResponse.data.data.project;
-            localStorage.setItem('project_id', existingProject.id);
-            localStorage.setItem('selected_project_name', existingProject.name || selectedProjectData?.name || '');
-            onContinue();
+            onContinue(existingProject.id);
             return;
           }
-        } catch {
-          // keep default error flow
+        } catch (lookupError: any) {
+          const message =
+            lookupError?.response?.data?.error ||
+            lookupError?.message ||
+            'Failed to resolve the existing Jira project after a conflict.';
+          setErrorMessage(message);
+          setValidationStatus('error');
+          throw new Error(message);
         }
       }
       setErrorMessage(e instanceof Error ? e.message : 'Failed to create project');

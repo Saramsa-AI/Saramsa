@@ -58,6 +58,8 @@ export function DashboardPlatformSelection({
         "Team Assignment",
       ],
       status: hasAzureIntegration ? "configured" : "available",
+      badgeClass:
+        "bg-secondary/70 text-foreground border border-border/60",
     },
     {
       id: "jira",
@@ -74,6 +76,8 @@ export function DashboardPlatformSelection({
         "Rich Issue Details",
       ],
       status: hasJiraIntegration ? "configured" : "available",
+      badgeClass:
+        "bg-secondary/70 text-foreground border border-border/60",
     },
     {
       id: "asana",
@@ -90,6 +94,8 @@ export function DashboardPlatformSelection({
         "Webhook Bootstrap",
       ],
       status: hasAsanaIntegration ? "configured" : "available",
+      badgeClass:
+        "bg-secondary/70 text-foreground border border-border/60",
     },
   ];
 
@@ -129,14 +135,14 @@ export function DashboardPlatformSelection({
               <div
                 className={`relative bg-card/80 border-2 rounded-xl p-5 transition-all duration-300 cursor-pointer hover:border-border/70 hover:shadow-sm ${
                   platform.status === "configured"
-                    ? "border-border/70 bg-secondary/40"
+                    ? "border-saramsa-brand/25 bg-card/85 shadow-[0_16px_40px_-34px_rgba(139,95,191,0.4)]"
                     : "border-border/60"
                 }`}
                 onClick={() => onPlatformSelect(platform.id as "azure" | "jira" | "asana")}
               >
                 {platform.status === "configured" && (
                   <div className="absolute top-3 right-3">
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-secondary/70 text-foreground">
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${platform.badgeClass}`}>
                       <CheckCircle className="w-3 h-3 mr-1" />
                       Configured
                     </span>

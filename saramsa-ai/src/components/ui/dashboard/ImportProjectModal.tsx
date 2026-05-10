@@ -13,19 +13,19 @@ import {
   X, 
   Search, 
   Cloud, 
+  CheckSquare,
   ExternalLink, 
   Loader2, 
   CheckCircle, 
   AlertCircle,
   ArrowRight,
-  Calendar,
   Users
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
 interface ImportProjectModalProps {
-  provider: 'azure' | 'jira';
+  provider: 'azure' | 'jira' | 'asana';
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -102,6 +102,13 @@ export function ImportProjectModal({ provider, onClose, onSuccess }: ImportProje
           color: 'bg-secondary/70 border border-border/60',
           icon: <span className="text-foreground font-bold">J</span>,
           baseUrl: 'https://atlassian.net'
+        };
+      case 'asana':
+        return {
+          name: 'Asana',
+          color: 'bg-secondary/70 border border-border/60',
+          icon: <CheckSquare className="w-5 h-5 text-foreground" />,
+          baseUrl: 'https://app.asana.com'
         };
     }
   };
@@ -367,5 +374,4 @@ export function ImportProjectModal({ provider, onClose, onSuccess }: ImportProje
     </motion.div>
   );
 }
-
 

@@ -12,6 +12,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/useAuth';
 import { apiRequest } from '@/lib/apiRequest';
 import * as authApi from '@/lib/auth';
+import { encryptProjectId } from '@/lib/encryption';
 import { DataStream, TaskCards, AIProcessing } from '@/components/ui/animations';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -99,43 +100,43 @@ function LoginPageInner() {
           if (projects.length > 0) {
             const first = projects[0];
             const projectId = first?.id || first?.project_id;
-            if (projectId && typeof window !== 'undefined') {
-              localStorage.setItem('project_id', projectId);
-              // Extract organization from externalLinks if it's an Azure project
-              const azureLink = first?.externalLinks?.find((link: any) => link.provider === 'azure');
-              if (azureLink?.url) {
-                // Extract organization from URL like https://dev.azure.com/{organization}/{project}
-                const match = azureLink.url.match(/dev\.azure\.com\/([^\/]+)/);
-                if (match) {
-                  localStorage.setItem('azure_organization', match[1]);
-                }
-              }
-              if (first?.name) localStorage.setItem('azure_project_name', first.name);
+            if (projectId) {
+              router.push(`/projects/${encryptProjectId(projectId)}/dashboard/`);
+            } else {
+              router.push('/');
             }
-            router.push('/');
           } else {
-            // If no projects exist, still prefer home page if Azure is configured
+            // If no projects exist, treat setup as complete when any supported
+            // work-management integration is already connected. The config flow
+            // should behave like onboarding, not a recurring login checkpoint.
             try {
               const saved = await apiRequest('get', '/integrations/', undefined, true);
               if (saved.data?.success) {
-                // Check if there's an Azure integration account
                 const accounts = saved.data?.data?.accounts || [];
-                const hasAzureIntegration = accounts.some((acc: any) => acc.provider === 'azure');
-                if (hasAzureIntegration) {
-                  router.push('/');
+                const hasConfiguredWorkIntegration = accounts.some(
+                  (acc: any) =>
+                    ['azure', 'jira', 'asana'].includes(acc.provider) &&
+                    acc.status === 'active'
+                );
+
+                if (hasConfiguredWorkIntegration) {
+                  router.push('/projects/');
                 } else {
                   router.push('/config/');
                 }
               } else {
                 router.push('/config/');
               }
-            } catch {
-              router.push('/config/');
+            } catch (integrationLookupError) {
+              console.error('Failed to inspect integration state after login:', integrationLookupError);
+              setError('Logged in, but Saramsa could not verify your integration state. Open the project workspace and retry.');
+              router.push('/projects/');
             }
           }
-        } catch {
-          // On error fetching projects, go to home page; config if needed will be prompted there
-          router.push('/');
+        } catch (projectsLookupError) {
+          console.error('Failed to fetch projects after login:', projectsLookupError);
+          setError('Logged in, but Saramsa could not load your projects. Open the project workspace and retry.');
+          router.push('/projects/');
         }
       } else {
         setError(result.error || 'Login failed. Please check your credentials and try again.');

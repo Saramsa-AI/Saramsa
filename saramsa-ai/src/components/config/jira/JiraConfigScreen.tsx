@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { JiraIntegrationForm } from './JiraIntegrationForm';
 
 interface JiraConfigScreenProps {
-  onContinue: () => void;
+  onContinue: (projectId: string) => void;
   onBack: () => void;
 }
 

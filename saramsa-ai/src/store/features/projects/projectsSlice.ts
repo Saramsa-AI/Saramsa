@@ -148,23 +148,12 @@ export const importProjectFromExternal = createAsyncThunk(
       integration_account_id: data.integrationAccountId,
     };
     
-    // Add provider-specific fields
+    // Add provider-specific fields from the explicit selection payload instead of browser storage.
     if (data.provider === 'azure') {
-      const organization = typeof window !== 'undefined' ? localStorage.getItem('azure_organization') : null;
-      createData.organization = organization;
       createData.azure_project_name = data.externalProject.name;
       createData.azure_process_template = data.externalProject.templateName;
     } else if (data.provider === 'jira') {
-      const jira_domain = typeof window !== 'undefined' ? localStorage.getItem('jira_domain') : null;
-      const jira_email = typeof window !== 'undefined' ? localStorage.getItem('jira_email') : null;
-      createData.jira_domain = jira_domain;
-      createData.jira_email = jira_email;
       createData.jira_project_key = data.externalProject.key;
-    } else if (data.provider === 'asana') {
-      const workspaceGid = typeof window !== 'undefined' ? localStorage.getItem('asana_workspace_gid') : null;
-      const workspaceName = typeof window !== 'undefined' ? localStorage.getItem('asana_workspace_name') : null;
-      createData.asana_workspace_gid = workspaceGid;
-      createData.asana_workspace_name = workspaceName;
     }
     
     const response = await apiRequest('post', '/integrations/projects/create/', createData, true);

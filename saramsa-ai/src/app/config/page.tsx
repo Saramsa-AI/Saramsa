@@ -27,26 +27,15 @@ export default function ConfigPage() {
 
   const handlePlatformSelect = (platform: 'azure' | 'jira' | 'asana') => {
     setSelectedPlatform(platform);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('selected_platform', platform);
-    }
   };
 
   const handleBackToPlatformSelection = () => {
     setSelectedPlatform(null);
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('selected_platform');
-    }
   };
 
-  const handleContinue = async () => {
+  const handleContinue = async (projectId?: string) => {
     try {
-      // The config screens will already have stored project/organization
-      // Get the project ID from localStorage and route to the project dashboard
-      const projectId = typeof window !== 'undefined' ? localStorage.getItem('project_id') : null;
-      
       if (projectId) {
-        // Import encryption function
         const { encryptProjectId } = await import('@/lib/encryption');
         const encryptedId = encryptProjectId(projectId);
         router.push(`/projects/${encryptedId}/dashboard/`);

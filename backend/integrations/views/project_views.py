@@ -166,7 +166,7 @@ class ProjectDetailView(APIView):
     permission_classes = [IsProjectViewer]
 
     def get_permissions(self):
-        if self.request and self.request.method == "DELETE":
+        if self.request and self.request.method in {"DELETE", "PATCH"}:
             return [IsProjectAdmin()]
         return [permission() for permission in self.permission_classes]
 
@@ -218,6 +218,39 @@ class ProjectDetailView(APIView):
                 detail='Project not found or you do not have permission to delete it',
                 instance=request.path
             )
+
+    @handle_service_errors
+    def patch(self, request, project_id: str):
+        user_id = getattr(request.user, 'id', None)
+        if not user_id:
+            return StandardResponse.unauthorized(
+                detail="Authentication required",
+                instance=request.path
+            )
+
+        project_service = get_project_service()
+        update_data = {}
+
+        if 'project_name' in request.data:
+            update_data['name'] = (request.data.get('project_name') or '').strip()
+        if 'description' in request.data:
+            update_data['description'] = request.data.get('description') or ""
+        if 'status' in request.data:
+            update_data['status'] = request.data.get('status')
+        if 'externalLinks' in request.data:
+            update_data['externalLinks'] = request.data.get('externalLinks') or []
+
+        if not update_data:
+            return StandardResponse.validation_error(
+                detail="At least one updatable field is required.",
+                instance=request.path
+            )
+
+        project = project_service.update_project(project_id, user_id, update_data)
+        return StandardResponse.success(
+            data=project,
+            message="Project updated successfully"
+        )
 
 
 class LatestAnalysisView(APIView):
@@ -484,4 +517,3 @@ class ProjectRolesView(APIView):
             data={},
             message="Project role removed successfully"
         )
-

@@ -26,6 +26,7 @@ import {
   AlertCircle,
   ExternalLink,
   Cloud,
+  CheckSquare,
   Loader2,
   ChevronDown,
   ArrowRight
@@ -58,7 +59,7 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<'azure' | 'jira' | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<'azure' | 'jira' | 'asana' | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [syncingProjectId, setSyncingProjectId] = useState<string | null>(null);
@@ -128,12 +129,13 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     setShowCreateModal(true);
   };
 
-  const handleImportProject = (provider: 'azure' | 'jira') => {
+  const handleImportProject = (provider: 'azure' | 'jira' | 'asana') => {
     const hasIntegration = accounts.some(acc => acc.provider === provider && acc.status === 'active');
     
     if (!hasIntegration) {
       // Show error and redirect to settings
-      const providerLabel = provider === 'azure' ? 'Azure DevOps' : 'Jira';
+      const providerLabel =
+        provider === 'azure' ? 'Azure DevOps' : provider === 'asana' ? 'Asana' : 'Jira';
       alert(`No ${providerLabel} integration found. Please go to Settings > Integrations to connect your account.`);
       return;
     }
@@ -196,10 +198,11 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     }
   };
 
-  const getProviderBadge = (provider: 'azure' | 'jira') => {
+  const getProviderBadge = (provider: 'azure' | 'jira' | 'asana') => {
     const config = {
       azure: { name: 'Azure DevOps', color: 'bg-saramsa-brand', IconComponent: Cloud },
-      jira: { name: 'Jira', color: 'bg-saramsa-brand', IconComponent: null }
+      jira: { name: 'Jira', color: 'bg-saramsa-brand', IconComponent: null },
+      asana: { name: 'Asana', color: 'bg-saramsa-brand', IconComponent: CheckSquare }
     };
     
     const { name, color, IconComponent } = config[provider];
@@ -368,7 +371,7 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
             {accounts.length === 0 && (
               <div className="mt-6 p-4 bg-secondary/80 dark:bg-secondary/60 rounded-2xl max-w-md mx-auto border border-border/60">
                 <p className="text-sm text-muted-foreground">
-                  Tip: Connect your Azure DevOps or Jira accounts in{' '}
+                  Tip: Connect your Azure DevOps, Jira, or Asana accounts in{' '}
                   <a href="/settings" className="underline hover:no-underline">
                     Settings {'>'} Integrations
                   </a>{' '}

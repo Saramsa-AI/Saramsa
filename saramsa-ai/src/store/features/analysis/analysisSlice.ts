@@ -327,7 +327,7 @@ export const generateUserStories = createAsyncThunk<
   {
     analysisData: any;
     comments: string[];
-    platform: 'azure' | 'jira';
+    platform: 'azure' | 'jira' | 'asana';
     processTemplate?: string;
     projectId?: string;
     projectMetadata?: any;
@@ -371,7 +371,13 @@ export const generateUserStories = createAsyncThunk<
     const body = err.response?.data;
     const apiDetail = typeof body?.detail === 'string' ? body.detail : body?.data?.detail;
 
-    let errorMessage = `${data.platform === 'jira' ? 'Jira' : 'Azure'} work items generation failed. Please try again.`;
+    let errorMessage = `${
+      data.platform === 'jira'
+        ? 'Jira'
+        : data.platform === 'asana'
+        ? 'Asana'
+        : 'Azure'
+    } work items generation failed. Please try again.`;
 
     if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
       errorMessage = 'Work item generation is taking longer than expected. This may happen with large datasets. Please try again or reduce the number of comments.';
@@ -397,7 +403,7 @@ export const submitUserStories = createAsyncThunk<
     userId: string;
     projectId: string;
     userStories: any[];
-    platform: 'azure' | 'jira';
+    platform: 'azure' | 'jira' | 'asana';
     processTemplate?: string;
     time?: string;
   },
@@ -824,4 +830,3 @@ export const {
 } = analysisSlice.actions;
 
 export default analysisSlice.reducer; 
-

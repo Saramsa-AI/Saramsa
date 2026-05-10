@@ -12,18 +12,22 @@ import { lockBodyScroll, unlockBodyScroll } from "@/lib/bodyScrollLock";
 
 interface IntegrationConfigDrawerProps {
   platform: "jira" | "azure" | "asana" | null;
+  projectId: string;
   open: boolean;
   onClose: () => void;
   onBackToSelector: () => void;
-  onConfigured: () => void;
+  onConfigured: (projectId?: string) => void;
+  allowPlatformSelection: boolean;
 }
 
 export function IntegrationConfigDrawer({
   platform,
+  projectId,
   open,
   onClose,
   onBackToSelector,
   onConfigured,
+  allowPlatformSelection,
 }: IntegrationConfigDrawerProps) {
   const modalRoot = typeof document !== "undefined" ? document.body : null;
 
@@ -85,6 +89,7 @@ export function IntegrationConfigDrawer({
               variant="ghost"
               size="icon"
               onClick={onBackToSelector}
+              disabled={!allowPlatformSelection}
               className="h-8 w-8 text-muted-foreground hover:text-foreground"
               aria-label="Back to platform selection"
             >
@@ -107,11 +112,11 @@ export function IntegrationConfigDrawer({
 
         <div className="flex-1 overflow-y-auto p-0 lg:p-8">
           {platform === "azure" ? (
-            <AzureDevOpsIntegrationForm onContinue={onConfigured} onBack={onBackToSelector} />
+            <AzureDevOpsIntegrationForm onContinue={onConfigured} onBack={onBackToSelector} targetProjectId={projectId} />
           ) : platform === "asana" ? (
-            <AsanaIntegrationForm onContinue={onConfigured} onBack={onBackToSelector} />
+            <AsanaIntegrationForm onContinue={onConfigured} onBack={onBackToSelector} targetProjectId={projectId} />
           ) : (
-            <JiraIntegrationForm onContinue={onConfigured} onBack={onBackToSelector} />
+            <JiraIntegrationForm onContinue={onConfigured} onBack={onBackToSelector} targetProjectId={projectId} />
           )}
         </div>
       </motion.aside>

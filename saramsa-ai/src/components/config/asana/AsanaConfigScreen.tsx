@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { AsanaIntegrationForm } from './AsanaIntegrationForm';
 
 interface AsanaConfigScreenProps {
-  onContinue: () => void;
+  onContinue: (projectId: string) => void;
   onBack: () => void;
 }
 

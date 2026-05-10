@@ -419,18 +419,7 @@ export function logout(): void {
   clearTokens();
   setStoredUser(null);
   
-  // Clear any other auth-related localStorage items
   if (typeof window !== 'undefined') {
-    // Clear project selections and other session data
-    localStorage.removeItem('project_id');
-    localStorage.removeItem('selected_platform');
-    localStorage.removeItem('azure_organization');
-    localStorage.removeItem('azure_pat_token');
-    localStorage.removeItem('azure_process_template');
-    localStorage.removeItem('jira_email');
-    localStorage.removeItem('jira_api_token');
-    localStorage.removeItem('jira_domain');
-    
     // Redirect to login page
     if (window.location.pathname !== '/login') {
       window.location.href = '/login';

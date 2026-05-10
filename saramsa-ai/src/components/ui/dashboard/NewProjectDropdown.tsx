@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useRef, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { 
   FolderPlus, 
-  Download, 
   Cloud, 
-  Settings,
+  CheckSquare,
   AlertCircle,
   ExternalLink
 } from 'lucide-react';
@@ -16,7 +15,7 @@ import { Button } from '@/components/ui/button';
 interface NewProjectDropdownProps {
   onClose: () => void;
   onCreateProject: () => void;
-  onImportProject: (provider: 'azure' | 'jira') => void;
+  onImportProject: (provider: 'azure' | 'jira' | 'asana') => void;
   integrations: IntegrationAccount[];
 }
 
@@ -30,6 +29,7 @@ export function NewProjectDropdown({
 
   const azureIntegrations = integrations.filter(acc => acc.provider === 'azure' && acc.status === 'active');
   const jiraIntegrations = integrations.filter(acc => acc.provider === 'jira' && acc.status === 'active');
+  const asanaIntegrations = integrations.filter(acc => acc.provider === 'asana' && acc.status === 'active');
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -42,7 +42,7 @@ export function NewProjectDropdown({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [onClose]);
 
-  const handleImportClick = (provider: 'azure' | 'jira') => {
+  const handleImportClick = (provider: 'azure' | 'jira' | 'asana') => {
     onImportProject(provider);
   };
 
@@ -120,6 +120,30 @@ export function NewProjectDropdown({
           )}
         </Button>
 
+        {/* Import from Asana */}
+        <Button
+          onClick={() => handleImportClick('asana')}
+          disabled={asanaIntegrations.length === 0}
+          variant="ghost"
+          className="flex items-center gap-3 w-full px-3 py-3 text-left hover:bg-accent/60 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <div className="w-8 h-8 bg-secondary/70 border border-border/60 rounded-xl flex items-center justify-center">
+            <CheckSquare className="w-4 h-4 text-foreground" />
+          </div>
+          <div className="flex-1">
+            <p className="font-medium text-foreground">Import from Asana</p>
+            <p className="text-sm text-muted-foreground">
+              {asanaIntegrations.length > 0 
+                ? `${asanaIntegrations.length} account${asanaIntegrations.length !== 1 ? 's' : ''} connected`
+                : 'No accounts connected'
+              }
+            </p>
+          </div>
+          {asanaIntegrations.length === 0 && (
+            <AlertCircle className="w-4 h-4 text-yellow-500" />
+          )}
+        </Button>
+
         {/* No integrations message */}
         {integrations.length === 0 && (
           <>
@@ -132,7 +156,7 @@ export function NewProjectDropdown({
                     Connect your DevOps platforms
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Go to Settings {'>'} Integrations to connect Azure DevOps or Jira
+                    Go to Settings {'>'} Integrations to connect Azure DevOps, Jira, or Asana
                   </p>
                   <a
                     href="/settings"
@@ -150,5 +174,4 @@ export function NewProjectDropdown({
     </motion.div>
   );
 }
-
 
