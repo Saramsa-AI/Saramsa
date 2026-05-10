@@ -42,7 +42,7 @@ export interface WorkItem {
   submitted?: boolean;
   submittedAt?: string;
   submittedTo?: string;
-  external_work_item_id?: string;
+  external_id?: string;
   external_url?: string;
   status?: 'pending' | 'approved' | 'dismissed' | 'snoozed' | 'merged';
   push_status?: 'not_pushed' | 'pushed' | 'failed';

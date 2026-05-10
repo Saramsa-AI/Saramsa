@@ -22,7 +22,8 @@ class AppUser:
         self.is_authenticated = True
         self.is_anonymous = False
         self.date_joined = user_data.get('date_joined')
-        self.profile = user_data.get('profile', {})
+        self.profile = user_data.get('profile', {}) or {}
+        self.active_organization_id = self.profile.get('active_organization_id')
 
     def get_username(self):
         return self.email

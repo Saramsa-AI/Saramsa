@@ -36,6 +36,8 @@ import { ImportProjectModal } from '@/components/ui/dashboard/ImportProjectModal
 import { CreateProjectModal } from '@/components/ui/dashboard/CreateProjectModal';
 import { EditProjectModal } from '@/components/ui/dashboard/EditProjectModal';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/lib/useAuth';
+import { Building2 } from 'lucide-react';
 
 interface ProjectDashboardProps {
   onNavigateToAnalysis?: () => void;
@@ -44,8 +46,13 @@ interface ProjectDashboardProps {
 
 export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: ProjectDashboardProps) {
   const dispatch = useDispatch<AppDispatch>();
+  const { user } = useAuth();
   const { projects, currentProject, loading, error } = useSelector((state: RootState) => state.projects);
   const { accounts } = useSelector((state: RootState) => state.integrations);
+  const activeWorkspaceName =
+    user?.active_organization?.name ||
+    user?.organizations?.find((o) => o.id === user?.active_organization_id)?.name ||
+    null;
   
   const [showNewProjectDropdown, setShowNewProjectDropdown] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -225,8 +232,16 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-3xl font-semibold text-foreground">Projects</h1>
-            
+            <div className="space-y-0.5">
+              {activeWorkspaceName && (
+                <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
+                  <Building2 className="h-3 w-3 text-saramsa-brand" />
+                  <span>{activeWorkspaceName}</span>
+                </div>
+              )}
+              <h1 className="text-3xl font-semibold text-foreground">Projects</h1>
+            </div>
+
             {/* Stats Cards */}
             {projects.length > 0 && (
               <div className="flex items-center gap-3">

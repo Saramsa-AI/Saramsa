@@ -103,7 +103,12 @@ export function JiraIntegrationForm({ onContinue, onBack }: JiraIntegrationFormP
     setValidationStatus('loading');
 
     try {
-      const projectsResponse = await apiRequest('get', `/integrations/jira/projects/?domain=${encodeURIComponent(config.domain)}&email=${encodeURIComponent(config.email)}&api_token=${encodeURIComponent(config.apiToken)}`);
+      const projectsResponse = await apiRequest('post', '/integrations/external/projects/', {
+        provider: 'jira',
+        domain: config.domain,
+        email: config.email,
+        api_token: config.apiToken,
+      }, true);
 
       if (projectsResponse.data.success) {
         setProjects(projectsResponse.data.data.projects || []);
@@ -142,7 +147,6 @@ export function JiraIntegrationForm({ onContinue, onBack }: JiraIntegrationFormP
     const selectedProjectData = projects.find(p => p.id === selectedProject);
     if (selectedProjectData) {
       localStorage.setItem('jira_email', config.email);
-      localStorage.setItem('jira_api_token', config.apiToken);
       localStorage.setItem('jira_domain', config.domain);
       localStorage.setItem('jira_project_key', selectedProjectData.key);
       localStorage.setItem('jira_project_id', selectedProject);

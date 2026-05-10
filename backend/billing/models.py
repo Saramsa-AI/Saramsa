@@ -13,7 +13,8 @@ class TimestampedModel(models.Model):
 
 
 class BillingProfile(TimestampedModel):
-    user_id = models.CharField(max_length=64, unique=True, db_index=True)
+    user_id = models.CharField(max_length=64, db_index=True)
+    organization_id = models.CharField(max_length=64, db_index=True, blank=True, default="")
     stripe_customer_id = models.CharField(max_length=128, unique=True, blank=True, default="")
     stripe_subscription_id = models.CharField(max_length=128, unique=True, blank=True, default="")
     stripe_price_id = models.CharField(max_length=128, blank=True, default="")
@@ -27,8 +28,19 @@ class BillingProfile(TimestampedModel):
 
     class Meta:
         db_table = "billing_profiles"
+        constraints = [
+            # One billing profile per workspace. Race-safe creation in
+            # _get_or_create_profile depends on this; without a DB-level
+            # constraint, two concurrent first-creations would each insert.
+            models.UniqueConstraint(
+                fields=["organization_id"],
+                name="uq_billing_profile_org",
+                condition=models.Q(organization_id__gt=""),
+            ),
+        ]
         indexes = [
             models.Index(fields=["user_id"]),
+            models.Index(fields=["organization_id"]),
             models.Index(fields=["stripe_customer_id"]),
             models.Index(fields=["stripe_subscription_id"]),
             models.Index(fields=["subscription_status"]),
@@ -55,11 +67,14 @@ class BillingWebhookEvent(TimestampedModel):
 
 class UsageRecord(TimestampedModel):
     """
-    Tracks per-user consumption of expensive operations (analysis runs,
-    work-item generation, LLM calls) so quotas can be enforced.
-    One row per user per calendar month.
+    Tracks consumption of expensive operations (analysis runs, work-item
+    generation, LLM calls) so quotas can be enforced. One row per
+    organization per calendar month so all members of a workspace
+    share the same credit pool. user_id is preserved as the "first user
+    who triggered the row" stamp for audit.
     """
 
+    organization_id = models.CharField(max_length=64, db_index=True, blank=True, default="")
     user_id = models.CharField(max_length=64, db_index=True)
     period = models.CharField(
         max_length=7, db_index=True,
@@ -74,11 +89,18 @@ class UsageRecord(TimestampedModel):
         db_table = "billing_usage_records"
         constraints = [
             models.UniqueConstraint(
+                fields=["organization_id", "period"],
+                name="uq_usage_org_period",
+                condition=models.Q(organization_id__gt=""),
+            ),
+            models.UniqueConstraint(
                 fields=["user_id", "period"],
                 name="uq_usage_user_period",
+                condition=models.Q(organization_id=""),
             ),
         ]
         indexes = [
+            models.Index(fields=["organization_id", "period"]),
             models.Index(fields=["user_id", "period"]),
         ]
 

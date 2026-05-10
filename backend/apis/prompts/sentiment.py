@@ -8,6 +8,7 @@ sentiment analysis prompts without depending on the aiCore prompt system to avoi
 import logging
 
 from .constants import get_prompt
+from .resolver import resolve_prompt_template
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +60,10 @@ def format_comments_for_prompt(comments, start_index: int = 0):
     return str(comments)
 
 
-def getSentAnalysisPrompt(company_name: str = None, feedback_data: str = None, 
+def getSentAnalysisPrompt(company_name: str = None, feedback_data: str = None,
                          industry: str = None, use_confidence: bool = False,
-                         suggested_aspects: list = None, comment_start_index: int = 0):
+                         suggested_aspects: list = None, comment_start_index: int = 0,
+                         project_id: str = None, organization_id: str = None):
     """
     Get sentiment analysis prompt using the enhanced centralized prompt system.
     
@@ -86,10 +88,20 @@ def getSentAnalysisPrompt(company_name: str = None, feedback_data: str = None,
     """
     # Get the enhanced prompt template
     prompt_template = get_prompt(
-        company_name=company_name, 
+        company_name=company_name,
         prompt_type="sentiment",
         industry=industry,
         use_confidence=use_confidence
+    )
+
+    # If a superadmin has saved a tenant- or platform-wide override for
+    # this prompt type, swap in their version before variable substitution.
+    override_type = "sentiment_confidence" if use_confidence else "sentiment"
+    prompt_template = resolve_prompt_template(
+        override_type,
+        prompt_template,
+        project_id=project_id,
+        organization_id=organization_id,
     )
 
     # Log original template before substitution

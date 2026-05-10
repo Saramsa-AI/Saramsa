@@ -154,6 +154,7 @@ def setup_otel():
         _instrument_django()
         _instrument_psycopg2()
         _instrument_requests()
+        _instrument_celery()
 
         logger.info("OpenTelemetry setup completed — traces, metrics, and logs enabled")
 
@@ -189,3 +190,12 @@ def _instrument_requests():
         logger.info("Requests instrumentation enabled")
     except Exception as e:
         logger.warning(f"Requests instrumentation failed: {e}")
+
+
+def _instrument_celery():
+    try:
+        from opentelemetry.instrumentation.celery import CeleryInstrumentor
+        CeleryInstrumentor().instrument()
+        logger.info("Celery instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Celery instrumentation failed: {e}")

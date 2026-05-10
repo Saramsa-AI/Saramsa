@@ -122,18 +122,54 @@ class ReviewService:
         return target
 
     def batch_approve(self, candidate_ids: List[str], user_id: str,
-                      project_id: str) -> Dict[str, Any]:
+                      project_id: str, auto_push: bool = False) -> Dict[str, Any]:
         """Approve multiple candidates at once."""
         approved = 0
         failed = []
+        pushed = 0
+        push_failed = []
+
+        project_config = None
+        if auto_push:
+            from integrations.services import get_project_service
+            project_config = get_project_service().get_project(project_id, user_id)
+
         for cid in candidate_ids:
             try:
-                self.approve_candidate(cid, user_id, project_id)
+                candidate = self.approve_candidate(cid, user_id, project_id)
+                if auto_push and project_config and project_config.get("auto_push_on_approve", True):
+                    from .devops_service import get_devops_service
+
+                    result = get_devops_service().submit_to_external_platform(
+                        user_id=user_id,
+                        work_items=[candidate],
+                        platform=project_config.get("push_target_platform", "azure"),
+                        project_config=project_config,
+                    )
+                    successful_result = next((item for item in (result.get("results") or []) if item.get("success")), None)
+                    if successful_result:
+                        self.repo.update_candidate_status(cid, project_id, {
+                            "push_status": "pushed",
+                            "external_id": successful_result.get("work_item_id") or successful_result.get("issue_key") or "",
+                            "external_url": successful_result.get("url") or "",
+                            "external_platform": project_config.get("push_target_platform", "azure"),
+                            "pushed_at": datetime.now(timezone.utc).isoformat(),
+                            "push_error": "",
+                        })
+                        pushed += 1
+                    else:
+                        error_message = ((result.get("results") or [{}])[0]).get("error") or "Push failed"
+                        self.repo.update_candidate_status(cid, project_id, {
+                            "push_status": "failed",
+                            "external_platform": project_config.get("push_target_platform", "azure"),
+                            "push_error": error_message,
+                        })
+                        push_failed.append({"candidate_id": cid, "error": error_message})
                 approved += 1
             except Exception as e:
                 logger.error(f"Failed to approve candidate {cid}: {e}")
                 failed.append({'candidate_id': cid, 'error': str(e)})
-        return {'approved': approved, 'failed': failed}
+        return {'approved': approved, 'failed': failed, 'pushed': pushed, 'push_failed': push_failed}
 
     def update_candidate_fields(self, candidate_id: str, project_id: str,
                                 updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -185,11 +221,19 @@ class ReviewService:
                 platform=candidate.get('external_platform', 'azure'),
                 project_config=project_config
             )
+            successful_result = next((item for item in (result.get("results") or []) if item.get("success")), None)
+            if not successful_result:
+                error_message = ((result.get("results") or [{}])[0]).get("error") or "Push failed"
+                self.repo.update_candidate_status(candidate_id, project_id, {
+                    'push_status': 'failed',
+                    'push_error': error_message,
+                })
+                raise ValueError(error_message)
 
             push_updates = {
                 'push_status': 'pushed',
-                'external_id': result.get('external_id'),
-                'external_url': result.get('external_url'),
+                'external_id': (successful_result or {}).get('work_item_id') or (successful_result or {}).get('issue_key') or result.get('external_id'),
+                'external_url': (successful_result or {}).get('url') or result.get('external_url'),
                 'pushed_at': datetime.now(timezone.utc).isoformat(),
                 'push_error': None,
             }

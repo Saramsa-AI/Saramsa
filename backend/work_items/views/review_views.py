@@ -15,6 +15,14 @@ from ..services import get_review_service
 logger = logging.getLogger(__name__)
 
 
+def _first_successful_push_result(push_result):
+    results = (push_result or {}).get("results") or []
+    for result in results:
+        if result.get("success"):
+            return result
+    return {}
+
+
 class ReviewQueueListView(APIView):
     """GET /api/work-items/review/ - list pending candidates."""
     permission_classes = [IsProjectViewer]
@@ -106,13 +114,22 @@ class CandidateApproveView(APIView):
                     platform=project_config.get('push_target_platform', 'azure'),
                     project_config=project_config,
                 )
-                push_updates = {
-                    'push_status': 'pushed',
-                    'external_id': push_result.get('external_id'),
-                    'external_url': push_result.get('external_url'),
-                    'external_platform': project_config.get('push_target_platform', 'azure'),
-                    'pushed_at': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
-                }
+                first_result = _first_successful_push_result(push_result)
+                if first_result:
+                    push_updates = {
+                        'push_status': 'pushed',
+                        'external_id': first_result.get('work_item_id') or first_result.get('issue_key') or push_result.get('external_id'),
+                        'external_url': first_result.get('url') or push_result.get('external_url'),
+                        'external_platform': project_config.get('push_target_platform', 'azure'),
+                        'pushed_at': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+                        'push_error': '',
+                    }
+                else:
+                    push_updates = {
+                        'push_status': 'failed',
+                        'external_platform': project_config.get('push_target_platform', 'azure'),
+                        'push_error': ((push_result.get('results') or [{}])[0]).get('error') or 'Push failed',
+                    }
                 service.repo.update_candidate_status(candidate_id, project_id, push_updates)
                 candidate.update(push_updates)
         except Exception as e:
@@ -220,7 +237,7 @@ class CandidateBatchApproveView(APIView):
                 detail="candidate_ids and project_id are required.", instance=request.path)
 
         user_id = str(request.user.id)
-        result = get_review_service().batch_approve(candidate_ids, user_id, project_id)
+        result = get_review_service().batch_approve(candidate_ids, user_id, project_id, auto_push=True)
         return StandardResponse.success(data=result, message=f"Batch approve complete: {result['approved']} approved")
 
 

@@ -61,7 +61,7 @@ class NarrationService:
         if analysis_id and cache.get(f"analysis_failed:{analysis_id}"):
             raise RuntimeError("Cannot narrate a previously failed analysis")
 
-        prompt = create_narration_prompt(trimmed)
+        prompt = create_narration_prompt(trimmed, project_id=project_id)
 
         candidates = trimmed.get("work_item_candidates", [])
         candidate_count = len(candidates)
@@ -110,7 +110,7 @@ class NarrationService:
         parsed["_meta"] = {"status": "OK"}
         if actual_usage:
             parsed["_token_usage"] = actual_usage
-        self._record_usage(project_id, user_id, actual_usage, cache_hit=False)
+        self._record_narration_metrics(project_id, user_id, actual_usage)
         self._increment_usage_counters(project_id, actual_usage)
         return parsed
 
@@ -175,7 +175,15 @@ class NarrationService:
         return trimmed
 
     def _call_generate_completions(self, prompt: str, user_id: Optional[str] = None, project_id: Optional[str] = None):
-        """Call async generate_completions from sync code. Safe when already inside an async event loop."""
+        """Call async generate_completions from sync code. Safe when already inside an async event loop.
+
+        Note: token-billing org attribution falls back to the project→org
+        cache resolver inside `generate_completions`. None of narration's
+        callers currently have `organization_id` in scope, so threading
+        it through here would be dead code — the resolver's positive-only
+        cache makes batch narration cheap (one DB hit per project,
+        re-used across all candidates).
+        """
         def _run():
             return async_to_sync(generate_completions)(
                 prompt, max_tokens=self.MAX_OUTPUT_TOKENS,
@@ -191,8 +199,17 @@ class NarrationService:
             future = executor.submit(_run)
             return future.result()
 
-    def _record_usage(self, project_id: Optional[str], user_id: Optional[str],
-                      actual_usage: Optional[Dict[str, Any]], cache_hit: bool) -> None:
+    def _record_narration_metrics(
+        self,
+        project_id: Optional[str],
+        user_id: Optional[str],
+        actual_usage: Optional[Dict[str, Any]],
+    ) -> None:
+        """Roll narration token counts into the per-project per-day and
+        per-project per-month usage docs. No cache_hit param: every call
+        reaches the LLM (there's no narration-level result cache today),
+        so the underlying usage_service's cache_hit defaults to False.
+        """
         if not project_id:
             return
         input_tokens = (actual_usage or {}).get("input_tokens") or 0
@@ -201,12 +218,10 @@ class NarrationService:
         period_month = datetime.now().strftime("%Y-%m")
         usage_service = get_usage_service()
         usage_service.record_narration_usage(
-            project_id, period_day, input_tokens, output_tokens,
-            cache_hit=cache_hit, user_id=user_id,
+            project_id, period_day, input_tokens, output_tokens, user_id=user_id,
         )
         usage_service.record_narration_usage(
-            project_id, period_month, input_tokens, output_tokens,
-            cache_hit=cache_hit, user_id=user_id,
+            project_id, period_month, input_tokens, output_tokens, user_id=user_id,
         )
         self.last_cost = {"input_tokens": input_tokens, "output_tokens": output_tokens}
 

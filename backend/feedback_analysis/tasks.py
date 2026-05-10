@@ -77,7 +77,7 @@ def sync_single_slack_source(source_id: str, user_id: str):
     slack_service = get_slack_service()
     analysis_repo = AnalysisRepository()
 
-    source = source_service.get_source(source_id, user_id)
+    source = source_service.get_source_internal(source_id)
     if not source:
         logger.error(f"Source {source_id} not found for user {user_id}")
         return {"error": "source_not_found"}
@@ -95,6 +95,7 @@ def _sync_one_source(source, slack_service, source_service, analysis_repo):
     source_id = source["id"]
     user_id = source["userId"]
     project_id = source["projectId"]
+    organization_id = source.get("organizationId")
     account_id = source["accountId"]
     config = source.get("config", {})
     channels = config.get("channels", [])
@@ -129,7 +130,7 @@ def _sync_one_source(source, slack_service, source_service, analysis_repo):
         channel_oldest = sync_cursors_by_channel.get(channel_id) or oldest
 
         raw_messages = slack_service.fetch_channel_messages(
-            user_id, account_id, channel_id, oldest=channel_oldest,
+            user_id, account_id, channel_id, oldest=channel_oldest, organization_id=organization_id,
         )
 
         # Deduplicate
@@ -138,7 +139,7 @@ def _sync_one_source(source, slack_service, source_service, analysis_repo):
             continue
 
         # Resolve user names
-        token = slack_service._get_bot_token(user_id, account_id)
+        token = slack_service._get_bot_token(user_id, account_id, organization_id=organization_id)
         user_ids = list({m["user_id"] for m in new_messages if m.get("user_id")})
         user_names = slack_service.resolve_user_names(user_ids, token)
 
@@ -176,9 +177,8 @@ def _sync_one_source(source, slack_service, source_service, analysis_repo):
 
     # Update cursor
     now_iso = datetime.now(timezone.utc).isoformat()
-    source_service.update_sync_cursor(
+    source_service.update_sync_cursor_internal(
         source_id,
-        user_id,
         latest_ts,
         now_iso,
         cursors_by_channel=sync_cursors_by_channel,
@@ -219,9 +219,8 @@ def _sync_one_source(source, slack_service, source_service, analysis_repo):
                 analysis_id = uuid.uuid4().hex
                 comments_only = [c["text"] for c in new_for_analysis]
                 enqueued_at = datetime.now(timezone.utc).isoformat()
-                source_service.update_analysis_status(
+                source_service.update_analysis_status_internal(
                     source_id,
-                    user_id,
                     "queued",
                     error=None,
                     enqueued_at=enqueued_at,
@@ -253,9 +252,8 @@ def _sync_one_source(source, slack_service, source_service, analysis_repo):
                 except Exception:
                     latest_new_ts = None
 
-                source_service.update_analysis_cursor(
+                source_service.update_analysis_cursor_internal(
                     source_id,
-                    user_id,
                     datetime.now(timezone.utc).isoformat(),
                     latest_new_ts,
                     analyzed_ts_by_channel={
@@ -266,18 +264,16 @@ def _sync_one_source(source, slack_service, source_service, analysis_repo):
                         },
                     },
                 )
-                source_service.update_analysis_status(
+                source_service.update_analysis_status_internal(
                     source_id,
-                    user_id,
                     "success",
                     error=None,
                 )
                 analysis_triggered = True
         except Exception as e:
             logger.error(f"Error triggering Slack analysis: {e}", exc_info=True)
-            source_service.update_analysis_status(
+            source_service.update_analysis_status_internal(
                 source_id,
-                user_id,
                 "failed",
                 error=str(e),
                 failed_at=datetime.now(timezone.utc).isoformat(),

@@ -44,8 +44,47 @@ class StripeBillingService:
             raise ValueError("User not found.")
         return user
 
+    def _resolve_scope(self, user_id: str) -> tuple[UserAccount, Optional[str]]:
+        user = self._resolve_user(user_id)
+        active_org = ((user.profile or {}).get("active_organization_id") or "").strip() or None
+        return user, active_org
+
+    def _get_profile_for_scope(self, user_id: str) -> Optional[BillingProfile]:
+        user, active_org = self._resolve_scope(user_id)
+        if active_org:
+            profile = BillingProfile.objects.filter(organization_id=active_org).order_by("-updated_at").first()
+            if profile:
+                return profile
+            legacy = BillingProfile.objects.filter(user_id=str(user.id), organization_id="").order_by("-updated_at").first()
+            if legacy:
+                legacy.organization_id = active_org
+                legacy.updated_at = dj_timezone.now()
+                legacy.save(update_fields=["organization_id", "updated_at"])
+                return legacy
+            return None
+        return BillingProfile.objects.filter(user_id=str(user.id), organization_id="").order_by("-updated_at").first()
+
     def _get_or_create_profile(self, user_id: str) -> BillingProfile:
-        profile, _ = BillingProfile.objects.get_or_create(user_id=str(user_id))
+        user, active_org = self._resolve_scope(user_id)
+        if active_org:
+            profile = BillingProfile.objects.filter(organization_id=active_org).order_by("-updated_at").first()
+            if profile:
+                return profile
+            legacy = BillingProfile.objects.filter(user_id=str(user.id), organization_id="").order_by("-updated_at").first()
+            if legacy:
+                legacy.organization_id = active_org
+                legacy.updated_at = dj_timezone.now()
+                legacy.save(update_fields=["organization_id", "updated_at"])
+                return legacy
+            # Use get_or_create to avoid a race when two requests arrive
+            # simultaneously for the same workspace's first BillingProfile.
+            profile, _ = BillingProfile.objects.get_or_create(
+                organization_id=active_org,
+                defaults={"user_id": str(user.id)},
+            )
+            return profile
+
+        profile, _ = BillingProfile.objects.get_or_create(user_id=str(user.id), organization_id="")
         return profile
 
     def _ensure_customer(self, user: UserAccount, profile: BillingProfile) -> str:
@@ -58,7 +97,10 @@ class StripeBillingService:
         customer = stripe.Customer.create(
             email=user.email,
             name=f"{user.first_name} {user.last_name}".strip() or user.email,
-            metadata={"user_id": str(user.id)},
+            metadata={
+                "user_id": str(user.id),
+                "organization_id": profile.organization_id or "",
+            },
         )
         profile.stripe_customer_id = customer.id
         profile.updated_at = dj_timezone.now()
@@ -115,8 +157,16 @@ class StripeBillingService:
             success_url=safe_success,
             cancel_url=safe_cancel,
             client_reference_id=str(user.id),
-            metadata={"user_id": str(user.id)},
-            subscription_data={"metadata": {"user_id": str(user.id)}},
+            metadata={
+                "user_id": str(user.id),
+                "organization_id": profile.organization_id or "",
+            },
+            subscription_data={
+                "metadata": {
+                    "user_id": str(user.id),
+                    "organization_id": profile.organization_id or "",
+                }
+            },
         )
         return {"session_id": session.id, "checkout_url": session.url}
 
@@ -135,7 +185,7 @@ class StripeBillingService:
 
     def cancel_subscription(self, user_id: str) -> Dict[str, Any]:
         self._ensure_configured()
-        profile = BillingProfile.objects.filter(user_id=str(user_id)).first()
+        profile = self._get_profile_for_scope(user_id)
         if not profile or not profile.stripe_subscription_id:
             raise ValueError("No active subscription found.")
         stripe = self._stripe()
@@ -148,7 +198,7 @@ class StripeBillingService:
 
     def resume_subscription(self, user_id: str) -> Dict[str, Any]:
         self._ensure_configured()
-        profile = BillingProfile.objects.filter(user_id=str(user_id)).first()
+        profile = self._get_profile_for_scope(user_id)
         if not profile or not profile.stripe_subscription_id:
             raise ValueError("No active subscription found.")
         stripe = self._stripe()
@@ -160,7 +210,7 @@ class StripeBillingService:
         return {"cancel_at_period_end": False, "status": sub.get("status")}
 
     def get_subscription_status(self, user_id: str) -> Dict[str, Any]:
-        profile = BillingProfile.objects.filter(user_id=str(user_id)).first()
+        profile = self._get_profile_for_scope(user_id)
         if not profile:
             return {
                 "has_subscription": False,
@@ -196,17 +246,23 @@ class StripeBillingService:
         customer_id = str(subscription.get("customer") or "")
         sub_id = str(subscription.get("id") or "")
         metadata = subscription.get("metadata") or {}
+        organization_id = str(metadata.get("organization_id") or "")
         user_id = str(metadata.get("user_id") or fallback_user_id or "")
+        profile = None
+        if organization_id:
+            profile = BillingProfile.objects.filter(organization_id=organization_id).order_by("-updated_at").first()
         if not user_id and customer_id:
-            profile = BillingProfile.objects.filter(stripe_customer_id=customer_id).first()
+            profile = profile or BillingProfile.objects.filter(stripe_customer_id=customer_id).first()
             user_id = profile.user_id if profile else ""
         if not user_id:
             logger.warning("Stripe subscription update skipped: user_id not resolvable (sub=%s)", sub_id)
             return
 
-        profile = self._get_or_create_profile(user_id)
+        profile = profile or self._get_or_create_profile(user_id)
         if customer_id:
             profile.stripe_customer_id = customer_id
+        if organization_id:
+            profile.organization_id = organization_id
         profile.stripe_subscription_id = sub_id
         profile.subscription_status = str(subscription.get("status") or "inactive").lower()
 

@@ -1,0 +1,17 @@
+# Default: treat all files as text and normalize line endings to LF in the
+# repository AND on checkout. This kills the "LF will be replaced by CRLF"
+# warnings that fire on every git op when developers are on Windows with
+# autocrlf=true, without breaking *nix or CI which already use LF.
+* text=auto eol=lf
+
+# Mark binary fixture and asset types so git's CRLF / text-conversion
+# heuristics do not corrupt them on Windows checkouts.
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

@@ -10,8 +10,8 @@ Contains views for insights and reporting:
 - CumulativeAnalysisView: Get cumulative analysis
 - AnalysisComparisonView: Compare analyses
 - UserStoriesView: Get user stories by project and user
-- UserStoryDeleteView: Delete a single user story (owner only)
-- UserStoryBulkDeleteView: Bulk delete user stories (owner only)
+- UserStoryDeleteView: Delete a single user story
+- UserStoryBulkDeleteView: Bulk delete user stories
 """
 
 from rest_framework.views import APIView
@@ -562,7 +562,7 @@ class UserStoriesView(APIView):
 
 
 class UserStoryUpdateView(APIView):
-    """Update a single user story (owner only)."""
+    """Update a single user story."""
     permission_classes = [IsProjectEditor]
 
     @handle_service_errors
@@ -572,9 +572,9 @@ class UserStoryUpdateView(APIView):
             return StandardResponse.unauthorized(detail="Authentication required.", instance=request.path)
 
         from apis.infrastructure.storage_service import storage_service
-        story = storage_service.get_user_story(user_story_id, str(user_id))
+        story = storage_service.get_user_story_by_id(user_story_id)
         if not story:
-            return StandardResponse.not_found(detail="User story not found or not owned by you.", instance=request.path)
+            return StandardResponse.not_found(detail="User story not found.", instance=request.path)
 
         allowed_fields = {"title", "description", "status", "work_items", "payload"}
         updates = {k: v for k, v in request.data.items() if k in allowed_fields}
@@ -590,7 +590,7 @@ class UserStoryUpdateView(APIView):
 
 
 class UserStoryDeleteView(APIView):
-    """Delete a single user story (owner only)."""
+    """Delete a single user story."""
     permission_classes = [IsProjectEditor]
 
     @handle_service_errors
@@ -600,9 +600,14 @@ class UserStoryDeleteView(APIView):
             return StandardResponse.unauthorized(detail="Authentication required.", instance=request.path)
 
         from apis.infrastructure.storage_service import storage_service
-        deleted = storage_service.delete_user_story(user_story_id, str(user_id))
+        story = storage_service.get_user_story_by_id(user_story_id)
+        if not story:
+            return StandardResponse.not_found(detail="User story not found.", instance=request.path)
+
+        project_id = story.get("projectId") or story.get("project_id")
+        deleted = storage_service.delete_user_story(user_story_id, project_id=project_id)
         if not deleted:
-            return StandardResponse.not_found(detail="User story not found or not owned by you.", instance=request.path)
+            return StandardResponse.not_found(detail="User story not found.", instance=request.path)
 
         return StandardResponse.success(
             data={"deleted": True, "id": user_story_id},
@@ -611,7 +616,7 @@ class UserStoryDeleteView(APIView):
 
 
 class UserStoryBulkDeleteView(APIView):
-    """Bulk delete user stories (owner only)."""
+    """Bulk delete user stories."""
     permission_classes = [IsProjectEditor]
 
     @handle_service_errors
@@ -625,7 +630,24 @@ class UserStoryBulkDeleteView(APIView):
             return StandardResponse.validation_error(detail="'ids' must be a non-empty list.", instance=request.path)
 
         from apis.infrastructure.storage_service import storage_service
-        result = storage_service.bulk_delete_user_stories(ids, str(user_id))
+        stories = [storage_service.get_user_story_by_id(user_story_id) for user_story_id in ids]
+        stories = [story for story in stories if isinstance(story, dict)]
+        if not stories:
+            return StandardResponse.not_found(detail="User stories not found.", instance=request.path)
+
+        project_ids = {
+            str(story.get("projectId") or story.get("project_id") or "")
+            for story in stories
+            if story.get("projectId") or story.get("project_id")
+        }
+        if len(project_ids) != 1:
+            return StandardResponse.validation_error(
+                detail="Bulk delete must target user stories from a single project.",
+                instance=request.path,
+            )
+
+        project_id = next(iter(project_ids))
+        result = storage_service.bulk_delete_user_stories(ids, project_id=project_id)
 
         return StandardResponse.success(
             data={

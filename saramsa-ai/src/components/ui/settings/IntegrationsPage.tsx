@@ -255,31 +255,32 @@ export function IntegrationsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      <header className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-foreground">Integrations</h2>
-          <p className="text-muted-foreground mt-1">
-            Connect your DevOps platforms to import projects and sync work items
+          <h2 className="text-lg font-semibold text-foreground">Integrations</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Connect your DevOps platforms to import projects and sync work items.
           </p>
         </div>
         {accounts.length > 0 && (
-          <div className="flex gap-3">
+          <div className="flex gap-2 flex-shrink-0">
             {(!hasAzureIntegration || !hasJiraIntegration) && (
               <Button
                 onClick={handleOpenDashboardIntegrationModal}
                 variant="saramsa"
-                className="flex items-center gap-2 px-4 py-2 font-medium"
+                size="sm"
+                className="flex items-center gap-2"
               >
                 <Plus className="w-4 h-4" />
-                Add Integration
+                Add integration
               </Button>
             )}
             {!hasSlackIntegration && (
               <Button
                 onClick={() => setShowSlackForm(true)}
                 variant="outline"
-                className="flex items-center gap-2 px-4 py-2 font-medium border-saramsa-brand/20 hover:border-saramsa-brand/40 hover:bg-saramsa-brand/10"
+                size="sm"
+                className="flex items-center gap-2"
               >
                 <MessageSquare className="w-4 h-4" />
                 Add Slack
@@ -287,7 +288,7 @@ export function IntegrationsPage() {
             )}
           </div>
         )}
-      </div>
+      </header>
 
       {/* Slack OAuth Message */}
       {slackMessage && (

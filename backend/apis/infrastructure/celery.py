@@ -4,6 +4,9 @@ import sys
 import logging
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_process_init, beat_init
+
+from .otel import setup_otel
 
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'apis.settings')
@@ -78,6 +81,19 @@ app.autodiscover_tasks()
 # Ensure events are sent so Celery Ops / Flower can observe runs
 app.conf.worker_send_task_events = True
 app.conf.task_send_sent_event = True
+
+
+# Initialize OpenTelemetry inside each forked worker process — prefork workers
+# inherit the parent's memory but BatchSpanProcessor's background threads don't
+# survive fork, so each child must build its own pipeline.
+@worker_process_init.connect
+def _init_otel_worker(**_kwargs):
+    setup_otel()
+
+
+@beat_init.connect
+def _init_otel_beat(**_kwargs):
+    setup_otel()
 
 # Scheduled ingestion task disabled for now.
 # To re-enable later, restore the beat entry below.

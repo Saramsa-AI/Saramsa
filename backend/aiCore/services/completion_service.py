@@ -5,6 +5,7 @@ from apis.core.error_handlers import handle_service_errors
 import os
 import time
 import logging
+from typing import Optional
 
 # LLM Configuration Constants (deployment name = single source in openai_client)
 DEFAULT_MODEL = get_azure_deployment_name()
@@ -46,8 +47,69 @@ def get_async_azure_client_instance():
             str(e) if "Missing" in str(e) or "Set these env" in str(e) else f"Azure OpenAI service unavailable: {e}"
         )
 
+_PROJECT_ORG_CACHE_MAX = 1024
+_project_org_cache: dict[str, str] = {}
+
+
+def _project_org_id_for_billing(project_id: str) -> Optional[str]:
+    """Resolve project_id → organization_id for billing attribution.
+
+    Caches positive results so batch operations (e.g. narration over many
+    comments) don't hit the projects table per LLM call. Negative
+    results (project missing, organizationId still NULL because the
+    legacy backfill hasn't run) are NOT cached: a project's
+    organization_id can transition NULL → set when
+    `assign_legacy_records_to_organization` runs, and a long-lived
+    Celery worker that cached `None` would keep mis-billing the user's
+    active org for the rest of its lifetime.
+
+    Bounded at _PROJECT_ORG_CACHE_MAX entries; once full, new entries
+    evict the oldest insertion. Project→org is immutable once set
+    (workspace transfer creates a new org context, doesn't mutate
+    Project.organization_id), so cached positive entries can live for
+    the process lifetime safely.
+    """
+    cached = _project_org_cache.get(project_id)
+    if cached is not None:
+        return cached
+    try:
+        from apis.infrastructure.storage_service import storage_service
+        project_doc = storage_service.get_project_by_id_any(str(project_id))
+        if isinstance(project_doc, dict):
+            org_id = project_doc.get("organizationId") or project_doc.get("organization_id")
+            if org_id:
+                # If caching is disabled (MAX <= 0), skip the eviction
+                # block entirely — `next(iter({}))` would StopIteration.
+                # Thread-safety: the read-then-write pair below is not
+                # atomic under multi-threaded WSGI (gunicorn --threads),
+                # so the bounded size is approximate, not strict. CPython
+                # GIL keeps individual dict ops safe; worst case is a few
+                # extra entries or an evicted-then-re-fetched key. Not a
+                # correctness issue — billing attribution stays correct
+                # because evicted entries just fall back to a DB lookup.
+                if _PROJECT_ORG_CACHE_MAX > 0:
+                    if len(_project_org_cache) >= _PROJECT_ORG_CACHE_MAX:
+                        # Pop oldest insertion (dict preserves insertion order in 3.7+).
+                        _project_org_cache.pop(next(iter(_project_org_cache)), None)
+                    _project_org_cache[project_id] = str(org_id)
+                return str(org_id)
+    except Exception as exc:
+        logger.warning(
+            "Could not resolve project org for billing (project_id=%s): %s",
+            project_id, exc,
+        )
+    return None
+
+
 @handle_service_errors
-async def generate_completions(prompt_instruction, max_tokens=None, user_id=None, project_id=None, task_type=None):
+async def generate_completions(
+    prompt_instruction,
+    max_tokens=None,
+    user_id=None,
+    project_id=None,
+    task_type=None,
+    organization_id=None,
+):
     """
     Generate AI completions using Azure OpenAI with proper error handling and token tracking.
 
@@ -58,6 +120,11 @@ async def generate_completions(prompt_instruction, max_tokens=None, user_id=None
         user_id: User who triggered the call (for usage attribution)
         project_id: Project this call belongs to
         task_type: Type of work (e.g. 'analysis', 'narration', 'aspect_suggestion', 'keyword_update')
+        organization_id: Workspace to charge token usage to. If omitted but
+            project_id is set, the project's owning org is looked up and
+            cached. If both are omitted, billing falls back to the user's
+            active org (the existing behaviour). Pass explicitly when the
+            caller already has the org in scope to skip the lookup.
 
     Returns:
         Processed completion result
@@ -150,17 +217,37 @@ async def generate_completions(prompt_instruction, max_tokens=None, user_id=None
                     metadata={"component": "completion_service.generate_completions"},
                 )
 
-                # Record tokens in billing quota system
+                # Record tokens in billing quota system. Token charges should
+                # land on the project's owning workspace, not the user's
+                # active workspace. Caller can pass `organization_id=` to skip
+                # the project lookup; otherwise we look up + cache it.
                 if user_id and actual_usage.get("total_tokens"):
                     try:
                         from billing.quota import record_usage
                         from asgiref.sync import sync_to_async
+
+                        billing_org_id = organization_id
+                        if not billing_org_id and project_id:
+                            billing_org_id = await sync_to_async(
+                                _project_org_id_for_billing
+                            )(str(project_id))
+                            if not billing_org_id:
+                                # Project lookup couldn't produce an org (project
+                                # missing or its organization_id still NULL).
+                                # record_usage will fall back to the user's
+                                # active org. Log so audits can correlate.
+                                logger.info(
+                                    "Billing fallback: no org for project_id=%s, "
+                                    "charging user's active org instead",
+                                    project_id,
+                                )
 
                         # Use sync_to_async because record_usage touches the ORM
                         await sync_to_async(record_usage)(
                             user_id,
                             "llm_tokens",
                             actual_usage["total_tokens"],
+                            organization_id=billing_org_id,
                         )
                     except Exception as billing_err:
                         # Don't fail the request if billing tracking fails, but log the root cause

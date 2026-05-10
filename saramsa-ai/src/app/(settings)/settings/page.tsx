@@ -1,210 +1,128 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Settings, UserRound, PlugZap } from 'lucide-react';
-import { apiRequest } from "@/lib/apiRequest";
+import { useEffect, useMemo, useState } from "react";
+import { Bot, Building2, CreditCard, PlugZap, UserRound } from "lucide-react";
 import { IntegrationsPage } from "@/components/ui/settings/IntegrationsPage";
-import { Button } from "@/components/ui/button";
-import {
-  createStripeBillingPortalSession,
-  createStripeCheckoutSession,
-  getStripeSubscriptionStatus,
-  type SubscriptionStatus,
-} from "@/lib/billingService";
+import { WorkspacePage } from "@/components/ui/settings/WorkspacePage";
+import { PromptSettingsPage } from "@/components/ui/settings/PromptSettingsPage";
+import { GeneralPage } from "@/components/ui/settings/GeneralPage";
+import { BillingPage } from "@/components/ui/settings/BillingPage";
+import { useAuth } from "@/lib/useAuth";
 
-type Profile = { email?: string };
+type TabKey = "general" | "workspace" | "billing" | "integrations" | "prompts";
+
+type TabDef = {
+  key: TabKey;
+  label: string;
+  Icon: typeof UserRound;
+  description: string;
+};
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"profile" | "integrations">("profile");
-  const [profile, setProfile] = useState<Profile>({});
-  const [billing, setBilling] = useState<SubscriptionStatus | null>(null);
-  const [billingLoading, setBillingLoading] = useState<boolean>(true);
-  const [billingError, setBillingError] = useState<string | null>(null);
-  const [billingActionLoading, setBillingActionLoading] = useState<"checkout" | "portal" | null>(null);
+  const { user } = useAuth();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  // Compute superadmin only after client mount so the Prompts tab can't
+  // appear on the SSR pass and disappear on the client — that swap was
+  // triggering a hydration mismatch.
+  const isSuperadmin = mounted && !!user?.is_staff;
+  const [activeTab, setActiveTab] = useState<TabKey>("general");
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (tab === "workspace" || tab === "integrations" || tab === "billing" || tab === "general") {
+      setActiveTab(tab);
+    } else if (tab === "prompts" && isSuperadmin) {
+      setActiveTab("prompts");
+    } else if (tab === "profile") {
+      setActiveTab("general");
+    }
+  }, [isSuperadmin]);
+
+  const tabs = useMemo<TabDef[]>(
+    () => {
+      const list: TabDef[] = [
+        { key: "general", label: "General", Icon: UserRound, description: "Account" },
+        { key: "workspace", label: "Workspace", Icon: Building2, description: "Members & invites" },
+        { key: "billing", label: "Billing", Icon: CreditCard, description: "Subscription" },
+        { key: "integrations", label: "Integrations", Icon: PlugZap, description: "Connected apps" },
+      ];
+      if (isSuperadmin) {
+        list.push({ key: "prompts", label: "Prompts", Icon: Bot, description: "AI overrides" });
+      }
+      return list;
+    },
+    [isSuperadmin],
+  );
+
+  const handleSelect = (key: TabKey) => {
+    setActiveTab(key);
     if (typeof window !== "undefined") {
-      const tab = new URLSearchParams(window.location.search).get("tab");
-      if (tab === "integrations") {
-        setActiveTab("integrations");
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const me = await apiRequest("get", "/auth/me/", undefined, true);
-        const payload = me.data?.data || me.data || {};
-        setProfile({
-          email: payload.email || "",
-        });
-      } catch {
-        setProfile({});
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        setBillingLoading(true);
-        setBillingError(null);
-        const status = await getStripeSubscriptionStatus();
-        setBilling(status);
-      } catch (e: any) {
-        setBillingError(e?.message || "Failed to load billing status.");
-      } finally {
-        setBillingLoading(false);
-      }
-    })();
-  }, []);
-
-  const handleStartSubscription = async () => {
-    try {
-      setBillingActionLoading("checkout");
-      const data = await createStripeCheckoutSession();
-      if (data?.checkout_url) {
-        window.location.href = data.checkout_url;
-      }
-    } catch (e: any) {
-      setBillingError(e?.message || "Failed to start checkout.");
-    } finally {
-      setBillingActionLoading(null);
-    }
-  };
-
-  const handleOpenBillingPortal = async () => {
-    try {
-      setBillingActionLoading("portal");
-      const data = await createStripeBillingPortalSession();
-      if (data?.portal_url) {
-        window.location.href = data.portal_url;
-      }
-    } catch (e: any) {
-      setBillingError(e?.message || "Failed to open billing portal.");
-    } finally {
-      setBillingActionLoading(null);
+      const params = new URLSearchParams(window.location.search);
+      params.set("tab", key);
+      const newUrl = `${window.location.pathname}?${params.toString()}`;
+      window.history.replaceState({}, "", newUrl);
     }
   };
 
   return (
     <div className="h-full overflow-y-auto bg-background text-foreground">
-      <div className="min-h-full max-w-4xl mx-auto space-y-6 p-6">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-saramsa-gradient-from to-saramsa-gradient-to text-white shadow-lg">
-              <Settings className="h-6 w-6" />
-            </span>
-            <div>
-              <h1 className="text-3xl font-bold text-foreground">Settings</h1>
-              <p className="text-sm text-muted-foreground">Manage your account and integrations</p>
-            </div>
-          </div>
-        </div>
+      <div className="max-w-screen-2xl mx-auto px-4 py-8 sm:px-6 lg:px-6 lg:py-14">
+        <header className="mb-8 lg:mb-12">
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">Settings</h1>
+          <p className="text-sm text-muted-foreground mt-2">
+            Manage your account, workspace, and connected integrations.
+          </p>
+        </header>
 
-        <div className="bg-card rounded-xl border border-border p-2">
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="ghost"
-              className={`h-10 text-sm font-medium transition-colors ${
-                activeTab === "profile"
-                  ? "bg-secondary text-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-              }`}
-              onClick={() => setActiveTab("profile")}
+        <div className="flex flex-col lg:flex-row gap-8 lg:gap-16">
+          <aside className="lg:w-60 lg:flex-shrink-0">
+            {/* Mobile: horizontal scroll. Desktop: vertical sticky sidebar. */}
+            <nav
+              aria-label="Settings sections"
+              className="lg:sticky lg:top-8 -mx-4 px-4 sm:mx-0 sm:px-0 overflow-x-auto lg:overflow-visible"
             >
-              <span className="flex items-center gap-2">
-                <span
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-saramsa-gradient-from to-saramsa-gradient-to text-white transition-opacity ${
-                    activeTab === "profile" ? "opacity-100" : "opacity-60"
-                  }`}
-                >
-                  <UserRound className="h-4 w-4" />
-                </span>
-                Profile
-              </span>
-            </Button>
-            <Button
-              variant="ghost"
-              className={`h-10 text-sm font-medium transition-colors ${
-                activeTab === "integrations"
-                  ? "bg-secondary text-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-              }`}
-              onClick={() => setActiveTab("integrations")}
-            >
-              <span className="flex items-center gap-2">
-                <span
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-saramsa-gradient-from to-saramsa-gradient-to text-white transition-opacity ${
-                    activeTab === "integrations" ? "opacity-100" : "opacity-60"
-                  }`}
-                >
-                  <PlugZap className="h-4 w-4" />
-                </span>
-                Integrations
-              </span>
-            </Button>
-          </div>
+              <ul className="flex lg:flex-col gap-1 lg:gap-1 min-w-max lg:min-w-0">
+                {tabs.map(({ key, label, Icon }) => {
+                  const selected = activeTab === key;
+                  return (
+                    <li key={key}>
+                      <button
+                        type="button"
+                        onClick={() => handleSelect(key)}
+                        aria-current={selected ? "page" : undefined}
+                        className={`group w-full flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors whitespace-nowrap lg:whitespace-normal ${
+                          selected
+                            ? "bg-secondary text-foreground"
+                            : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                        }`}
+                      >
+                        <Icon
+                          className={`h-4 w-4 flex-shrink-0 transition-colors ${
+                            selected ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+                          }`}
+                          aria-hidden="true"
+                        />
+                        <span>{label}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </nav>
+          </aside>
+
+          <main className="flex-1 min-w-0">
+            {activeTab === "general" && <GeneralPage />}
+            {activeTab === "workspace" && <WorkspacePage />}
+            {activeTab === "billing" && <BillingPage />}
+            {activeTab === "integrations" && <IntegrationsPage />}
+            {activeTab === "prompts" && isSuperadmin && <PromptSettingsPage />}
+          </main>
         </div>
-
-        {activeTab === "profile" && (
-          <div className="bg-card rounded-xl border border-border p-6 space-y-6">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground mb-2">Profile Information</h2>
-              <p className="text-muted-foreground text-sm">Your account details</p>
-            </div>
-
-            <div className="rounded-lg border border-border bg-secondary/80 dark:border-border/60 dark:bg-background/60 p-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="text-muted-foreground mb-1">Email</p>
-                  <p className="font-medium text-foreground">{profile.email || "-"}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-border bg-secondary/80 dark:border-border/60 dark:bg-background/60 p-4 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Subscription Billing</p>
-                  <p className="text-xs text-muted-foreground">
-                    {billingLoading
-                      ? "Loading billing status..."
-                      : billing?.is_subscribed
-                      ? `Active (${billing.subscription_status ?? "subscribed"})`
-                      : `Not active (${billing?.subscription_status || "inactive"})`}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  {!billing?.is_subscribed && (
-                    <Button
-                      variant="saramsa"
-                      size="sm"
-                      onClick={handleStartSubscription}
-                      disabled={billingActionLoading !== null}
-                    >
-                      {billingActionLoading === "checkout" ? "Starting..." : "Start Subscription"}
-                    </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleOpenBillingPortal}
-                    disabled={billingActionLoading !== null}
-                  >
-                    {billingActionLoading === "portal" ? "Opening..." : "Manage Billing"}
-                  </Button>
-                </div>
-              </div>
-              {billingError && (
-                <p className="text-xs text-red-600 dark:text-red-400">{billingError}</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {activeTab === "integrations" && <IntegrationsPage />}
       </div>
     </div>
   );

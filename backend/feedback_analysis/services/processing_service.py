@@ -96,12 +96,14 @@ class ProcessingService:
                                 feedback_data=batch,
                                 suggested_aspects=suggested_aspects,
                                 comment_start_index=comment_start_index,
+                                project_id=project_id,
                             )
                         else:
                             # Deep analysis still uses string
                             chunk_text = "\n".join(text for _, text in batch)
                             chunk_prompt = getDeepAnalysisPrompt(
-                                company_name=company_name, feedback_data=chunk_text
+                                company_name=company_name, feedback_data=chunk_text,
+                                project_id=project_id,
                             )
                         estimated_tokens_needed = (expected_count * 200) + 500
                         max_tokens = max(estimated_tokens_needed, 4000)

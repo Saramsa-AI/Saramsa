@@ -107,21 +107,6 @@ export const createIntegrationAccount = createAsyncThunk(
   }
 );
 
-export const updateIntegrationAccount = createAsyncThunk(
-  'integrations/updateAccount',
-  async (data: {
-    accountId: string;
-    credentials?: any;
-    metadata?: any;
-  }) => {
-    const response = await apiRequest('patch', `/integrations/${data.accountId}/`, {
-      credentials: data.credentials,
-      metadata: data.metadata,
-    }, true);
-    return response.data.data.account; // StandardResponse format
-  }
-);
-
 export const deleteIntegrationAccount = createAsyncThunk(
   'integrations/deleteAccount',
   async (accountId: string) => {
@@ -217,7 +202,7 @@ export const createJiraIntegration = createAsyncThunk(
 export const fetchAzureProjects = createAsyncThunk(
   'integrations/fetchAzureProjects',
   async (credentials: { organization: string; pat_token: string }) => {
-    const response = await apiRequest('get', `/integrations/azure/projects/?organization=${encodeURIComponent(credentials.organization)}&pat_token=${encodeURIComponent(credentials.pat_token)}`, undefined, true);
+    const response = await apiRequest('post', '/integrations/azure/projects/', credentials, true);
     
     // StandardResponse format: response.data.data
     if (response.data.success) {
@@ -273,7 +258,7 @@ export const syncFeedbackSource = createAsyncThunk(
 export const fetchJiraProjects = createAsyncThunk(
   'integrations/fetchJiraProjects',
   async (credentials: { domain: string; email: string; api_token: string }) => {
-    const response = await apiRequest('get', `/integrations/jira/projects/?domain=${encodeURIComponent(credentials.domain)}&email=${encodeURIComponent(credentials.email)}&api_token=${encodeURIComponent(credentials.api_token)}`, undefined, true);
+    const response = await apiRequest('post', '/integrations/jira/projects/', credentials, true);
     
     // StandardResponse format: response.data.data
     if (response.data.success) {
@@ -333,15 +318,6 @@ const integrationsSlice = createSlice({
         state.loading = false;
         state.error = action.error.message || 'Failed to create integration account';
       })
-      
-      // Update account
-      .addCase(updateIntegrationAccount.fulfilled, (state, action) => {
-        const index = state.accounts.findIndex(acc => acc.id === action.payload.id);
-        if (index !== -1) {
-          state.accounts[index] = action.payload;
-        }
-      })
-      
       // Delete account
       .addCase(deleteIntegrationAccount.fulfilled, (state, action) => {
         state.accounts = state.accounts.filter(acc => acc.id !== action.payload);

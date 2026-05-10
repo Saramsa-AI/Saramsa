@@ -6,10 +6,8 @@ password management, and user profile operations.
 """
 
 from typing import Dict, List, Optional, Any
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import uuid
-import hashlib
-import secrets
 from django.contrib.auth.hashers import make_password, check_password
 from ..repositories import UserRepository
 import logging
@@ -28,14 +26,18 @@ class AuthenticationService:
     def create_user(self, email: str, password: str,
                    first_name: str = "", last_name: str = "",
                    role: str = "user") -> Dict[str, Any]:
-        """Create a new user with hashed password."""
+        """Create a new user with hashed password.
+
+        Workspace membership is granted by accepting an invite after the
+        account exists (handled by the caller). This method does not
+        create or attach any organization — registration is invite-only.
+        """
         try:
-            # Hash password
             hashed_password = self._hash_password(password)
-            
-            # Create user data
+            user_id = f"user_{uuid.uuid4().hex[:12]}"
+
             user_data = {
-                "id": f"user_{uuid.uuid4().hex[:12]}",
+                "id": user_id,
                 "email": email,
                 "password": hashed_password,
                 "first_name": first_name,
@@ -43,19 +45,18 @@ class AuthenticationService:
                 "is_active": True,
                 "is_staff": False,
                 "date_joined": datetime.now(timezone.utc).isoformat(),
-                "profile": {
-                    "role": role
-                },
+                "profile": {"role": role},
                 "createdAt": datetime.now(timezone.utc).isoformat(),
-                "updatedAt": datetime.now(timezone.utc).isoformat()
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
             }
-            
+
             return self.user_repo.create_user(user_data)
-            
+
         except Exception as e:
             logger.error(f"Error creating user: {e}")
             raise
-    
+
+
     def authenticate_user(self, email: str, password: str) -> Optional[Dict[str, Any]]:
         """Authenticate user with email and password (Django passes this as `username`)."""
         try:
@@ -92,6 +93,26 @@ class AuthenticationService:
         except Exception as e:
             logger.error(f"Error updating user {user_id}: {e}")
             raise
+
+    def get_organization_context(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
+        from integrations.services import get_organization_service
+        profile = user_data.get("profile") or {}
+        active_organization_id = profile.get("active_organization_id")
+        return get_organization_service().get_organization_context_for_user(
+            user_data,
+            active_organization_id=active_organization_id,
+        )
+
+    def set_active_organization(self, user_id: str, organization_id: str) -> Dict[str, Any]:
+        from integrations.services import get_organization_service
+        user_data = self.get_user_by_id(user_id)
+        if not user_data:
+            raise ValueError("User not found")
+        get_organization_service().require_membership(organization_id, user_id)
+        profile = dict(user_data.get("profile") or {})
+        profile["active_organization_id"] = organization_id
+        user_data["profile"] = profile
+        return self.update_user(user_id, user_data)
 
     def get_all_users(self) -> List[Dict[str, Any]]:
         """Get all users."""
@@ -154,117 +175,6 @@ class AuthenticationService:
             logger.error(f"Failed to send password reset email to {email}: {e}")
             return False
 
-    # Registration OTP methods
-    def request_registration_otp(self, email: str) -> Dict[str, Any]:
-        """Generate and send registration OTP to email."""
-        if self.user_repo.get_by_email(email):
-            raise ValueError("Email already exists")
-
-        now = datetime.now(timezone.utc)
-        ttl_minutes = getattr(settings, "REGISTRATION_OTP_TTL_MINUTES", 10)
-        cooldown_seconds = getattr(settings, "REGISTRATION_OTP_RESEND_COOLDOWN_SECONDS", 60)
-
-        existing = self.user_repo.get_registration_otp(email)
-        if existing:
-            last_sent_at = self._parse_iso_datetime(existing.get("last_sent_at"))
-            if last_sent_at:
-                elapsed = (now - last_sent_at).total_seconds()
-                if elapsed < cooldown_seconds:
-                    remaining = int(cooldown_seconds - elapsed)
-                    raise ValueError(f"Please wait {remaining} seconds before requesting a new code.")
-
-        code = f"{secrets.randbelow(1000000):06d}"
-        otp_hash = self._hash_otp(code)
-        expires_at = (now + timedelta(minutes=ttl_minutes)).isoformat()
-
-        send_count = 1
-        attempts = 0
-        if existing:
-            send_count = int(existing.get("send_count", 0)) + 1
-            attempts = int(existing.get("attempts", 0))
-
-        payload = {
-            "id": f"reg_otp:{email}",
-            "type": "registration_otp",
-            "email": email,
-            "otp_hash": otp_hash,
-            "expires_at": expires_at,
-            "attempts": attempts,
-            "max_attempts": getattr(settings, "REGISTRATION_OTP_MAX_ATTEMPTS", 5),
-            "send_count": send_count,
-            "last_sent_at": now.isoformat(),
-            "created_at": existing.get("created_at") if existing else now.isoformat(),
-            "updated_at": now.isoformat(),
-            "used": False,
-        }
-
-        self.user_repo.save_registration_otp(payload)
-        self.send_registration_otp_email(email, code, ttl_minutes)
-
-        return {
-            "email": email,
-            "expires_in_seconds": int(ttl_minutes * 60),
-            "cooldown_seconds": int(cooldown_seconds)
-        }
-
-    def verify_registration_otp(self, email: str, code: str) -> None:
-        """Verify registration OTP or raise ValueError."""
-        if getattr(settings, "REGISTRATION_OTP_BYPASS", False):
-            logger.warning("Registration OTP bypass is enabled; skipping verification.")
-            return
-        entry = self.user_repo.get_registration_otp(email)
-        if not entry:
-            raise ValueError("OTP not found. Please request a new code.")
-        if entry.get("used"):
-            raise ValueError("OTP already used. Please request a new code.")
-
-        now = datetime.now(timezone.utc)
-        expires_at = self._parse_iso_datetime(entry.get("expires_at"))
-        if expires_at and now > expires_at:
-            raise ValueError("OTP has expired. Please request a new code.")
-
-        max_attempts = int(entry.get("max_attempts") or getattr(settings, "REGISTRATION_OTP_MAX_ATTEMPTS", 5))
-        attempts = int(entry.get("attempts", 0))
-        if attempts >= max_attempts:
-            raise ValueError("OTP attempt limit reached. Please request a new code.")
-
-        if not secrets.compare_digest(self._hash_otp(code), entry.get("otp_hash", "")):
-            entry["attempts"] = attempts + 1
-            entry["updated_at"] = now.isoformat()
-            self.user_repo.save_registration_otp(entry)
-            raise ValueError("Invalid OTP code.")
-
-        entry["used"] = True
-        entry["used_at"] = now.isoformat()
-        entry["updated_at"] = now.isoformat()
-        self.user_repo.save_registration_otp(entry)
-
-    def send_registration_otp_email(self, email: str, code: str, ttl_minutes: int) -> bool:
-        """Send registration OTP email."""
-        subject = getattr(settings, "REGISTRATION_OTP_EMAIL_SUBJECT", "Your Saramsa registration code")
-        from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@saramsa.ai")
-
-        text_body = (
-            "Use the code below to complete your Saramsa registration:\n\n"
-            f"{code}\n\n"
-            f"This code expires in {ttl_minutes} minutes."
-        )
-
-        html_body = (
-            "<p>Use the code below to complete your Saramsa registration:</p>"
-            f"<p style=\"font-size: 20px; font-weight: bold; letter-spacing: 2px;\">{code}</p>"
-            f"<p>This code expires in {ttl_minutes} minutes.</p>"
-        )
-
-        try:
-            message = EmailMultiAlternatives(subject, text_body, from_email, [email])
-            message.attach_alternative(html_body, "text/html")
-            message.send(fail_silently=False)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to send registration OTP email to {email}: {e}")
-            return False
-    
     def _hash_password(self, password: str) -> str:
         """Hash password using Django's make_password."""
         return make_password(password)
@@ -291,21 +201,6 @@ class AuthenticationService:
         except Exception as e:
             logger.error(f"Error verifying password: {e}")
             return False
-
-    def _hash_otp(self, code: str) -> str:
-        payload = f"{code}{settings.SECRET_KEY}".encode("utf-8")
-        return hashlib.sha256(payload).hexdigest()
-
-    def _parse_iso_datetime(self, value: Optional[str]) -> Optional[datetime]:
-        if not value:
-            return None
-        try:
-            dt = datetime.fromisoformat(value)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
-        except Exception:
-            return None
 
 
 # Global service instance

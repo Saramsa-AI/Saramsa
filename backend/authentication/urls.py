@@ -1,19 +1,26 @@
 from django.urls import path
 from .views import (
     RegisterView,
-    RegisterOtpRequestView,
     ProfileMeView,
     AppTokenRefreshView,
     UserListView,
     UserDetailView,
     LoginView,
     ForgotPasswordView,
-    ResetPasswordView
+    ResetPasswordView,
+    OrganizationsView,
+    SwitchActiveOrganizationView,
+    OrganizationDetailView,
+    OrganizationTransferView,
+    OrganizationMembersView,
+    OrganizationInvitesView,
+    InviteLookupView,
+    InviteAcceptView,
+    AdminPromptSettingsView,
 )
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
-    path('register/request-otp/', RegisterOtpRequestView.as_view(), name='register_request_otp'),
     path('login/', LoginView.as_view(), name='login'),
     path('me/', ProfileMeView.as_view(), name='profile'),
     path('forgot-password/', ForgotPasswordView.as_view(), name='forgot-password'),
@@ -21,5 +28,14 @@ urlpatterns = [
     path('refresh/', AppTokenRefreshView.as_view(), name='refresh'),
     path('users/', UserListView.as_view(), name='user-list'),
     path('users/<str:user_id>/', UserDetailView.as_view(), name='user-detail'),
+    path('organizations/', OrganizationsView.as_view(), name='organizations'),
+    path('organizations/active/', SwitchActiveOrganizationView.as_view(), name='organizations-active'),
+    path('organizations/current/', OrganizationDetailView.as_view(), name='organizations-current'),
+    path('organizations/transfer/', OrganizationTransferView.as_view(), name='organizations-transfer'),
+    path('organizations/members/', OrganizationMembersView.as_view(), name='organizations-members'),
+    path('organizations/invites/', OrganizationInvitesView.as_view(), name='organizations-invites'),
+    path('invites/<str:token>/', InviteLookupView.as_view(), name='invite-lookup'),
+    path('invites/<str:token>/accept/', InviteAcceptView.as_view(), name='invite-accept'),
+    path('admin/prompts/', AdminPromptSettingsView.as_view(), name='admin-prompts'),
 ]
 

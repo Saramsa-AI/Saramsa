@@ -43,7 +43,7 @@ class SlackService:
     # OAuth helpers
     # ------------------------------------------------------------------
 
-    def start_oauth(self, user_id: str) -> str:
+    def start_oauth(self, user_id: str, organization_id: Optional[str] = None) -> str:
         """Generate Slack OAuth URL and persist the state token."""
         client_id = getattr(settings, "SLACK_CLIENT_ID", "") or ""
         redirect_uri = getattr(settings, "SLACK_REDIRECT_URI", "") or ""
@@ -61,6 +61,7 @@ class SlackService:
             user_id=user_id,
             provider="slack",
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+            metadata={"organizationId": str(organization_id)} if organization_id else {},
         )
 
         oauth_url = (
@@ -118,10 +119,13 @@ class SlackService:
         encrypted_token = self.encryption_service.encrypt_token(bot_token)
 
         account_id = f"ia_{uuid.uuid4().hex[:12]}"
+        organization_id = (state_doc.get("metadata") or {}).get("organizationId")
+
         account_doc = {
             "id": account_id,
             "type": "integration_account",
             "userId": user_id,
+            "organizationId": organization_id,
             "provider": "slack",
             "displayName": f"{team_name} (Slack)",
             "status": "active",
@@ -153,9 +157,13 @@ class SlackService:
     # Connection helpers
     # ------------------------------------------------------------------
 
-    def _get_bot_token(self, user_id: str, account_id: str) -> str:
+    def _get_bot_token(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> str:
         """Retrieve and decrypt the bot token for an account."""
-        account = self.integrations_repo.get_integration_account(user_id, account_id)
+        account = self.integrations_repo.get_integration_account(
+            user_id,
+            account_id,
+            organization_id=organization_id,
+        )
         if not account:
             raise ValueError("Slack integration account not found")
         encrypted = account.get("credentials", {}).get("tokenEncrypted", "")
@@ -163,10 +171,10 @@ class SlackService:
             raise ValueError("No token stored for this Slack account")
         return self.encryption_service.decrypt_token(encrypted)
 
-    def test_connection(self, user_id: str, account_id: str) -> Dict[str, Any]:
+    def test_connection(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> Dict[str, Any]:
         """Test connection using stored bot token."""
         try:
-            token = self._get_bot_token(user_id, account_id)
+            token = self._get_bot_token(user_id, account_id, organization_id=organization_id)
             resp = requests.post(
                 SLACK_AUTH_TEST_URL,
                 headers={"Authorization": f"Bearer {token}"},
@@ -187,9 +195,9 @@ class SlackService:
             logger.error(f"Slack connection test failed: {e}")
             return {"success": False, "error": str(e)}
 
-    def list_channels(self, user_id: str, account_id: str) -> List[Dict[str, Any]]:
+    def list_channels(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """List conversations the bot can see."""
-        token = self._get_bot_token(user_id, account_id)
+        token = self._get_bot_token(user_id, account_id, organization_id=organization_id)
         channels: List[Dict[str, Any]] = []
         cursor = None
 
@@ -237,9 +245,10 @@ class SlackService:
         account_id: str,
         channel_id: str,
         oldest: Optional[str] = None,
+        organization_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch messages from a channel, handling pagination and rate limits."""
-        token = self._get_bot_token(user_id, account_id)
+        token = self._get_bot_token(user_id, account_id, organization_id=organization_id)
         messages: List[Dict[str, Any]] = []
         cursor = None
 

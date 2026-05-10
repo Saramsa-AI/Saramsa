@@ -14,9 +14,16 @@ from rest_framework.permissions import IsAuthenticated
 from apis.core.response import StandardResponse
 from apis.core.error_handlers import handle_service_errors
 
-from ..services import get_integration_service, get_external_api_service
+from ..services import get_integration_service
 
 logger = logging.getLogger(__name__)
+
+
+def _get_active_organization_id(request):
+    profile = getattr(request.user, "profile", {}) or {}
+    if isinstance(profile, dict):
+        return profile.get("active_organization_id")
+    return None
 
 
 @api_view(['GET'])
@@ -25,10 +32,11 @@ logger = logging.getLogger(__name__)
 def get_integration_accounts(request):
     """Get all integration accounts for the authenticated user."""
     user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
     logger.info(f"Getting integration accounts for user_id: {user_id}")
     
     integration_service = get_integration_service()
-    accounts = integration_service.get_integration_accounts_by_user(user_id)
+    accounts = integration_service.get_integration_accounts_by_user(user_id, organization_id=organization_id)
     
     return StandardResponse.success(
         data={'accounts': accounts},
@@ -48,11 +56,13 @@ def create_azure_integration(request):
     """
     organization = request.data.get('organization', '').strip()
     pat_token = request.data.get('pat_token', '').strip()
-    
-    if not organization or not pat_token:
+    organization_id = _get_active_organization_id(request)
+
+    if not organization_id or not organization or not pat_token:
         return StandardResponse.validation_error(
-            detail='Organization and PAT token are required',
+            detail='Active organization, organization, and PAT token are required',
             errors=[
+                {"field": "organization_id", "message": "Active organization is required."} if not organization_id else None,
                 {"field": "organization", "message": "This field is required."} if not organization else None,
                 {"field": "pat_token", "message": "This field is required."} if not pat_token else None
             ],
@@ -75,8 +85,14 @@ def create_azure_integration(request):
     # If fetching projects (GET or POST without create_integration flag)
     if fetch_projects:
         try:
-            external_api_service = get_external_api_service()
-            projects = external_api_service.fetch_azure_projects(organization, pat_token)
+            integration_service = get_integration_service()
+            projects = integration_service.get_external_projects(
+                request.user.id,
+                "azure",
+                organization_id=organization_id,
+                organization=organization,
+                pat_token=pat_token,
+            )
             
             return StandardResponse.success(
                 data={
@@ -99,7 +115,7 @@ def create_azure_integration(request):
     
     try:
         integration_service = get_integration_service()
-        account = integration_service.create_azure_integration(user_id, organization, pat_token)
+        account = integration_service.create_azure_integration(user_id, organization_id, organization, pat_token)
         
         return StandardResponse.created(
             data={'account': account},
@@ -122,16 +138,18 @@ def create_azure_integration(request):
 def create_jira_integration(request):
     """Create Jira integration account."""
     user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
     data = request.data
     
     domain = data.get('domain', '').strip()
     email = data.get('email', '').strip()
     api_token = data.get('api_token', '').strip()
     
-    if not domain or not email or not api_token:
+    if not organization_id or not domain or not email or not api_token:
         return StandardResponse.validation_error(
-            detail='Domain, email, and API token are required',
+            detail='Active organization, domain, email, and API token are required',
             errors=[
+                {"field": "organization_id", "message": "Active organization is required."} if not organization_id else None,
                 {"field": "domain", "message": "This field is required."} if not domain else None,
                 {"field": "email", "message": "This field is required."} if not email else None,
                 {"field": "api_token", "message": "This field is required."} if not api_token else None
@@ -141,7 +159,7 @@ def create_jira_integration(request):
     
     try:
         integration_service = get_integration_service()
-        account = integration_service.create_jira_integration(user_id, domain, email, api_token)
+        account = integration_service.create_jira_integration(user_id, organization_id, domain, email, api_token)
         
         return StandardResponse.created(
             data={'account': account},
@@ -164,10 +182,11 @@ def create_jira_integration(request):
 def test_integration_connection(request, account_id):
     """Test connection for an existing integration account."""
     user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
     
     try:
         integration_service = get_integration_service()
-        test_result = integration_service.test_integration_connection(user_id, account_id)
+        test_result = integration_service.test_integration_connection(user_id, account_id, organization_id=organization_id)
         
         if test_result['success']:
             return StandardResponse.success(
@@ -196,9 +215,10 @@ def test_integration_connection(request, account_id):
 def delete_integration_account(request, account_id):
     """Delete an integration account."""
     user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
     
     integration_service = get_integration_service()
-    success = integration_service.delete_integration_account(user_id, account_id)
+    success = integration_service.delete_integration_account(user_id, account_id, organization_id=organization_id)
     
     if success:
         return StandardResponse.success(

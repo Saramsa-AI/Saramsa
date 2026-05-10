@@ -8,6 +8,7 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/useAuth";
 import { BrandLogo } from "./brand-logo";
 import { UsageBadge } from "./usage-badge";
+import { OrgSwitcher } from "./org-switcher";
 import { shouldShowNavbar } from "@/lib/auth-pages";
 import { Button } from "@/components/ui/button";
 
@@ -75,6 +76,7 @@ export function Navbar() {
 
             {/* Right side - Usage, Theme Toggle and Profile */}
             <div className="flex items-center gap-3 sm:gap-4">
+              {isAuthenticated && <OrgSwitcher />}
               {isAuthenticated && <UsageBadge />}
               {isAuthenticated && currentUser && (
                 <div className="relative" ref={dropdownRef}>

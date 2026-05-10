@@ -45,10 +45,18 @@ export const loginUser = createAsyncThunk<
   }
 });
 
-// Async thunk for register
+// Async thunk for register (invite-only)
 export const registerUser = createAsyncThunk<
   User,
-  { email: string; password: string; confirmPassword: string; otp: string; role?: 'admin' | 'user' | 'restricted user' },
+  {
+    email: string;
+    password: string;
+    confirmPassword: string;
+    invite_token: string;
+    first_name?: string;
+    last_name?: string;
+    role?: 'admin' | 'user' | 'restricted user';
+  },
   { rejectValue: string }
 >('auth/registerUser', async (data, { rejectWithValue }) => {
   try {
@@ -56,7 +64,9 @@ export const registerUser = createAsyncThunk<
       email: data.email,
       password: data.password,
       confirmPassword: data.confirmPassword,
-      otp: data.otp,
+      invite_token: data.invite_token,
+      first_name: data.first_name,
+      last_name: data.last_name,
       // Default role to admin if omitted
       role: (data.role || 'admin') as any,
     });

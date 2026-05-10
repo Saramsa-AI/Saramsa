@@ -63,19 +63,4 @@ class PasswordResetToken(TimestampedModel):
         ]
 
 
-class RegistrationOtp(TimestampedModel):
-    id = models.CharField(max_length=128, primary_key=True)
-    email = models.EmailField(unique=True, db_index=True)
-    otp_hash = models.CharField(max_length=128)
-    expires_at = models.DateTimeField(db_index=True)
-    attempts = models.IntegerField(default=0)
-    max_attempts = models.IntegerField(default=5)
-    send_count = models.IntegerField(default=1)
-    last_sent_at = models.DateTimeField(default=timezone.now)
-    used = models.BooleanField(default=False, db_index=True)
-    used_at = models.DateTimeField(null=True, blank=True)
-    extra = models.JSONField(default=dict, blank=True)
-
-    class Meta:
-        db_table = "registration_otps"
 

@@ -17,14 +17,22 @@ from ..services.slack_service import get_slack_service
 logger = logging.getLogger(__name__)
 
 
+def _get_active_organization_id(request):
+    profile = getattr(request.user, "profile", {}) or {}
+    if isinstance(profile, dict):
+        return profile.get("active_organization_id")
+    return None
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 @handle_service_errors
 def slack_oauth_start(request):
     """Return OAuth URL for Slack bot installation."""
     user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
     slack_service = get_slack_service()
-    oauth_url = slack_service.start_oauth(str(user_id))
+    oauth_url = slack_service.start_oauth(str(user_id), organization_id=organization_id)
     return StandardResponse.success(
         data={"oauth_url": oauth_url},
         message="Redirect user to this URL to install Slack bot",
@@ -59,6 +67,7 @@ def slack_oauth_callback(request):
 def slack_list_channels(request):
     """List channels for a connected Slack workspace."""
     user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
     account_id = request.GET.get("account_id", "")
     if not account_id:
         return StandardResponse.validation_error(
@@ -66,7 +75,7 @@ def slack_list_channels(request):
         )
 
     slack_service = get_slack_service()
-    channels = slack_service.list_channels(str(user_id), account_id)
+    channels = slack_service.list_channels(str(user_id), account_id, organization_id=organization_id)
     return StandardResponse.success(
         data={"channels": channels},
         message="Slack channels retrieved successfully",
@@ -79,12 +88,13 @@ def slack_list_channels(request):
 def slack_test_connection(request):
     """Test stored Slack connection."""
     user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
     account_id = request.data.get("account_id", "")
     if not account_id:
         return StandardResponse.validation_error(detail="account_id is required")
 
     slack_service = get_slack_service()
-    result = slack_service.test_connection(str(user_id), account_id)
+    result = slack_service.test_connection(str(user_id), account_id, organization_id=organization_id)
 
     if result.get("success"):
         return StandardResponse.success(data=result, message="Connection test successful")

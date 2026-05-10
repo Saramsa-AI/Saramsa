@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { Eye, EyeOff, Mail, Lock, ArrowRight } from 'lucide-react';
@@ -8,9 +8,10 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import dynamic from 'next/dynamic';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/useAuth';
 import { apiRequest } from '@/lib/apiRequest';
+import * as authApi from '@/lib/auth';
 import { DataStream, TaskCards, AIProcessing } from '@/components/ui/animations';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -35,12 +36,14 @@ const loginSchema = z.object({
 
 type LoginFormData = z.infer<typeof loginSchema>;
 
-export default function LoginPage() {
+function LoginPageInner() {
   const [mounted, setMounted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams?.get('invite') || '';
   const { login } = useAuth();
 
   // Handle component mount
@@ -73,6 +76,22 @@ export default function LoginPage() {
       });
       
       if (result.success) {
+        // If we got here via an invite link, accept the invite first so
+        // the user lands inside the inviting workspace instead of their
+        // default one. Acceptance rotates tokens server-side.
+        if (inviteToken) {
+          try {
+            await authApi.acceptInviteAsLoggedInUser(inviteToken);
+            router.push('/projects');
+            return;
+          } catch (err: any) {
+            // Surface the error but don't strand them on the login page —
+            // they did successfully log in, just couldn't accept the
+            // invite (already used, expired, wrong email, etc.).
+            setError(err?.message || 'Logged in, but the invite could not be accepted.');
+          }
+        }
+
         // After successful login, fetch user's projects and route accordingly
         try {
           const res = await apiRequest('get', '/integrations/projects/list/', undefined, true);
@@ -313,22 +332,33 @@ export default function LoginPage() {
               )}
             </Button>
 
-            {/* Register Link */}
-            <div className="text-center">
-              <p className="text-xs sm:text-sm md:text-base lg:text-sm xl:text-xs 2xl:text-sm text-muted-foreground">
-                New to Saramsa AI?{' '}
-                <Link
-                  href="/signup"
-                  className="text-saramsa-brand hover:text-saramsa-brand-hover font-medium transition-colors"
-                >
-                  Sign up
-                </Link>
-              </p>
-            </div>
+            {/* Register link only shown when an invite token is present.
+                Saramsa is invite-only — there is no public sign-up path. */}
+            {inviteToken && (
+              <div className="text-center">
+                <p className="text-xs sm:text-sm md:text-base lg:text-sm xl:text-xs 2xl:text-sm text-muted-foreground">
+                  New to Saramsa AI?{' '}
+                  <Link
+                    href={`/register?invite=${encodeURIComponent(inviteToken)}`}
+                    className="text-saramsa-brand hover:text-saramsa-brand-hover font-medium transition-colors"
+                  >
+                    Accept invitation
+                  </Link>
+                </p>
+              </div>
+            )}
           </form>
         </motion.div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageInner />
+    </Suspense>
   );
 }
 

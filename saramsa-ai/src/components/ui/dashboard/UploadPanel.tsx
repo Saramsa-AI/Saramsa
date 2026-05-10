@@ -87,7 +87,7 @@ export function UploadPanel({
         <div>
           <h2 className="text-lg text-foreground font-semibold">Feedback Upload</h2>
           <p className="text-xs sm:text-sm text-muted-foreground">
-            Choose a CSV or JSON file and run analysis.
+            Choose a CSV, JSON, PDF, TXT, or DOCX file and run analysis.
           </p>
         </div>
       </div>
@@ -193,7 +193,7 @@ export function UploadPanel({
           id="file-upload"
           type="file"
           ref={fileInputRef}
-          accept=".csv,.json"
+          accept=".csv,.json,.pdf,.txt,.docx"
           onChange={(e) => {
             const f = e.target.files?.[0];
             if (!f) return;

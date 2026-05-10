@@ -11,7 +11,6 @@ Contains views for authentication operations:
 
 from .authentication_views import (
     RegisterView,
-    RegisterOtpRequestView,
     AppTokenObtainPairView,
     AppTokenRefreshView,
     ProfileMeView,
@@ -21,10 +20,20 @@ from .authentication_views import (
     ForgotPasswordView,
     ResetPasswordView,
 )
+from .organization_views import (
+    OrganizationsView,
+    SwitchActiveOrganizationView,
+    OrganizationDetailView,
+    OrganizationTransferView,
+    OrganizationMembersView,
+    OrganizationInvitesView,
+    InviteLookupView,
+    InviteAcceptView,
+    AdminPromptSettingsView,
+)
 
 __all__ = [
     'RegisterView',
-    'RegisterOtpRequestView',
     'AppTokenObtainPairView',
     'AppTokenRefreshView',
     'ProfileMeView',
@@ -33,5 +42,14 @@ __all__ = [
     'LoginView',
     'ForgotPasswordView',
     'ResetPasswordView',
+    'OrganizationsView',
+    'SwitchActiveOrganizationView',
+    'OrganizationDetailView',
+    'OrganizationTransferView',
+    'OrganizationMembersView',
+    'OrganizationInvitesView',
+    'InviteLookupView',
+    'InviteAcceptView',
+    'AdminPromptSettingsView',
 ]
 

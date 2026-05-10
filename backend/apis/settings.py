@@ -230,7 +230,8 @@ if not DATABASE_URL:
     )
 
 _database_host = (urlparse(DATABASE_URL).hostname or "").lower()
-if not _database_host.endswith(".neon.tech"):
+_test_db_bypass = os.getenv("DJANGO_TEST_MODE") == "1" and DEBUG
+if not _database_host.endswith(".neon.tech") and not _test_db_bypass:
     raise RuntimeError(
         f"DATABASE_URL must point to Neon PostgreSQL (.neon.tech). Current host: '{_database_host or 'missing'}'."
     )
@@ -372,6 +373,13 @@ if DEBUG:
 _cors_extra = os.getenv('CORS_EXTRA_ORIGINS', '')
 if _cors_extra:
     CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + [o.strip() for o in _cors_extra.split(',') if o.strip()]
+
+# Regex CORS allowlist (comma-separated regex patterns). Lets us match Vercel
+# preview deployments like https://saramsa-ai-<branch-hash>-<team>.vercel.app
+# without enumerating every preview URL. Empty default keeps prod strict.
+_cors_regexes = os.getenv('CORS_ALLOWED_ORIGIN_REGEXES', '')
+if _cors_regexes:
+    CORS_ALLOWED_ORIGIN_REGEXES = [r.strip() for r in _cors_regexes.split(',') if r.strip()]
 
 CORS_ALLOW_METHODS = [
     'GET',
@@ -525,9 +533,4 @@ EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'False').lower() == 'true'
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'no-reply@saramsa.ai')
 PASSWORD_RESET_FROM_EMAIL = os.getenv('PASSWORD_RESET_FROM_EMAIL', DEFAULT_FROM_EMAIL)
 PASSWORD_RESET_EMAIL_SUBJECT = os.getenv('PASSWORD_RESET_EMAIL_SUBJECT', 'Reset your Saramsa password')
-REGISTRATION_OTP_EMAIL_SUBJECT = os.getenv('REGISTRATION_OTP_EMAIL_SUBJECT', 'Your Saramsa registration code')
-REGISTRATION_OTP_TTL_MINUTES = int(os.getenv('REGISTRATION_OTP_TTL_MINUTES', '10'))
-REGISTRATION_OTP_RESEND_COOLDOWN_SECONDS = int(os.getenv('REGISTRATION_OTP_RESEND_COOLDOWN_SECONDS', '60'))
-REGISTRATION_OTP_MAX_ATTEMPTS = int(os.getenv('REGISTRATION_OTP_MAX_ATTEMPTS', '5'))
-REGISTRATION_OTP_BYPASS = DEBUG and os.getenv('REGISTRATION_OTP_BYPASS', '').lower() in ('true', '1', 'yes')
 

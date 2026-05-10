@@ -96,7 +96,6 @@ export function AzureDevOpsIntegrationForm({ onContinue, onBack }: AzureDevOpsIn
 
     const selectedProjectData = projects.find(p => p.id === selectedProject);
     if (selectedProjectData) {
-      localStorage.setItem('azure_pat_token', pat);
       localStorage.setItem('azure_organization', orgName);
       localStorage.setItem('azure_selected_project', selectedProject);
       localStorage.setItem('azure_project_name', selectedProjectData.name);
@@ -128,7 +127,11 @@ export function AzureDevOpsIntegrationForm({ onContinue, onBack }: AzureDevOpsIn
     setError("");
 
     try {
-      const projectsResponse = await apiRequest('get', `/integrations/azure/projects/?organization=${encodeURIComponent(orgName)}&pat_token=${encodeURIComponent(pat)}`);
+      const projectsResponse = await apiRequest('post', '/integrations/external/projects/', {
+        provider: 'azure',
+        organization: orgName,
+        pat_token: pat,
+      }, true);
 
       if (projectsResponse.data.success) {
         setProjects(projectsResponse.data.data.projects || []);

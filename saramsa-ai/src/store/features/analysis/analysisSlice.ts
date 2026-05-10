@@ -91,7 +91,111 @@ export const pollTaskStatus = createAsyncThunk<
   }
 });
 
-// Async thunk for analyzing comments (sentiment analysis with Celery)
+async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id: string; analysisData: any }> {
+  const resolveAnalysis = async (statusResult: any) => {
+    const taskResult = statusResult.result;
+    if (taskResult?.insight_id) {
+      const analysisRes = await apiRequest(
+        'get',
+        `/feedback/analysis/${taskResult.insight_id}/`,
+        undefined,
+        true
+      );
+      const analysisData = analysisRes.data?.data;
+      if (analysisData?.exists && analysisData?.analysis) {
+        const analysis = analysisData.analysis;
+        return {
+          id: analysis.id || taskResult.insight_id,
+          analysisData: analysis.analysisData ?? analysis.result ?? analysis
+        };
+      }
+      throw new Error('Analysis saved but not found by ID.');
+    }
+    const rawData = taskResult?.result ?? taskResult;
+    return {
+      id: taskResult?.insight_id || `analysis_${Date.now()}`,
+      analysisData: rawData
+    };
+  };
+
+  const { getValidAccessToken: getToken } = await import('@/lib/auth');
+  const token = await getToken();
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '')
+    || (process.env.NEXT_PUBLIC_API_BASE_URL ? `${process.env.NEXT_PUBLIC_API_BASE_URL.replace(/\/$/, '')}/api` : 'http://127.0.0.1:8000/api');
+  const sseUrl = `${API_BASE}/insights/task-status/${taskId}/`;
+
+  return new Promise(async (resolve, reject) => {
+    try {
+      const sseResponse = await fetch(sseUrl, {
+        headers: {
+          'Accept': 'text/event-stream',
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (sseResponse.ok && sseResponse.headers.get('content-type')?.includes('text/event-stream')) {
+        const reader = sseResponse.body?.getReader();
+        if (!reader) throw new Error('No stream reader');
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const timeout = setTimeout(() => { reader.cancel(); reject('Analysis timeout'); }, 900000);
+
+        const processStream = async () => {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              try {
+                const statusResult = JSON.parse(line.slice(6));
+                dispatch(pollTaskStatus.fulfilled(statusResult, '', taskId));
+                const s = statusResult.status;
+                if (s === 'SUCCESS' || s === 'PARTIAL') {
+                  clearTimeout(timeout);
+                  resolve(await resolveAnalysis(statusResult));
+                  return;
+                }
+                if (s === 'FAILURE' || s === 'FAILED') {
+                  clearTimeout(timeout);
+                  reject(statusResult.error || 'Analysis failed');
+                  return;
+                }
+              } catch { /* skip malformed line */ }
+            }
+          }
+          clearTimeout(timeout);
+          reject('SSE stream ended without terminal status');
+        };
+        await processStream();
+        return;
+      }
+      throw new Error('SSE not supported');
+    } catch {
+      // Fallback: classic polling
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResult = await dispatch(pollTaskStatus(taskId)).unwrap();
+          const s = statusResult.status;
+          if (s === 'SUCCESS' || s === 'PARTIAL') {
+            clearInterval(pollInterval);
+            resolve(await resolveAnalysis(statusResult));
+          } else if (s === 'FAILURE' || s === 'FAILED') {
+            clearInterval(pollInterval);
+            reject(statusResult.error || 'Analysis failed');
+          }
+        } catch (error) {
+          clearInterval(pollInterval);
+          reject(error);
+        }
+      }, 2000);
+      setTimeout(() => { clearInterval(pollInterval); reject('Analysis timeout'); }, 900000);
+    }
+  });
+}
+
 export const analyzeComments = createAsyncThunk<
   any,
   { comments: string[]; projectId?: string; fileName?: string },
@@ -108,124 +212,58 @@ export const analyzeComments = createAsyncThunk<
       payload.file_name = data.fileName;
     }
 
-    // Call the async endpoint - returns task_id immediately
     const response = await apiRequest('post', '/insights/analyze/', payload, true, false);
     const taskId = response.data.data.task_id;
-
     if (!taskId) {
       throw new Error('No task ID received from server');
     }
-
-    // Helper to resolve the final analysis once we have a terminal status
-    const resolveAnalysis = async (statusResult: any) => {
-      const taskResult = statusResult.result;
-      if (taskResult?.insight_id) {
-        const analysisRes = await apiRequest(
-          'get',
-          `/feedback/analysis/${taskResult.insight_id}/`,
-          undefined,
-          true
-        );
-        const analysisData = analysisRes.data?.data;
-        if (analysisData?.exists && analysisData?.analysis) {
-          const analysis = analysisData.analysis;
-          return {
-            id: analysis.id || taskResult.insight_id,
-            analysisData: analysis.analysisData ?? analysis.result ?? analysis
-          };
-        }
-        throw new Error('Analysis saved but not found by ID.');
-      }
-      const rawData = taskResult?.result ?? taskResult;
-      return {
-        id: taskResult?.insight_id || `analysis_${Date.now()}`,
-        analysisData: rawData
-      };
-    };
-
-    // Try SSE first for efficient streaming, fall back to polling
-    const { getValidAccessToken: getToken } = await import('@/lib/auth');
-    const token = await getToken();
-    const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '')
-      || (process.env.NEXT_PUBLIC_API_BASE_URL ? `${process.env.NEXT_PUBLIC_API_BASE_URL.replace(/\/$/, '')}/api` : 'http://127.0.0.1:8000/api');
-    const sseUrl = `${API_BASE}/insights/task-status/${taskId}/`;
-
-    return new Promise(async (resolve, reject) => {
-      try {
-        const sseResponse = await fetch(sseUrl, {
-          headers: {
-            'Accept': 'text/event-stream',
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-
-        if (sseResponse.ok && sseResponse.headers.get('content-type')?.includes('text/event-stream')) {
-          const reader = sseResponse.body?.getReader();
-          if (!reader) throw new Error('No stream reader');
-          const decoder = new TextDecoder();
-          let buffer = '';
-          const timeout = setTimeout(() => { reader.cancel(); reject('Analysis timeout'); }, 900000);
-
-          const processStream = async () => {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() || '';
-              for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                try {
-                  const statusResult = JSON.parse(line.slice(6));
-                  dispatch(pollTaskStatus.fulfilled(statusResult, '', taskId));
-                  const s = statusResult.status;
-                  if (s === 'SUCCESS' || s === 'PARTIAL') {
-                    clearTimeout(timeout);
-                    resolve(await resolveAnalysis(statusResult));
-                    return;
-                  }
-                  if (s === 'FAILURE' || s === 'FAILED') {
-                    clearTimeout(timeout);
-                    reject(statusResult.error || 'Analysis failed');
-                    return;
-                  }
-                } catch { /* skip malformed line */ }
-              }
-            }
-            clearTimeout(timeout);
-            reject('SSE stream ended without terminal status');
-          };
-          await processStream();
-          return;
-        }
-        throw new Error('SSE not supported');
-      } catch {
-        // Fallback: classic polling
-        const pollInterval = setInterval(async () => {
-          try {
-            const statusResult = await dispatch(pollTaskStatus(taskId)).unwrap();
-            const s = statusResult.status;
-            if (s === 'SUCCESS' || s === 'PARTIAL') {
-              clearInterval(pollInterval);
-              resolve(await resolveAnalysis(statusResult));
-            } else if (s === 'FAILURE' || s === 'FAILED') {
-              clearInterval(pollInterval);
-              reject(statusResult.error || 'Analysis failed');
-            }
-          } catch (error) {
-            clearInterval(pollInterval);
-            reject(error);
-          }
-        }, 2000);
-        setTimeout(() => { clearInterval(pollInterval); reject('Analysis timeout'); }, 900000);
-      }
-    });
+    return await waitForAnalysisTask(taskId, dispatch);
   } catch (err: any) {
     let errorMessage = 'Sentiment analysis failed. Please try again.';
     if (err.response?.status === 401) {
       errorMessage = 'Authentication required. Please login again.';
     } else if (err.response?.status === 400) {
       errorMessage = err.response?.data?.detail || 'Invalid input data.';
+    } else if (err.response?.status >= 500) {
+      errorMessage = 'Server error. Please try again later.';
+    } else if (err.message) {
+      errorMessage = err.message;
+    }
+    return rejectWithValue(errorMessage);
+  }
+});
+
+// Resolves to the same shape as analyzeComments — both feed waitForAnalysisTask.
+export const ingestFile = createAsyncThunk<
+  any,
+  { file: File; projectId?: string },
+  { rejectValue: string }
+>('analysis/ingestFile', async ({ file, projectId }, { dispatch, rejectWithValue }) => {
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    if (projectId) {
+      form.append('project_id', projectId);
+    }
+
+    const response = await apiRequest('post', '/insights/ingest/', form, true, true);
+    const data = response.data.data;
+    const taskId = data?.task_id;
+    if (!taskId) {
+      throw new Error('No task ID received from server');
+    }
+    if (Array.isArray(data?.comments) && data.comments.length > 0) {
+      dispatch(setLoadedComments(data.comments));
+    }
+    return await waitForAnalysisTask(taskId, dispatch);
+  } catch (err: any) {
+    let errorMessage = 'File ingestion failed. Please try again.';
+    if (err.response?.status === 401) {
+      errorMessage = 'Authentication required. Please login again.';
+    } else if (err.response?.status === 400) {
+      errorMessage = err.response?.data?.detail || 'Invalid file.';
+    } else if (err.response?.status === 503) {
+      errorMessage = err.response?.data?.detail || 'Analysis service unavailable. Please try again later.';
     } else if (err.response?.status >= 500) {
       errorMessage = 'Server error. Please try again later.';
     } else if (err.message) {
@@ -602,6 +640,33 @@ const analysisSlice = createSlice({
       .addCase(analyzeComments.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload || 'Analysis failed.';
+        const key = action.meta.arg.projectId ?? 'personal';
+        delete state.analyzingByProject[key];
+        state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
+        state.analysisStatus = 'failure';
+        state.taskId = null;
+      })
+      .addCase(ingestFile.pending, (state, action) => {
+        state.loading = true;
+        state.error = null;
+        state.isAnalyzing = true;
+        const key = action.meta.arg.projectId ?? 'personal';
+        state.analyzingByProject[key] = true;
+        state.analysisStatus = 'pending';
+      })
+      .addCase(ingestFile.fulfilled, (state, action) => {
+        state.loading = false;
+        state.error = null;
+        const key = action.meta.arg.projectId ?? 'personal';
+        delete state.analyzingByProject[key];
+        state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
+        state.analysisStatus = 'success';
+        state.taskId = null;
+        state.projectContext = action.payload?.context ?? state.projectContext;
+      })
+      .addCase(ingestFile.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || 'File ingestion failed.';
         const key = action.meta.arg.projectId ?? 'personal';
         delete state.analyzingByProject[key];
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);

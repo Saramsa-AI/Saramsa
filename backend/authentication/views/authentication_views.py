@@ -25,20 +25,19 @@ from datetime import datetime, timedelta, timezone
 import secrets
 from django.conf import settings
 from ..serializers import (
-    AppUserSerializer, 
-    AppUserRegisterWithOtpSerializer,
+    AppUserSerializer,
+    AppUserRegisterSerializer,
     AppTokenObtainPairSerializer,
     AppTokenRefreshSerializer,
     ForgotPasswordSerializer,
     ResetPasswordSerializer,
-    RegistrationOtpRequestSerializer
 )
 from ..authentication import AppJWTAuthentication
 
 
 class RegisterView(generics.CreateAPIView):
     permission_classes = [NoAuthentication]
-    serializer_class = AppUserRegisterWithOtpSerializer
+    serializer_class = AppUserRegisterSerializer
     logger = logging.getLogger(__name__)
     
     def get(self, request):
@@ -49,29 +48,53 @@ class RegisterView(generics.CreateAPIView):
 
     @handle_service_errors
     def create(self, request, *args, **kwargs):
+        invite_token = (request.data.get("invite_token") or "").strip()
+        if not invite_token:
+            return StandardResponse.validation_error(
+                detail="Registration is invite-only. Please use the invitation link sent by your workspace admin.",
+                instance=request.path,
+            )
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # Use authentication service to create user
         auth_service = get_authentication_service()
 
-        # Verify OTP before creating user
-        otp_code = serializer.validated_data.get('otp')
+        from django.db import transaction
+        from integrations.services import get_organization_invite_service
         try:
-            auth_service.verify_registration_otp(
-                email=serializer.validated_data['email'],
-                code=otp_code
-            )
+            invite_data = get_organization_invite_service().get_by_token(invite_token)
         except ValueError as e:
             return StandardResponse.validation_error(detail=str(e), instance=request.path)
-        
-        user_data = auth_service.create_user(
-            email=serializer.validated_data['email'],
-            password=serializer.validated_data['password'],
-            first_name=serializer.validated_data.get('first_name', ''),
-            last_name=serializer.validated_data.get('last_name', ''),
-            role=serializer.validated_data.get('role', 'user')
-        )
+        if invite_data["email"] != serializer.validated_data["email"].strip().lower():
+            return StandardResponse.validation_error(
+                detail="This invite was sent to a different email address.",
+                instance=request.path,
+            )
+
+        # Atomic so a mid-flow accept_invite failure (race, expiry,
+        # revocation between lookup and accept) rolls back the user
+        # row. Otherwise we'd leave behind an account with no
+        # workspace, violating the invite-only invariant.
+        try:
+            with transaction.atomic():
+                user_data = auth_service.create_user(
+                    email=serializer.validated_data['email'],
+                    password=serializer.validated_data['password'],
+                    first_name=serializer.validated_data.get('first_name', ''),
+                    last_name=serializer.validated_data.get('last_name', ''),
+                    role=serializer.validated_data.get('role', 'user'),
+                )
+                accept_result = get_organization_invite_service().accept_invite(
+                    token=invite_token,
+                    user_id=str(user_data["id"]),
+                    user_email=user_data["email"],
+                )
+                auth_service.set_active_organization(
+                    str(user_data["id"]), accept_result["organization_id"]
+                )
+        except ValueError as e:
+            return StandardResponse.validation_error(detail=str(e), instance=request.path)
 
         # Generate JWT tokens for the newly created user
         token_serializer = AppTokenObtainPairSerializer()
@@ -85,33 +108,11 @@ class RegisterView(generics.CreateAPIView):
                 "email": user_data['email'],
                 "user_id": user_data['id'],
                 "access": token_data['access'],
-                "refresh": token_data['refresh']
+                "refresh": token_data['refresh'],
+                "invited_to_organization_id": (invite_data or {}).get("organization", {}).get("id"),
             },
             message="User created successfully",
             instance=f"/api/auth/users/{user_data['id']}"
-        )
-
-
-class RegisterOtpRequestView(APIView):
-    permission_classes = [NoAuthentication]
-    logger = logging.getLogger(__name__)
-
-    @handle_service_errors
-    def post(self, request):
-        serializer = RegistrationOtpRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        auth_service = get_authentication_service()
-        email = serializer.validated_data['email']
-
-        try:
-            result = auth_service.request_registration_otp(email=email)
-        except ValueError as e:
-            return StandardResponse.validation_error(detail=str(e), instance=request.path)
-
-        return StandardResponse.success(
-            data=result,
-            message="Registration code sent successfully"
         )
 
 
@@ -132,25 +133,24 @@ class ProfileMeView(APIView):
     def get(self, request):
         auth_service = get_authentication_service()
         user_data = auth_service.get_user_by_id(str(request.user.id))
-        
+
         if not user_data:
             return StandardResponse.not_found(
                 detail="User not found",
                 instance=request.path
             )
-        
-        # Use the authenticated user's ID directly
+
+        from ..org_context import build_user_with_org_context
+        public_user = build_user_with_org_context(user_data)
+
         return StandardResponse.success(
             data={
+                **public_user,
                 "user_id": request.user.id,
-                "email": user_data.get('email'),
-                "first_name": user_data.get('first_name'),
-                "last_name": user_data.get('last_name'),
                 "company_name": user_data.get('company_name'),
                 "company_url": user_data.get('company_url'),
                 "avatar_url": user_data.get('avatar_url'),
-                "role": user_data.get('profile', {}).get('role', 'user'),
-                "date_joined": user_data.get('date_joined')
+                "date_joined": user_data.get('date_joined'),
             },
             message="Profile retrieved successfully"
         )
@@ -419,9 +419,6 @@ class ResetPasswordView(APIView):
                     detail="User not found",
                     instance=request.path
                 )
-            
-            # Hash new password
-            hashed_password = ResetPasswordSerializer().hash_password(new_password)
             
             # Update user password using service layer
             auth_service.change_password(email, new_password)

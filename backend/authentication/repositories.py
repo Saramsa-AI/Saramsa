@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from django.forms.models import model_to_dict
 from django.utils import timezone
 
-from .models import PasswordResetToken, RegistrationOtp, UserAccount
+from .models import PasswordResetToken, UserAccount
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
@@ -145,64 +145,4 @@ class UserRepository:
 
     def save_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
         return self.update(user_data["id"], user_data)
-
-    def save_registration_otp(self, otp_data: Dict[str, Any]) -> Dict[str, Any]:
-        item, _created = RegistrationOtp.objects.update_or_create(
-            email=otp_data["email"],
-            defaults={
-                "id": otp_data["id"],
-                "otp_hash": otp_data["otp_hash"],
-                "expires_at": datetime.fromisoformat(otp_data["expires_at"]),
-                "attempts": int(otp_data.get("attempts", 0)),
-                "max_attempts": int(otp_data.get("max_attempts", 5)),
-                "send_count": int(otp_data.get("send_count", 1)),
-                "last_sent_at": datetime.fromisoformat(otp_data["last_sent_at"]),
-                "used": bool(otp_data.get("used", False)),
-                "used_at": datetime.fromisoformat(otp_data["used_at"]) if otp_data.get("used_at") else None,
-                "updated_at": timezone.now(),
-                "extra": {k: v for k, v in otp_data.items() if k not in {
-                    "id", "email", "otp_hash", "expires_at", "attempts", "max_attempts",
-                    "send_count", "last_sent_at", "used", "used_at", "created_at", "updated_at", "type",
-                }},
-            },
-        )
-        return {
-            "id": item.id,
-            "type": "registration_otp",
-            "email": item.email,
-            "otp_hash": item.otp_hash,
-            "expires_at": _iso(item.expires_at),
-            "attempts": item.attempts,
-            "max_attempts": item.max_attempts,
-            "send_count": item.send_count,
-            "last_sent_at": _iso(item.last_sent_at),
-            "used": item.used,
-            "used_at": _iso(item.used_at),
-            "created_at": _iso(item.created_at),
-            "updated_at": _iso(item.updated_at),
-        }
-
-    def get_registration_otp(self, email: str) -> Optional[Dict[str, Any]]:
-        item = RegistrationOtp.objects.filter(email=email).first()
-        if not item:
-            return None
-        return {
-            "id": item.id,
-            "type": "registration_otp",
-            "email": item.email,
-            "otp_hash": item.otp_hash,
-            "expires_at": _iso(item.expires_at),
-            "attempts": item.attempts,
-            "max_attempts": item.max_attempts,
-            "send_count": item.send_count,
-            "last_sent_at": _iso(item.last_sent_at),
-            "used": item.used,
-            "used_at": _iso(item.used_at),
-            "created_at": _iso(item.created_at),
-            "updated_at": _iso(item.updated_at),
-        }
-
-    def delete_registration_otp(self, email: str) -> bool:
-        deleted, _ = RegistrationOtp.objects.filter(email=email).delete()
-        return deleted > 0
 

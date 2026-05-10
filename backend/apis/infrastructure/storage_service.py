@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from django.utils import timezone
 
-from authentication.models import PasswordResetToken, RegistrationOtp, UserAccount
+from authentication.models import PasswordResetToken, UserAccount
 from feedback_analysis.models import (
     Analysis,
     CommentExtraction,
@@ -48,7 +48,6 @@ class StorageService:
         self.containers = {
             "users": UserAccount,
             "password_resets": PasswordResetToken,
-            "registration_otps": RegistrationOtp,
             "projects": Project,
             "project_roles": ProjectRole,
             "analysis": Analysis,
@@ -102,6 +101,8 @@ class StorageService:
             d.setdefault("projectId", obj.project_id)
         if hasattr(obj, "user_id"):
             d.setdefault("userId", obj.user_id)
+        if hasattr(obj, "organization_id"):
+            d.setdefault("organizationId", obj.organization_id)
         if container == "users":
             d.update({
                 "email": obj.email,
@@ -122,6 +123,11 @@ class StorageService:
                 "description": obj.description,
                 "generated_at": obj.generated_at.isoformat() if obj.generated_at else None,
                 "work_items": [c.to_dict() for c in obj.candidates.all().order_by("-created_at")],
+            })
+        if container == "project_roles":
+            d.update({
+                "role": obj.role,
+                "actorId": obj.actor_id,
             })
         return d
 
@@ -148,24 +154,6 @@ class StorageService:
                     "is_staff": data.get("is_staff", False),
                     "date_joined": _as_dt(data.get("date_joined") or data.get("createdAt")),
                     "profile": data.get("profile") or {},
-                    "extra": data,
-                    "updated_at": timezone.now(),
-                },
-            )
-            return self._doc(container_name, obj)
-        if container_name == "registration_otps":
-            obj, _ = RegistrationOtp.objects.update_or_create(
-                email=data.get("email", partition_key),
-                defaults={
-                    "id": str(item_id),
-                    "otp_hash": data.get("otp_hash", ""),
-                    "expires_at": _as_dt(data.get("expires_at")),
-                    "attempts": int(data.get("attempts", 0)),
-                    "max_attempts": int(data.get("max_attempts", 5)),
-                    "send_count": int(data.get("send_count", 1)),
-                    "last_sent_at": _as_dt(data.get("last_sent_at")),
-                    "used": bool(data.get("used", False)),
-                    "used_at": _as_dt(data.get("used_at")) if data.get("used_at") else None,
                     "extra": data,
                     "updated_at": timezone.now(),
                 },
@@ -308,19 +296,34 @@ class StorageService:
         item_id = str(user_story_data.get("id") or f"user_story_{timezone.now().timestamp()}")
         return self.update_document("user_stories", item_id, str(user_story_data.get("projectId") or user_story_data.get("userId") or item_id), user_story_data)
 
-    def get_user_story(self, user_story_id: str, user_id: str):
-        obj = UserStory.objects.filter(id=str(user_story_id), user_id=str(user_id)).first()
+    def get_user_story(self, user_story_id: str, user_id: Optional[str] = None, project_id: Optional[str] = None):
+        qs = UserStory.objects.filter(id=str(user_story_id))
+        if user_id is not None:
+            qs = qs.filter(user_id=str(user_id))
+        if project_id is not None:
+            qs = qs.filter(project_id=str(project_id))
+        obj = qs.first()
         return self._doc("user_stories", obj)
 
     def get_user_story_by_id(self, user_story_id: str):
-        return self.get_document("user_stories", user_story_id, user_story_id)
+        obj = UserStory.objects.filter(id=str(user_story_id)).first()
+        return self._doc("user_stories", obj)
 
-    def delete_user_story(self, user_story_id: str, user_id: str) -> bool:
-        deleted, _ = UserStory.objects.filter(id=str(user_story_id), user_id=str(user_id)).delete()
+    def delete_user_story(self, user_story_id: str, user_id: Optional[str] = None, project_id: Optional[str] = None) -> bool:
+        qs = UserStory.objects.filter(id=str(user_story_id))
+        if user_id is not None:
+            qs = qs.filter(user_id=str(user_id))
+        if project_id is not None:
+            qs = qs.filter(project_id=str(project_id))
+        deleted, _ = qs.delete()
         return deleted > 0
 
-    def bulk_delete_user_stories(self, ids: List[str], user_id: str) -> Dict[str, Any]:
-        qs = UserStory.objects.filter(id__in=[str(i) for i in ids], user_id=str(user_id))
+    def bulk_delete_user_stories(self, ids: List[str], user_id: Optional[str] = None, project_id: Optional[str] = None) -> Dict[str, Any]:
+        qs = UserStory.objects.filter(id__in=[str(i) for i in ids])
+        if user_id is not None:
+            qs = qs.filter(user_id=str(user_id))
+        if project_id is not None:
+            qs = qs.filter(project_id=str(project_id))
         found_ids = list(qs.values_list("id", flat=True))
         deleted, _ = qs.delete()
         missing = [i for i in ids if i not in found_ids]
@@ -463,8 +466,30 @@ def get_storage_service() -> StorageService:
 
 
 class _StorageServiceProxy:
+    """Lazy proxy around the StorageService singleton.
+
+    Modules import `storage_service` at module top-level, but
+    StorageService instantiation depends on Django apps being ready —
+    so we defer construction to first attribute access. The proxy
+    raises an explicit AttributeError that names itself, so typos like
+    `storage_service.fooo()` produce a clear "no attribute on
+    storage_service" error instead of an opaque "StorageService has
+    no attribute" error.
+    """
+
     def __getattr__(self, name):
-        return getattr(get_storage_service(), name)
+        # Avoid forwarding dunders that are tested with hasattr() during
+        # framework introspection; let the default AttributeError flow
+        # so callers like `pickle` see the right shape.
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        try:
+            return getattr(get_storage_service(), name)
+        except AttributeError as exc:
+            raise AttributeError(
+                f"storage_service has no attribute {name!r} "
+                "(check spelling; storage_service is a lazy proxy over StorageService)"
+            ) from exc
 
     def __dir__(self):
         return dir(get_storage_service())

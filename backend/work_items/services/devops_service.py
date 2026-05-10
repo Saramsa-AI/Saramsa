@@ -8,7 +8,9 @@ from datetime import datetime, timezone
 import uuid
 import json
 import re
+import base64
 from difflib import SequenceMatcher
+import requests
 from ..repositories import WorkItemRepository
 from apis.prompts import WORK_ITEM_TYPES_BY_TEMPLATE
 from feedback_analysis.services.narration_service import get_narration_service
@@ -313,68 +315,268 @@ class DevOpsService:
         except Exception as e:
             logger.error(f"Error submitting to {platform}: {e}")
             raise
+
+    @staticmethod
+    def _get_project_external_link(project_config: Dict[str, Any], provider: str) -> Dict[str, Any]:
+        external_links = project_config.get("externalLinks") or []
+        for link in external_links:
+            if link.get("provider") == provider:
+                return link
+        return {}
+
+    @staticmethod
+    def _normalize_tags(tags: Any) -> List[str]:
+        if isinstance(tags, list):
+            return [str(tag).strip() for tag in tags if str(tag).strip()]
+        if isinstance(tags, str):
+            return [tag.strip() for tag in tags.split(",") if tag.strip()]
+        return []
+
+    @staticmethod
+    def _priority_rank(priority: str) -> int:
+        priority_map = {
+            "critical": 1,
+            "high": 2,
+            "medium": 3,
+            "low": 4,
+        }
+        return priority_map.get(str(priority or "").lower(), 3)
+
+    def _build_azure_patch_document(self, work_item: Dict[str, Any]) -> List[Dict[str, Any]]:
+        fields = [
+            {"op": "add", "path": "/fields/System.Title", "value": work_item.get("title") or "Untitled work item"},
+            {
+                "op": "add",
+                "path": "/fields/System.Description",
+                "value": work_item.get("description") or work_item.get("acceptance_criteria") or "",
+            },
+        ]
+
+        acceptance = work_item.get("acceptance_criteria") or work_item.get("acceptance") or ""
+        if acceptance:
+            fields.append({"op": "add", "path": "/fields/Microsoft.VSTS.Common.AcceptanceCriteria", "value": acceptance})
+
+        tags = self._normalize_tags(work_item.get("tags"))
+        if tags:
+            fields.append({"op": "add", "path": "/fields/System.Tags", "value": "; ".join(tags)})
+
+        feature_area = work_item.get("feature_area") or work_item.get("featurearea") or ""
+        if feature_area:
+            fields.append({"op": "add", "path": "/fields/System.AreaPath", "value": feature_area})
+
+        fields.append({
+            "op": "add",
+            "path": "/fields/Microsoft.VSTS.Common.Priority",
+            "value": self._priority_rank(work_item.get("priority")),
+        })
+        return fields
+
+    @staticmethod
+    def _normalize_azure_type(work_item: Dict[str, Any]) -> str:
+        raw_type = str(work_item.get("type") or "Task").strip().lower()
+        mapping = {
+            "feature": "Feature",
+            "bug": "Bug",
+            "task": "Task",
+            "change": "Task",
+            "user story": "User Story",
+            "story": "User Story",
+            "product backlog item": "Product Backlog Item",
+            "issue": "Issue",
+            "requirement": "Requirement",
+        }
+        return mapping.get(raw_type, "Task")
+
+    @staticmethod
+    def _normalize_jira_issue_type(work_item: Dict[str, Any]) -> str:
+        raw_type = str(work_item.get("type") or "Task").strip().lower()
+        mapping = {
+            "feature": "Story",
+            "story": "Story",
+            "user story": "Story",
+            "bug": "Bug",
+            "task": "Task",
+            "change": "Task",
+        }
+        return mapping.get(raw_type, "Task")
+
+    def _build_jira_payload(self, work_item: Dict[str, Any], project_key: str) -> Dict[str, Any]:
+        description = work_item.get("description") or work_item.get("acceptance_criteria") or ""
+        acceptance = work_item.get("acceptance_criteria") or work_item.get("acceptance") or ""
+        if acceptance and acceptance not in description:
+            description = f"{description}\n\nAcceptance criteria:\n{acceptance}".strip()
+
+        labels = self._normalize_tags(work_item.get("tags"))
+        return {
+            "fields": {
+                "project": {"key": project_key},
+                "summary": work_item.get("title") or "Untitled issue",
+                "description": description,
+                "issuetype": {"name": self._normalize_jira_issue_type(work_item)},
+                "labels": labels,
+                "priority": {"name": str(work_item.get("priority") or "Medium").title()},
+            }
+        }
     
-    def _submit_to_azure_devops(self, user_id: str, work_items: List[Dict[str, Any]], 
+    def _submit_to_azure_devops(self, user_id: str, work_items: List[Dict[str, Any]],
                                project_config: Dict[str, Any], integration_service) -> Dict[str, Any]:
         """Submit work items to Azure DevOps via integrations service."""
         try:
-            # Get Azure integration account via integrations service
-            integration = integration_service.get_integration_account_by_provider(user_id, 'azure')
+            # Pin to the project's owning org so a switched active_org cannot route the push to the wrong tenant.
+            organization_id = project_config.get("organizationId") or project_config.get("organization_id")
+            integration = integration_service.get_integration_account_by_provider(
+                user_id, 'azure', organization_id=organization_id
+            )
             if not integration:
                 raise ValueError("Azure DevOps integration not found. Please configure integration first.")
-            
-            # Get decrypted credentials via integrations service
-            account_with_creds = integration_service.get_decrypted_credentials(user_id, 'azure')
+
+            account_with_creds = integration_service.get_decrypted_credentials(
+                user_id, 'azure', organization_id=organization_id
+            )
             if not account_with_creds:
                 raise ValueError("Failed to retrieve Azure DevOps credentials")
             
             organization = account_with_creds['metadata']['organization']
             pat_token = account_with_creds['credentials']['pat_token']
-            project_name = project_config.get('project_name', project_config.get('name', 'Default'))
-            
-            # Delegate actual API submission to integrations service
-            # This would call integrations_service.submit_azure_work_items() when implemented
+            external_link = self._get_project_external_link(project_config, "azure")
+            project_name = (
+                external_link.get("externalId")
+                or project_config.get("project_name")
+                or project_config.get("name")
+            )
+            if not project_name:
+                raise ValueError("Azure project configuration is missing an external project identifier.")
+
+            credentials = base64.b64encode(f":{pat_token}".encode()).decode()
+            headers = {
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/json-patch+json",
+            }
+
+            results: List[Dict[str, Any]] = []
+            for work_item in work_items:
+                work_item_type = self._normalize_azure_type(work_item)
+                encoded_type = requests.utils.quote(f"${work_item_type}", safe="$")
+                url = f"https://dev.azure.com/{organization}/{project_name}/_apis/wit/workitems/{encoded_type}?api-version=7.1-preview.3"
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    json=self._build_azure_patch_document(work_item),
+                    timeout=30,
+                )
+                if response.status_code in (200, 201):
+                    payload = response.json()
+                    results.append({
+                        "success": True,
+                        "story_id": work_item.get("id"),
+                        "work_item_id": payload.get("id"),
+                        "url": payload.get("url") or payload.get("_links", {}).get("html", {}).get("href"),
+                    })
+                else:
+                    results.append({
+                        "success": False,
+                        "story_id": work_item.get("id"),
+                        "error": f"Azure API returned status {response.status_code}: {response.text}",
+                    })
+
+            successful = [result for result in results if result.get("success")]
+            failed = [result for result in results if not result.get("success")]
+            first_success = successful[0] if successful else {}
+
             return {
-                'success': True,
-                'submitted_count': len(work_items),
-                'platform': 'azure',
-                'organization': organization,
-                'project': project_name,
-                'results': [{'success': True, 'work_item_id': f'azure_{i}'} for i in range(len(work_items))]
+                "success": len(failed) == 0,
+                "submitted_count": len(successful),
+                "failed_count": len(failed),
+                "platform": "azure",
+                "organization": organization,
+                "project": project_name,
+                "external_id": first_success.get("work_item_id"),
+                "external_url": first_success.get("url"),
+                "results": results,
             }
             
         except Exception as e:
             logger.error(f"Error submitting to Azure DevOps: {e}")
             raise
     
-    def _submit_to_jira(self, user_id: str, work_items: List[Dict[str, Any]], 
+    def _submit_to_jira(self, user_id: str, work_items: List[Dict[str, Any]],
                        project_config: Dict[str, Any], integration_service) -> Dict[str, Any]:
         """Submit work items to Jira via integrations service."""
         try:
-            # Get Jira integration account via integrations service
-            integration = integration_service.get_integration_account_by_provider(user_id, 'jira')
+            # Pin to the project's owning org so a switched active_org cannot route the push to the wrong tenant.
+            organization_id = project_config.get("organizationId") or project_config.get("organization_id")
+            integration = integration_service.get_integration_account_by_provider(
+                user_id, 'jira', organization_id=organization_id
+            )
             if not integration:
                 raise ValueError("Jira integration not found. Please configure integration first.")
-            
-            # Get decrypted credentials via integrations service
-            account_with_creds = integration_service.get_decrypted_credentials(user_id, 'jira')
+
+            account_with_creds = integration_service.get_decrypted_credentials(
+                user_id, 'jira', organization_id=organization_id
+            )
             if not account_with_creds:
                 raise ValueError("Failed to retrieve Jira credentials")
             
             domain = account_with_creds['metadata']['domain']
             email = account_with_creds['metadata']['email']
             api_token = account_with_creds['credentials']['api_token']
-            project_key = project_config.get('project_key', project_config.get('key', 'DEFAULT'))
-            
-            # Delegate actual API submission to integrations service
-            # This would call integrations_service.submit_jira_work_items() when implemented
+            external_link = self._get_project_external_link(project_config, "jira")
+            project_key = (
+                external_link.get("externalKey")
+                or project_config.get('project_key')
+                or project_config.get('key')
+            )
+            if not project_key:
+                raise ValueError("Jira project configuration is missing a project key.")
+
+            credentials = base64.b64encode(f"{email}:{api_token}".encode()).decode()
+            headers = {
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            normalized_domain = integration_service.external_api_service.normalize_jira_domain(domain)
+            create_url = f"https://{normalized_domain}/rest/api/3/issue"
+
+            results: List[Dict[str, Any]] = []
+            for work_item in work_items:
+                response = requests.post(
+                    create_url,
+                    headers=headers,
+                    json=self._build_jira_payload(work_item, project_key),
+                    timeout=30,
+                )
+                if response.status_code in (200, 201):
+                    payload = response.json()
+                    issue_key = payload.get("key")
+                    issue_url = f"https://{normalized_domain}/browse/{issue_key}" if issue_key else None
+                    results.append({
+                        "success": True,
+                        "story_id": work_item.get("id"),
+                        "issue_key": issue_key,
+                        "url": issue_url,
+                    })
+                else:
+                    results.append({
+                        "success": False,
+                        "story_id": work_item.get("id"),
+                        "error": f"Jira API returned status {response.status_code}: {response.text}",
+                    })
+
+            successful = [result for result in results if result.get("success")]
+            failed = [result for result in results if not result.get("success")]
+            first_success = successful[0] if successful else {}
+
             return {
-                'success': True,
-                'submitted_count': len(work_items),
-                'platform': 'jira',
-                'domain': domain,
-                'project_key': project_key,
-                'results': [{'success': True, 'issue_key': f'PROJ-{i+1}'} for i in range(len(work_items))]
+                "success": len(failed) == 0,
+                "submitted_count": len(successful),
+                "failed_count": len(failed),
+                "platform": "jira",
+                "domain": domain,
+                "project_key": project_key,
+                "external_id": first_success.get("issue_key"),
+                "external_url": first_success.get("url"),
+                "results": results,
             }
             
         except Exception as e:

@@ -80,25 +80,8 @@
       "body": {
         "email": "test_register@example.com",
         "password": "TestPass123!",
-        "confirmPassword": "TestPass123!",
-        "otp": "000000"
+        "confirmPassword": "TestPass123!"
       }
-    },
-    {
-      "name": "auth_register_request_otp_create",
-      "method": "POST",
-      "path": "/api/auth/register/request-otp/",
-      "auth": "none",
-      "enabled": true,
-      "expected_status": [
-        200,
-        400
-      ],
-      "expect_json_keys": [],
-      "body": {
-        "email": "test_register@example.com"
-      },
-      "schema_hash": "0bf71857b5a3ce63"
     },
     {
       "name": "auth_reset_password_create",
@@ -419,6 +402,18 @@
       "name": "insights_upload_create",
       "method": "POST",
       "path": "/api/insights/upload/",
+      "auth": "bearer",
+      "enabled": true,
+      "expected_status": 400,
+      "expect_json_keys": [
+        "detail"
+      ],
+      "schema_hash": "0bf71857b5a3ce63"
+    },
+    {
+      "name": "insights_ingest_create",
+      "method": "POST",
+      "path": "/api/insights/ingest/",
       "auth": "bearer",
       "enabled": true,
       "expected_status": 400,

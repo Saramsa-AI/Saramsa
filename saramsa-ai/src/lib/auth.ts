@@ -1,5 +1,12 @@
 
 
+export type Organization = {
+  id: string;
+  name?: string;
+  slug?: string;
+  role?: string;
+};
+
 export type User = {
   id?: string;
   email?: string;
@@ -7,6 +14,14 @@ export type User = {
   user_id?: string;
   first_name?: string;
   last_name?: string;
+  is_staff?: boolean;
+  active_organization_id?: string;
+  active_organization?: Organization | null;
+  organizations?: Organization[];
+  // Backend sets this when /me or /login could not load the workspace context.
+  // Lets the UI distinguish "load failed" from "no memberships" so we can show
+  // a retry banner instead of pretending the user has no workspaces.
+  organization_context_error?: string | null;
 };
 
 type LoginParams = { email: string; password: string };
@@ -14,8 +29,18 @@ type RegisterParams = {
   email: string;
   password: string;
   confirmPassword: string;
-  otp: string;
+  first_name?: string;
+  last_name?: string;
+  invite_token: string;
   role?: 'admin' | 'user' | 'restricted user';
+};
+
+export type InviteContext = {
+  id: string;
+  email: string;
+  role: string;
+  organization: { id: string; name?: string; slug?: string };
+  expires_at: string;
 };
 
 type Tokens = { access: string; refresh: string };
@@ -127,7 +152,14 @@ export function clearTokens(): void {
 export function setStoredUser(user: User | null): void {
   if (!isBrowser()) return;
   if (user) {
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+    // Strip transient health signals before persisting. organization_context_error
+    // is a snapshot of "did the org service fail on this particular response" —
+    // re-rendering it from localStorage would surface a stale "Workspace
+    // unavailable — retry" chip on every page load until /me succeeds, even
+    // when the org service is currently healthy.
+    const persistable: User = { ...user };
+    delete persistable.organization_context_error;
+    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(persistable));
   } else {
     localStorage.removeItem(USER_STORAGE_KEY);
   }
@@ -173,10 +205,16 @@ export async function getCurrentUser(accessToken?: string): Promise<User> {
     success: boolean;
     data: {
       user_id?: string;
+      id?: string;
       email?: string;
       role?: string;
       first_name?: string;
       last_name?: string;
+      is_staff?: boolean;
+      active_organization_id?: string | null;
+      active_organization?: Organization | null;
+      organizations?: Organization[];
+      organization_context_error?: string | null;
     };
     message?: string;
   };
@@ -184,12 +222,17 @@ export async function getCurrentUser(accessToken?: string): Promise<User> {
   const data = response.data;
 
   const user: User = {
-    id: data.user_id,
-    user_id: data.user_id,
+    id: data.user_id || data.id,
+    user_id: data.user_id || data.id,
     email: data.email,
     role: data.role,
     first_name: data.first_name,
     last_name: data.last_name,
+    is_staff: data.is_staff ?? false,
+    active_organization_id: data.active_organization_id ?? undefined,
+    active_organization: data.active_organization ?? null,
+    organizations: data.organizations ?? [],
+    organization_context_error: data.organization_context_error ?? null,
   };
 
   return user;
@@ -303,30 +346,73 @@ export async function register(
   return { user, ...tokens };
 }
 
-export async function requestRegistrationOtp(
-  email: string,
-): Promise<{ expires_in_seconds: number; cooldown_seconds: number }> {
-  const res = await fetch(`${AUTH_BASE}/register/request-otp/`, {
-    method: 'POST',
+export async function lookupInvite(token: string): Promise<InviteContext> {
+  const res = await fetch(`${AUTH_BASE}/invites/${encodeURIComponent(token)}/`, {
+    method: 'GET',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const data = await safeJson(res);
+    const message = (data && (data.error || data.detail)) || 'Invite link is invalid.';
+    throw new Error(message);
+  }
+  const response = (await res.json()) as { success: boolean; data: InviteContext };
+  return response.data;
+}
+
+export async function acceptInviteAsLoggedInUser(token: string): Promise<User> {
+  const access = getValidAccessToken();
+  if (!access) throw new Error('Not authenticated');
+
+  const res = await fetch(`${AUTH_BASE}/invites/${encodeURIComponent(token)}/accept/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${access}` },
+  });
+  if (!res.ok) {
+    const data = await safeJson(res);
+    const message = (data && (data.error || data.detail)) || 'Failed to accept invitation.';
+    throw new Error(message);
+  }
+  const response = (await res.json()) as {
+    success: boolean;
+    data: { user: User; access: string; refresh: string };
+  };
+  setTokens({ access: response.data.access, refresh: response.data.refresh });
+  setStoredUser(response.data.user);
+  return response.data.user;
+}
+
+export async function switchActiveOrganization(organizationId: string): Promise<User> {
+  const token = getValidAccessToken();
+  if (!token) throw new Error('Not authenticated');
+
+  const res = await fetch(`${AUTH_BASE}/organizations/active/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ organization_id: organizationId }),
   });
 
   if (!res.ok) {
     const data = await safeJson(res);
-    const message = (data && (data.error || data.detail)) || 'Failed to send code';
-    const err: any = new Error(message);
-    (err.response = { status: res.status, data }), (err.code = undefined);
-    throw err;
+    const message = (data && (data.error || data.detail)) || 'Failed to switch organization';
+    throw new Error(message);
   }
 
   const response = (await res.json()) as {
     success: boolean;
-    data: { expires_in_seconds: number; cooldown_seconds: number };
-    message?: string;
+    data: {
+      user: User;
+      access: string;
+      refresh: string;
+    };
   };
 
-  return response.data;
+  setTokens({ access: response.data.access, refresh: response.data.refresh });
+  setStoredUser(response.data.user);
+  return response.data.user;
 }
 
 export function logout(): void {

@@ -33,6 +33,11 @@ def create_feedback_source(request):
         return StandardResponse.validation_error(
             detail="project_id, provider, account_id, and channels are required"
         )
+    if provider != "slack":
+        return StandardResponse.validation_error(
+            detail="Only Slack feedback sources are supported.",
+            instance=request.path,
+        )
 
     source_service = get_source_service()
     source = source_service.create_slack_source(
@@ -55,7 +60,7 @@ def list_feedback_sources(request):
         )
 
     source_service = get_source_service()
-    sources = source_service.get_sources_by_project(project_id)
+    sources = source_service.get_sources_by_project(project_id, str(request.user.id))
     return StandardResponse.success(
         data={"sources": sources}, message="Feedback sources retrieved"
     )
@@ -106,7 +111,7 @@ def feedback_source_sync_now(request, source_id):
     """Trigger an immediate sync for a single source."""
     user_id = str(request.user.id)
     source_service = get_source_service()
-    source = source_service.get_source(source_id, user_id)
+    source = source_service.get_source_for_sync(source_id, user_id)
     if not source:
         return StandardResponse.not_found(
             detail="Feedback source not found", instance=request.path

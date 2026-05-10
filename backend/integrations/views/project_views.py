@@ -22,6 +22,14 @@ from authentication.permissions import IsProjectAdmin, IsProjectViewer, IsProjec
 from apis.infrastructure.storage_service import storage_service
 
 from ..services import get_project_service
+from ..services import get_organization_service
+
+
+def _get_active_organization_id(request):
+    profile = getattr(request.user, "profile", {}) or {}
+    if isinstance(profile, dict):
+        return profile.get("active_organization_id")
+    return None
 
 
 class ProjectCreateView(APIView):
@@ -31,15 +39,21 @@ class ProjectCreateView(APIView):
     def get(self, request):
         """Get all projects for the authenticated user."""
         user_id = getattr(request.user, 'id', None)
+        organization_id = _get_active_organization_id(request)
         if not user_id:
             return StandardResponse.unauthorized(
                 detail="Authentication required",
                 instance=request.path
             )
+        if not organization_id:
+            return StandardResponse.validation_error(
+                detail="Active organization context is required.",
+                instance=request.path
+            )
         
         # Use project service to get projects
         project_service = get_project_service()
-        projects = project_service.get_projects_by_user(user_id)
+        projects = project_service.get_projects_by_user(user_id, organization_id=organization_id)
         
         return StandardResponse.success(
             data={'projects': projects, 'count': len(projects)},
@@ -49,17 +63,19 @@ class ProjectCreateView(APIView):
     @handle_service_errors
     def post(self, request):
         user_id = getattr(request.user, 'id', None)
+        organization_id = _get_active_organization_id(request)
         project_name = request.data.get('project_name')
         description = request.data.get('description', '')
         platform = request.data.get('platform', 'standalone')
         external_project_id = request.data.get('external_project_id')
         integration_account_id = request.data.get('integration_account_id')
 
-        if not user_id or not project_name:
+        if not user_id or not organization_id or not project_name:
             return StandardResponse.validation_error(
-                detail="user_id (auth) and project_name are required",
+                detail="Authenticated user, active organization, and project_name are required",
                 errors=[
                     {"field": "user_id", "message": "Authentication required."} if not user_id else None,
+                    {"field": "organization_id", "message": "Active organization is required."} if not organization_id else None,
                     {"field": "project_name", "message": "This field is required."} if not project_name else None
                 ],
                 instance=request.path
@@ -87,6 +103,7 @@ class ProjectCreateView(APIView):
         project_service = get_project_service()
         project_data = {
             'userId': user_id,
+            'organizationId': organization_id,
             'name': project_name.strip(),
             'description': description or "",
             'externalLinks': external_links
@@ -123,15 +140,21 @@ class ProjectListView(APIView):
     @handle_service_errors
     def get(self, request):
         user_id = getattr(request.user, 'id', None)
+        organization_id = _get_active_organization_id(request)
         if not user_id:
             return StandardResponse.unauthorized(
                 detail="Authentication required",
                 instance=request.path
             )
+        if not organization_id:
+            return StandardResponse.validation_error(
+                detail="Active organization context is required.",
+                instance=request.path
+            )
         
         # Use project service to get projects
         project_service = get_project_service()
-        projects = project_service.get_projects_by_user(user_id)
+        projects = project_service.get_projects_by_user(user_id, organization_id=organization_id)
         
         return StandardResponse.success(
             data={'projects': projects, 'count': len(projects)},
@@ -144,7 +167,7 @@ class ProjectDetailView(APIView):
 
     def get_permissions(self):
         if self.request and self.request.method == "DELETE":
-            return [IsProjectOwner()]
+            return [IsProjectAdmin()]
         return [permission() for permission in self.permission_classes]
 
     @handle_service_errors
@@ -359,7 +382,12 @@ class ProjectRolesView(APIView):
         current_user_id = getattr(request.user, "id", None)
         current_role = "owner" if current_user_id and owner_id and str(current_user_id) == str(owner_id) else None
         if current_role is None and current_user_id:
-            current_role = storage_service.get_project_role_for_user(project_id, str(current_user_id))
+            membership = get_organization_service().get_membership(project.get("organizationId"), str(current_user_id))
+            if membership and membership.get("role") in ("owner", "admin"):
+                current_role = membership.get("role")
+            else:
+                role_doc = storage_service.get_project_role_for_user(project_id, str(current_user_id))
+                current_role = role_doc.get("role") if isinstance(role_doc, dict) else role_doc
 
         return StandardResponse.success(
             data={
@@ -392,6 +420,21 @@ class ProjectRolesView(APIView):
         if owner_id and str(owner_id) == str(user_id):
             return StandardResponse.validation_error(
                 detail="Owner role cannot be modified.",
+                instance=request.path
+            )
+
+        project_org_id = project.get("organizationId")
+        if not project_org_id:
+            return StandardResponse.validation_error(
+                detail="Project is missing organization context.",
+                instance=request.path
+            )
+
+        from integrations.services import get_organization_service
+        membership = get_organization_service().get_membership(str(project_org_id), str(user_id))
+        if not membership:
+            return StandardResponse.validation_error(
+                detail="Project roles can only be granted to members of this workspace.",
                 instance=request.path
             )
 

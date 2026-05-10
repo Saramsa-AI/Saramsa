@@ -19,6 +19,16 @@ if os.path.isdir(celery_ops_dir) and celery_ops_dir not in sys.path:
     sys.path.insert(0, celery_ops_dir)
     logger.info("Added celery_ops to sys.path: %s", celery_ops_dir)
 
+# Initialize OpenTelemetry for the celery_ops uvicorn process. The worker and
+# beat subprocesses initialize their own pipelines via Celery signals.
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "apis.settings")
+sys.path.insert(0, workdir)
+try:
+    from apis.infrastructure.otel import setup_otel
+    setup_otel()
+except Exception as e:
+    logger.warning("OpenTelemetry setup failed in celery_ops process: %s", e)
+
 # Start Celery worker as a subprocess
 logger.info("Starting Celery worker...")
 celery_proc = subprocess.Popen(

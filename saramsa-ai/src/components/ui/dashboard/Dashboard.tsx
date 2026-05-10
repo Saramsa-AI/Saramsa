@@ -6,6 +6,7 @@ import type { AppDispatch, RootState } from '@/store/store';
 import { encryptProjectId } from '@/lib/encryption';
 import {
   analyzeComments,
+  ingestFile,
   getLatestAnalysis,
   getConsolidatedDashboardData,
   generateUserStories,
@@ -75,9 +76,13 @@ const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
 function validateSelectedFile(file: File): { isValid: boolean; error?: string } {
   const name = file.name.toLowerCase();
-  const isSupported = name.endsWith('.csv') || name.endsWith('.json');
+  const isSupported = name.endsWith('.csv')
+    || name.endsWith('.json')
+    || name.endsWith('.pdf')
+    || name.endsWith('.txt')
+    || name.endsWith('.docx');
   if (!isSupported) {
-    return { isValid: false, error: 'Please upload a CSV or JSON file.' };
+    return { isValid: false, error: 'Please upload a CSV, JSON, PDF, TXT, or DOCX file.' };
   }
   if (file.size <= 0) {
     return { isValid: false, error: 'Selected file is empty.' };
@@ -106,7 +111,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     fetchingAnalysisById,
   } = useSelector((state: RootState) => state.analysis);
   
-  const { analysis: jiraAnalysis, isAnalyzing: isJiraAnalyzing } = useSelector((state: RootState) => state.jira);
   const { projects, loading: projectsLoading } = useSelector((state: RootState) => state.projects);
   const { accounts: integrationAccounts, loading: integrationsLoading } = useSelector((state: RootState) => state.integrations);
   const { user } = useSelector((state: RootState) => state.auth);
@@ -870,6 +874,47 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       return;
     }
     const tempId = `analyzing_${Date.now()}`;
+    const fileToSubmit = topFile;
+    const fileName = fileToSubmit.name;
+    const lowerName = fileName.toLowerCase();
+    const effectiveProjectId = currentProjectId || personalProjectId || undefined;
+
+    // PDF/DOCX: server-side extraction keeps the JS bundle light.
+    if (lowerName.endsWith('.pdf') || lowerName.endsWith('.docx')) {
+      try {
+        setTopError(null);
+        dispatch(clearError());
+        setTopFile(null);
+        dispatch(prependToHistory({
+          id: tempId,
+          analysis_date: new Date().toISOString(),
+          comments_count: 0,
+          positive_pct: 0,
+          status: 'analyzing',
+        }));
+        dispatch(setSelectedAnalysisId(tempId));
+
+        const result = await dispatch(ingestFile({
+          file: fileToSubmit,
+          projectId: effectiveProjectId,
+        })).unwrap();
+
+        await applyAnalysisResult(result, tempId);
+      } catch (e: any) {
+        dispatch(removeFromHistory(tempId));
+        const data = e?.response?.data;
+        const message =
+          (typeof data?.message === 'string' && data.message) ||
+          (typeof data?.error === 'string' && data.error) ||
+          (typeof data?.detail === 'string' && data.detail) ||
+          (Array.isArray(data?.errors) && data.errors[0]) ||
+          e?.message ||
+          'File ingestion failed. Please try again.';
+        setTopError(message);
+      }
+      return;
+    }
+
     try {
       setTopError(null);
       dispatch(clearError());
@@ -887,11 +932,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ''));
         reader.onerror = () => reject(new Error('Failed to read file'));
-        reader.readAsText(topFile);
+        reader.readAsText(fileToSubmit);
       });
-      
+
       let comments: string[] = [];
-      const lowerName = topFile.name.toLowerCase();
       if (lowerName.endsWith('.json')) {
         try {
           const parsed = JSON.parse(text);
@@ -903,6 +947,13 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         } catch {
           // ignore, will error below if empty
         }
+      } else if (lowerName.endsWith('.txt')) {
+        // Strip UTF-8 BOM if present.
+        const stripped = text.startsWith('﻿') ? text.slice(1) : text;
+        comments = stripped
+          .split(/\r\n|\r|\n/)
+          .map(line => line.trim())
+          .filter(Boolean);
       } else if (lowerName.endsWith('.csv')) {
         // Parse CSV properly handling quoted fields (commas inside quotes)
         const parseCSVLine = (line: string): string[] => {
@@ -950,18 +1001,12 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       }
       
       if (!comments.length) {
-        setTopError('No comments detected. Ensure JSON has a comments array or CSV has a comment column.');
+        setTopError('No comments detected. Ensure JSON has a comments array, CSV has a comment column, or TXT has one comment per line.');
         return;
       }
 
-      // Update loadedComments for display
       dispatch(setLoadedComments(comments));
-
-      // Clear the file from upload panel immediately so it resets
-      const fileName = topFile.name;
       setTopFile(null);
-
-      // Prepend a temporary "analyzing" entry to the sidebar for immediate feedback
       dispatch(prependToHistory({
         id: tempId,
         analysis_date: new Date().toISOString(),
@@ -971,95 +1016,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       }));
       dispatch(setSelectedAnalysisId(tempId));
 
-      // Use Redux action to analyze comments
-      const effectiveProjectId = currentProjectId || personalProjectId || undefined;
       const result = await dispatch(analyzeComments({
         comments,
         projectId: effectiveProjectId,
-        fileName
+        fileName,
       })).unwrap();
-      
 
-      // Extract analysis data from the result
-      const payload = (result && (result.analysisData || result.sentimentsummary || result.featureasba)) ? result : (result?.data || null);
-      
-      if (payload) {
-        const resolvedProjectId = payload?.context?.project_id || payload?.projectId;
-        const isDraft = payload?.context?.is_draft;
-        if (resolvedProjectId) {
-          if (isDraft) {
-            setPersonalProjectId(resolvedProjectId);
-          }
-          if (!currentProjectId) {
-            setCurrentProjectId(resolvedProjectId);
-          }
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('project_id', resolvedProjectId);
-          }
-        }
-        // The result is already in the correct format, just use it directly
-        dispatch(setAnalysisData(payload));
-
-        // Trigger usage badge refresh after successful analysis
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event('usage-updated'));
-        }
-
-        // Replace the temporary "analyzing" entry with the real one
-        if (payload.id) {
-          const counts = payload.analysisData?.counts ?? {};
-          const total = Number(counts.total ?? 0);
-          const positive = Number(counts.positive ?? 0);
-          dispatch(replaceInHistory({
-            oldId: tempId,
-            entry: {
-              id: payload.id,
-              analysis_date: payload.createdAt || new Date().toISOString(),
-              comments_count: total,
-              positive_pct: total > 0 ? Math.round((positive / total) * 100) : 0,
-              status: 'completed',
-              name: payload.name,
-            },
-          }));
-
-          // Only auto-switch if user is still viewing the "analyzing" entry
-          // If they switched to view another analysis, show notification instead
-          if (selectedAnalysisId === tempId) {
-            dispatch(setSelectedAnalysisId(payload.id));
-          } else {
-            // User switched away - show notification with brand color
-            toast('Analysis Complete!', {
-              description: `Analysis with ${total} comments completed successfully.`,
-              icon: <CheckCircle className="w-5 h-5 text-saramsa-brand" />,
-              action: {
-                label: 'View Results',
-                onClick: () => {
-                  dispatch(setSelectedAnalysisId(payload.id));
-                }
-              },
-              duration: 10000,
-            });
-          }
-        } else {
-          // No id returned, remove the temp entry
-          dispatch(removeFromHistory(tempId));
-        }
-
-        // Set deepAnalysis if available
-        if (payload.deepAnalysis) {
-          dispatch(setDeepAnalysis(payload.deepAnalysis));
-        }
-        
-        // Generate work items asynchronously in the background (don't await)
-        // This allows the dashboard to display analysis results immediately
-        generateWorkItemsFromAnalysis(payload).catch(e => {
-          console.error('Background work item generation failed:', e);
-        });
-        
-      }
-      
+      await applyAnalysisResult(result, tempId);
     } catch (e: any) {
-      // Remove the temporary "analyzing" entry on failure
       dispatch(removeFromHistory(tempId));
       const data = e?.response?.data;
       const message =
@@ -1071,6 +1035,82 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         'Analysis failed. Please try again.';
       setTopError(message);
     }
+  }
+
+  // Replaces the optimistic "analyzing..." history entry (`tempId`) with
+  // the resolved analysis state.
+  async function applyAnalysisResult(result: any, tempId: string) {
+    const payload = (result && (result.analysisData || result.sentimentsummary || result.featureasba))
+      ? result
+      : (result?.data || null);
+
+    if (!payload) {
+      dispatch(removeFromHistory(tempId));
+      return;
+    }
+
+    const resolvedProjectId = payload?.context?.project_id || payload?.projectId;
+    const isDraft = payload?.context?.is_draft;
+    if (resolvedProjectId) {
+      if (isDraft) {
+        setPersonalProjectId(resolvedProjectId);
+      }
+      if (!currentProjectId) {
+        setCurrentProjectId(resolvedProjectId);
+      }
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('project_id', resolvedProjectId);
+      }
+    }
+
+    dispatch(setAnalysisData(payload));
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('usage-updated'));
+    }
+
+    if (payload.id) {
+      const counts = payload.analysisData?.counts ?? {};
+      const total = Number(counts.total ?? 0);
+      const positive = Number(counts.positive ?? 0);
+      dispatch(replaceInHistory({
+        oldId: tempId,
+        entry: {
+          id: payload.id,
+          analysis_date: payload.createdAt || new Date().toISOString(),
+          comments_count: total,
+          positive_pct: total > 0 ? Math.round((positive / total) * 100) : 0,
+          status: 'completed',
+          name: payload.name,
+        },
+      }));
+
+      if (selectedAnalysisId === tempId) {
+        dispatch(setSelectedAnalysisId(payload.id));
+      } else {
+        toast('Analysis Complete!', {
+          description: `Analysis with ${total} comments completed successfully.`,
+          icon: <CheckCircle className="w-5 h-5 text-saramsa-brand" />,
+          action: {
+            label: 'View Results',
+            onClick: () => {
+              dispatch(setSelectedAnalysisId(payload.id));
+            }
+          },
+          duration: 10000,
+        });
+      }
+    } else {
+      dispatch(removeFromHistory(tempId));
+    }
+
+    if (payload.deepAnalysis) {
+      dispatch(setDeepAnalysis(payload.deepAnalysis));
+    }
+
+    generateWorkItemsFromAnalysis(payload).catch(e => {
+      console.error('Background work item generation failed:', e);
+    });
   }
 
   // Generate work items from analysis data
@@ -1117,8 +1157,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           
           if (selectedJiraProjectId) {
             try {
-              const metadataResponse = await apiRequest('get', `/workitems/jira/project-metadata?projectId=${selectedJiraProjectId}`, {}, true, false);
-              jiraProjectMetadata = metadataResponse.data.metadata;
+              jiraProjectMetadata = null;
             } catch (e) {
               console.warn('⚠️ Failed to fetch Jira project metadata, proceeding without it:', e);
             }
@@ -2021,8 +2060,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                                   
                                   if (selectedJiraProjectId) {
                                     try {
-                                      const metadataResponse = await apiRequest('get', `/workitems/jira/project-metadata?projectId=${selectedJiraProjectId}`, {}, true, false);
-                                      jiraProjectMetadata = metadataResponse.data.metadata;
+                                      jiraProjectMetadata = null;
                                     } catch (e) {
                                       console.warn('Failed to fetch Jira project metadata:', e);
                                     }

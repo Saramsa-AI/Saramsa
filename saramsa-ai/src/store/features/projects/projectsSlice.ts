@@ -141,18 +141,14 @@ export const importProjectFromExternal = createAsyncThunk(
     // Add provider-specific fields
     if (data.provider === 'azure') {
       const organization = typeof window !== 'undefined' ? localStorage.getItem('azure_organization') : null;
-      const pat_token = typeof window !== 'undefined' ? localStorage.getItem('azure_pat_token') : null;
       createData.organization = organization;
-      createData.pat_token = pat_token;
       createData.azure_project_name = data.externalProject.name;
       createData.azure_process_template = data.externalProject.templateName;
     } else if (data.provider === 'jira') {
       const jira_domain = typeof window !== 'undefined' ? localStorage.getItem('jira_domain') : null;
       const jira_email = typeof window !== 'undefined' ? localStorage.getItem('jira_email') : null;
-      const jira_api_token = typeof window !== 'undefined' ? localStorage.getItem('jira_api_token') : null;
       createData.jira_domain = jira_domain;
       createData.jira_email = jira_email;
-      createData.jira_api_token = jira_api_token;
       createData.jira_project_key = data.externalProject.key;
     }
     
