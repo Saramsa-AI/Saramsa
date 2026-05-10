@@ -1,0 +1,180 @@
+name: Deploy API (master, Docker)
+
+# Triggers when API code or its Dockerfiles change on master.
+# Disabled the legacy zip-based workflow (master_saramsa-api.yml) — it's now
+# workflow_dispatch only as a safety fallback.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'backend/**'
+      - 'Dockerfile.api'
+      - 'Dockerfile.api-base'
+      - '.github/workflows/deploy-api-prod-docker.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prepare CI requirements
+        run: |
+          awk '{
+            if ($0 ~ /^-e git\+https:\/\/github.com\/RakeshMahendran\/Saramsa.git@/ && $0 ~ /subdirectory=celery_ops/) {
+              next
+            } else if ($0 ~ /^torch==/ && $0 ~ /\+/) {
+              split($0, a, "==")
+              split(a[2], b, "+")
+              print "torch==" b[1]
+            } else {
+              print $0
+            }
+          }' requirements.txt > requirements.ci.txt
+
+      - name: Cache virtualenv
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: backend/.venv
+          key: venv-api-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            venv-api-py${{ steps.setup-python.outputs.python-version }}-
+
+      - name: Install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.ci.txt
+
+      - name: Run Django tests
+        env:
+          DJANGO_SETTINGS_MODULE: apis.settings_test
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          ALLOWED_HOSTS: ${{ vars.ALLOWED_HOSTS }}
+          AZURE_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_ENDPOINT_URL: ${{ secrets.AZURE_OPENAI_ENDPOINT_URL }}
+          AZURE_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          AZURE_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
+          AZURE_DEVOPS_ORGANIZATION: ${{ secrets.AZURE_DEVOPS_ORGANIZATION }}
+          AZURE_DEVOPS_PROJECT: ${{ secrets.AZURE_DEVOPS_PROJECT }}
+          AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
+        run: |
+          source .venv/bin/activate
+          export SECRET_KEY="${SECRET_KEY:-ci-build-secret-key-not-for-prod}"
+          export ALLOWED_HOSTS="${ALLOWED_HOSTS:-localhost,127.0.0.1,testserver}"
+          python manage.py test
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Check if base image needs rebuild
+        id: check-base
+        run: |
+          BASE_HASH=$(sha256sum backend/requirements.txt Dockerfile.api-base | sha256sum | cut -d' ' -f1)
+          echo "base_hash=${BASE_HASH}" >> "$GITHUB_OUTPUT"
+          echo "Base image hash: ${BASE_HASH}"
+          if docker pull saramsa/saramsa-api-base:${BASE_HASH} 2>/dev/null; then
+            echo "needs_rebuild=false" >> "$GITHUB_OUTPUT"
+            docker tag saramsa/saramsa-api-base:${BASE_HASH} saramsa/saramsa-api-base:latest
+          else
+            echo "needs_rebuild=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build base image (only if requirements changed)
+        if: steps.check-base.outputs.needs_rebuild == 'true'
+        run: |
+          docker build \
+            -t saramsa/saramsa-api-base:latest \
+            -t saramsa/saramsa-api-base:${{ steps.check-base.outputs.base_hash }} \
+            -f Dockerfile.api-base .
+
+      - name: Push base image (only if rebuilt)
+        if: steps.check-base.outputs.needs_rebuild == 'true'
+        run: |
+          docker push saramsa/saramsa-api-base:latest
+          docker push saramsa/saramsa-api-base:${{ steps.check-base.outputs.base_hash }}
+
+      - name: Build app image
+        run: |
+          docker build \
+            -t saramsa/saramsa-api:latest \
+            -t saramsa/saramsa-api:${{ github.sha }} \
+            --build-arg BASE_IMAGE=saramsa/saramsa-api-base:latest \
+            -f Dockerfile.api .
+
+      - name: Push app image
+        run: |
+          docker push saramsa/saramsa-api:latest
+          docker push saramsa/saramsa-api:${{ github.sha }}
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_7ADE099664754A3C99E76F74337232B6 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8CDDA0EE23EE4F6186145892542CA1A2 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_6E7B017B418A430AB1197545CF11F07F }}
+
+      - name: Configure App Service to use the Docker image
+        # Idempotent: the first run switches saramsa-api-prod from the legacy
+        # appsvc/python image to our Docker image; subsequent runs are no-ops
+        # since the image name doesn't change between deploys.
+        run: |
+          az webapp config container set \
+            --name saramsa-api-prod \
+            --resource-group saramsa \
+            --container-image-name docker.io/saramsa/saramsa-api:latest \
+            --container-registry-url https://index.docker.io
+          # Clear any leftover startup command from the appsvc/python config
+          # so the image's CMD takes over.
+          az webapp config set \
+            --name saramsa-api-prod \
+            --resource-group saramsa \
+            --startup-file ""
+
+      - name: Restart API app to pull new image
+        run: |
+          az webapp restart --name saramsa-api-prod --resource-group saramsa
+          echo "Restarted saramsa-api-prod — pulling new image..."
+
+      - name: Verify deployment
+        run: |
+          echo "Waiting for container to start..."
+          sleep 45
+          for i in $(seq 1 8); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://saramsa-api-prod.azurewebsites.net/api/health/)
+            echo "Attempt $i: HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "API is healthy!"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "WARNING: API not responding after 8 attempts"
+          exit 1
