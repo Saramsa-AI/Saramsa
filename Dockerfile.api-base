@@ -1,0 +1,28 @@
+# Base image for the Saramsa Django API — contains all Python dependencies.
+# Rebuilt only when requirements.txt changes (rare).
+# Tag with hash of requirements.txt for cache-busting.
+#
+# Why a custom Docker image instead of Azure's appsvc/python:
+#   appsvc/python ships without libpq-dev, so psycopg2-binary's bundled libpq
+#   is used. That bundled libpq's Neon-pooler auto-detection injects a project
+#   option that Neon's pooler now strict-validates against SNI, causing every
+#   DB query to fail. Building our own image with libpq-dev lets psycopg2
+#   (source) link against the system libpq, matching the celery container.
+
+FROM python:3.11-slim
+
+# System dependencies for psycopg2 (source build), cffi, cryptography
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libpq-dev libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv for fast resolution
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+
+# The API only needs requirements.txt (no ML deps).
+COPY backend/requirements.txt ./
+# Strip editable git installs (celery_ops); they're not needed here.
+RUN sed -i '/^-e git+/d' requirements.txt && \
+    uv pip install --system --no-cache -r requirements.txt

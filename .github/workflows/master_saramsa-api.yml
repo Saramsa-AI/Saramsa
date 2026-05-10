@@ -1,12 +1,10 @@
-name: Saramsa-api (master)
+name: Saramsa-api (master, legacy zip — disabled)
 
+# Legacy zip-based deploy. Replaced by deploy-api-prod-docker.yml on
+# 2026-05-10 because Azure's appsvc/python image lacks libpq-dev, causing
+# psycopg2-binary's bundled libpq to inject a Neon project option that
+# conflicts with Neon pooler SNI validation. Kept as a manual fallback.
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - 'backend/**'
-      - '.github/workflows/master_saramsa-api.yml'
   workflow_dispatch:
 
 jobs:
