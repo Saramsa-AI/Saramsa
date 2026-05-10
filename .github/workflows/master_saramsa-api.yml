@@ -62,10 +62,9 @@ jobs:
 
       - name: Run Django tests
         env:
-          DJANGO_SETTINGS_MODULE: apis.settings
+          DJANGO_SETTINGS_MODULE: apis.settings_test
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           ALLOWED_HOSTS: ${{ vars.ALLOWED_HOSTS }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           AZURE_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_ENDPOINT_URL: ${{ secrets.AZURE_OPENAI_ENDPOINT_URL }}
           AZURE_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
@@ -77,15 +76,12 @@ jobs:
           source .venv/bin/activate
           export SECRET_KEY="${SECRET_KEY:-ci-build-secret-key-not-for-prod}"
           export ALLOWED_HOSTS="${ALLOWED_HOSTS:-localhost,127.0.0.1,testserver}"
-          if [ -z "$DATABASE_URL" ]; then
-            echo "DATABASE_URL secret is required for API tests."
-            exit 1
-          fi
-          python manage.py test --keepdb
+          python manage.py test
 
       - name: Run Django collectstatic
         env:
           DJANGO_SETTINGS_MODULE: apis.settings
+          ALLOW_IN_MEMORY_CACHE: 'true'
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           ALLOWED_HOSTS: ${{ vars.ALLOWED_HOSTS }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
