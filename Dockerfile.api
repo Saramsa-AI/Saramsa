@@ -1,0 +1,22 @@
+# Saramsa Django API image.
+# Uses the pre-built base image (Dockerfile.api-base) for fast builds.
+# Rebuilt when application code changes (~2-3 min).
+
+ARG BASE_IMAGE=saramsa/saramsa-api-base:latest
+
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+COPY backend/ ./
+
+# Collect static files at image build time so the runtime container is read-only.
+RUN python manage.py collectstatic --noinput || \
+    echo "collectstatic skipped (likely missing env at build time — Azure will retry on boot)"
+
+EXPOSE 8000
+
+# Mirror the gunicorn invocation from backend/startup.sh.
+CMD ["gunicorn", "--bind=0.0.0.0:8000", "--timeout", "600", "--workers", "2", \
+     "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", \
+     "apis.wsgi:application"]
