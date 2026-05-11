@@ -1,9 +1,10 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
+import type { WorkProvider } from '@/lib/providers';
 
 export interface IntegrationAccount {
   id: string;
-  provider: 'azure' | 'jira' | 'asana' | 'slack';
+  provider: WorkProvider | 'slack';
   displayName: string;
   status: 'active' | 'revoked' | 'expired' | 'error';
   metadata: {
@@ -97,7 +98,7 @@ export const fetchIntegrationAccounts = createAsyncThunk(
 export const createIntegrationAccount = createAsyncThunk(
   'integrations/createAccount',
   async (data: {
-    provider: 'azure' | 'jira' | 'asana';
+    provider: WorkProvider;
     credentials: any;
     metadata: any;
   }) => {
@@ -127,7 +128,7 @@ export const testIntegrationConnection = createAsyncThunk(
 
 export const fetchExternalProjects = createAsyncThunk(
   'integrations/fetchExternalProjects',
-  async (data: { provider: 'azure' | 'jira' | 'asana'; accountId: string }) => {
+  async (data: { provider: WorkProvider; accountId: string }) => {
     const response = await apiRequest('get', `/integrations/external/projects/?provider=${data.provider}&accountId=${data.accountId}`, undefined, true);
     // StandardResponse format: response.data.data
     // Add provider information to each project for the UI

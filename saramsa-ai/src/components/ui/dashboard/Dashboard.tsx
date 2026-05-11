@@ -36,6 +36,7 @@ import {
 
 import type { AnalysisData } from '@/types/analysis';
 import { apiRequest } from '@/lib/apiRequest';
+import type { WorkProvider } from '@/lib/providers';
 import { Check, Loader2, Sparkles, AlertCircle, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { UploadPanel } from './UploadPanel';
@@ -197,7 +198,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       isGeneratingUserStories,
     [isTaskViewLoading, userStoriesLoading, isGeneratingUserStories]
   );
-  const selectedPlatform = useMemo((): 'azure' | 'jira' | 'asana' | null => {
+  const selectedPlatform = useMemo((): WorkProvider | null => {
     if (!projects || !projects.length) return null;
     const proj = projects.find((p: any) => p.id === projectId);
     const provider = proj?.externalLinks?.[0]?.provider;

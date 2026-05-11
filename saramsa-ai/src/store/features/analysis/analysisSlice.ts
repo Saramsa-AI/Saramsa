@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
+import { getProviderLabel, type WorkProvider } from '@/lib/providers';
 import type { AnalysisData } from '@/types/analysis';
 
 interface ProjectContext {
@@ -327,7 +328,7 @@ export const generateUserStories = createAsyncThunk<
   {
     analysisData: any;
     comments: string[];
-    platform: 'azure' | 'jira' | 'asana';
+    platform: WorkProvider;
     processTemplate?: string;
     projectId?: string;
     projectMetadata?: any;
@@ -371,13 +372,7 @@ export const generateUserStories = createAsyncThunk<
     const body = err.response?.data;
     const apiDetail = typeof body?.detail === 'string' ? body.detail : body?.data?.detail;
 
-    let errorMessage = `${
-      data.platform === 'jira'
-        ? 'Jira'
-        : data.platform === 'asana'
-        ? 'Asana'
-        : 'Azure'
-    } work items generation failed. Please try again.`;
+    let errorMessage = `${getProviderLabel(data.platform)} work items generation failed. Please try again.`;
 
     if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
       errorMessage = 'Work item generation is taking longer than expected. This may happen with large datasets. Please try again or reduce the number of comments.';
@@ -403,7 +398,7 @@ export const submitUserStories = createAsyncThunk<
     userId: string;
     projectId: string;
     userStories: any[];
-    platform: 'azure' | 'jira' | 'asana';
+    platform: WorkProvider;
     processTemplate?: string;
     time?: string;
   },
@@ -423,13 +418,7 @@ export const submitUserStories = createAsyncThunk<
     const response = await apiRequest('post', '/insights/user-story-submission/', payload, true, false);
     return response.data;
   } catch (err: any) {
-    let errorMessage = `${
-      data.platform === 'jira'
-        ? 'Jira'
-        : data.platform === 'asana'
-        ? 'Asana'
-        : 'Azure DevOps'
-    } user story submission failed. Please try again.`;
+    let errorMessage = `${getProviderLabel(data.platform)} user story submission failed. Please try again.`;
     if (err.response?.status === 401) {
       errorMessage = 'Authentication required. Please login again.';
     } else if (err.response?.status === 400) {

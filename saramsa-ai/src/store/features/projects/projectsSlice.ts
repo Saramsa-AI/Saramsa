@@ -1,8 +1,9 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
+import type { WorkProvider } from '@/lib/providers';
 
 export interface ProjectExternalLink {
-  provider: 'azure' | 'jira' | 'asana';
+  provider: WorkProvider;
   integrationAccountId: string;
   externalId: string;
   url: string;
@@ -116,7 +117,7 @@ export const createProject = createAsyncThunk(
 export const importProjectFromExternal = createAsyncThunk(
   'projects/importFromExternal',
   async (data: {
-    provider: 'azure' | 'jira' | 'asana';
+    provider: WorkProvider;
     integrationAccountId: string;
     externalProject: {
       id: string;
@@ -187,7 +188,7 @@ export const deleteProject = createAsyncThunk(
 
 export const syncProjectWithExternal = createAsyncThunk(
   'projects/syncWithExternal',
-  async (data: { projectId: string; provider: 'azure' | 'jira' | 'asana' }) => {
+  async (data: { projectId: string; provider: WorkProvider }) => {
     const response = await apiRequest('post', `/integrations/projects/${data.projectId}/sync`, {
       provider: data.provider,
     }, true);

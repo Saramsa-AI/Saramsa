@@ -9,8 +9,6 @@ import {
   ExternalLink, 
   MoreVertical, 
   Trash2,
-  Cloud,
-  CheckSquare,
   ArrowRight,
   Edit,
   RefreshCw,
@@ -20,13 +18,18 @@ import type { Project } from '@/store/features/projects/projectsSlice';
 import { DeleteProjectModal } from './DeleteProjectModal';
 import { Button } from '@/components/ui/button';
 import { encryptProjectId } from '@/lib/encryption';
+import {
+  getProviderLabel,
+  providerDefinitions,
+  type WorkProvider,
+} from '@/lib/providers';
 
 interface ProjectCardProps {
   project: Project;
   onClick: () => void;
   onDelete: (projectId: string) => void;
   onEdit?: (project: Project) => void;
-  onSync?: (project: Project, provider: 'azure' | 'jira' | 'asana') => void;
+  onSync?: (project: Project, provider: WorkProvider) => void;
   onGoToProject?: (project: Project) => void;
   isSelected?: boolean;
   deleteLoading?: boolean;
@@ -55,44 +58,23 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onSync, onGoTo
     }
   }, [showMenu]);
 
-  const getProviderIcon = (provider: 'azure' | 'jira' | 'asana') => {
-    switch (provider) {
-      case 'azure':
-        return <Cloud className="w-3 h-3" />;
-      case 'jira':
-        return <span className="text-xs font-bold">J</span>;
-      case 'asana':
-        return <CheckSquare className="w-3 h-3" />;
-      default:
-        return null;
+  const getProviderIcon = (provider: WorkProvider) => {
+    const definition = providerDefinitions[provider];
+    const IconComponent = definition.projectBadgeIcon;
+
+    if (IconComponent) {
+      return <IconComponent className="w-3 h-3" />;
     }
+
+    if (definition.projectBadgeGlyph) {
+      return <span className="text-xs font-bold">{definition.projectBadgeGlyph}</span>;
+    }
+
+    return null;
   };
 
-  const getProviderColor = (provider: 'azure' | 'jira' | 'asana') => {
-    switch (provider) {
-      case 'azure':
-        return 'bg-secondary/80 text-foreground border border-border/60';
-      case 'jira':
-        return 'bg-secondary/80 text-foreground border border-border/60';
-      case 'asana':
-        return 'bg-secondary/80 text-foreground border border-border/60';
-      default:
-        return 'bg-secondary/60 text-foreground border border-border/60';
-    }
-  };
-
-  const getProviderLabel = (provider: 'azure' | 'jira' | 'asana') => {
-    switch (provider) {
-      case 'azure':
-        return 'Azure DevOps';
-      case 'jira':
-        return 'Jira';
-      case 'asana':
-        return 'Asana';
-      default:
-        return provider;
-    }
-  };
+  const getProviderColor = () =>
+    'bg-secondary/80 text-foreground border border-border/60';
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -219,7 +201,7 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onSync, onGoTo
             project.externalLinks.map((link, index) => (
               <span
                 key={index}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 ${getProviderColor(link.provider)} text-xs rounded-full h-5`}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 ${getProviderColor()} text-xs rounded-full h-5`}
               >
                 {getProviderIcon(link.provider)}
                 <span>{getProviderLabel(link.provider)}</span>
@@ -290,4 +272,3 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onSync, onGoTo
     </motion.div>
   );
 }
-

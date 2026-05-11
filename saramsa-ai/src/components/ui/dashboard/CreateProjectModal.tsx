@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch, RootState } from '@/store/store';
 import { fetchExternalProjects, clearExternalProjects } from '@/store/features/integrations/integrationsSlice';
@@ -10,11 +10,16 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import type { IntegrationAccount } from '@/store/features/integrations/integrationsSlice';
+import {
+  getProviderShortLabel,
+  providerOrder,
+  type WorkProvider,
+} from '@/lib/providers';
 
 interface CreateProjectModalProps {
   onClose: () => void;
-  onCreate: (name: string, description?: string, externalLink?: { provider: 'azure' | 'jira' | 'asana', accountId: string, projectId: string, projectName: string, projectUrl?: string, projectKey?: string }) => void;
-  onImport: (provider: 'azure' | 'jira' | 'asana') => void;
+  onCreate: (name: string, description?: string, externalLink?: { provider: WorkProvider, accountId: string, projectId: string, projectName: string, projectUrl?: string, projectKey?: string }) => void;
+  onImport: (provider: WorkProvider) => void;
   integrations: IntegrationAccount[];
   loading?: boolean;
 }
@@ -26,15 +31,22 @@ export function CreateProjectModal({ onClose, onCreate, onImport, integrations, 
   
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [selectedProvider, setSelectedProvider] = useState<'none' | 'azure' | 'jira' | 'asana'>('none');
+  const [selectedProvider, setSelectedProvider] = useState<'none' | WorkProvider>('none');
   const [selectedAccount, setSelectedAccount] = useState<string>('');
   const [selectedExternalProject, setSelectedExternalProject] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const maxDescriptionLength = 100;
-
-  const azureIntegrations = integrations.filter(acc => acc.provider === 'azure' && acc.status === 'active');
-  const jiraIntegrations = integrations.filter(acc => acc.provider === 'jira' && acc.status === 'active');
-  const asanaIntegrations = integrations.filter(acc => acc.provider === 'asana' && acc.status === 'active');
+  const providerIntegrations = useMemo(
+    () =>
+      providerOrder.reduce((acc, provider) => {
+        acc[provider] = integrations.filter(
+          (integration) =>
+            integration.provider === provider && integration.status === 'active'
+        );
+        return acc;
+      }, {} as Record<WorkProvider, IntegrationAccount[]>),
+    [integrations]
+  );
 
   // Helper function to check if an external project is already linked
   const getLinkedProject = (externalProjectId: string) => {
@@ -56,17 +68,13 @@ export function CreateProjectModal({ onClose, onCreate, onImport, integrations, 
 
   // Auto-select first account when provider changes
   useEffect(() => {
-    if (selectedProvider === 'azure' && azureIntegrations.length > 0) {
-      setSelectedAccount(azureIntegrations[0].id);
-    } else if (selectedProvider === 'jira' && jiraIntegrations.length > 0) {
-      setSelectedAccount(jiraIntegrations[0].id);
-    } else if (selectedProvider === 'asana' && asanaIntegrations.length > 0) {
-      setSelectedAccount(asanaIntegrations[0].id);
+    if (selectedProvider !== 'none' && providerIntegrations[selectedProvider].length > 0) {
+      setSelectedAccount(providerIntegrations[selectedProvider][0].id);
     } else if (selectedProvider === 'none') {
       setSelectedAccount('');
       setSelectedExternalProject(null);
     }
-  }, [selectedProvider, azureIntegrations, jiraIntegrations, asanaIntegrations]);
+  }, [selectedProvider, providerIntegrations]);
 
   const isDuplicateName = projects.some(
     p => p.name.toLowerCase() === name.trim().toLowerCase()
@@ -173,7 +181,7 @@ export function CreateProjectModal({ onClose, onCreate, onImport, integrations, 
             </div>
 
             {/* Link to External Project */}
-            {(azureIntegrations.length > 0 || jiraIntegrations.length > 0 || asanaIntegrations.length > 0) && (
+            {providerOrder.some((provider) => providerIntegrations[provider].length > 0) && (
               <div className="pt-4 border-t border-border/60">
                 <label className="block text-sm font-medium text-muted-foreground mb-3">
                   Link to External Project (Optional)
@@ -195,61 +203,31 @@ export function CreateProjectModal({ onClose, onCreate, onImport, integrations, 
                   >
                     None
                   </Button>
-                  {azureIntegrations.length > 0 && (
+                  {providerOrder.map((provider) =>
+                    providerIntegrations[provider].length > 0 ? (
                     <Button
+                      key={provider}
                       type="button"
-                      onClick={() => setSelectedProvider('azure')}
+                      onClick={() => setSelectedProvider(provider)}
                       variant="outline"
                       size="sm"
                       className={`px-3 py-2 text-sm rounded-xl border transition-colors ${
-                        selectedProvider === 'azure'
+                        selectedProvider === provider
                           ? 'border-saramsa-brand/60 bg-saramsa-brand/10 text-saramsa-brand dark:text-saramsa-brand'
                           : 'border-border/60 text-muted-foreground hover:bg-accent/60'
                       }`}
                       disabled={loading}
                     >
-                      Azure
+                      {getProviderShortLabel(provider)}
                     </Button>
-                  )}
-                  {jiraIntegrations.length > 0 && (
-                    <Button
-                      type="button"
-                      onClick={() => setSelectedProvider('jira')}
-                      variant="outline"
-                      size="sm"
-                      className={`px-3 py-2 text-sm rounded-xl border transition-colors ${
-                        selectedProvider === 'jira'
-                          ? 'border-saramsa-brand/60 bg-saramsa-brand/10 text-saramsa-brand dark:text-saramsa-brand'
-                          : 'border-border/60 text-muted-foreground hover:bg-accent/60'
-                      }`}
-                      disabled={loading}
-                    >
-                      Jira
-                    </Button>
-                  )}
-                  {asanaIntegrations.length > 0 && (
-                    <Button
-                      type="button"
-                      onClick={() => setSelectedProvider('asana')}
-                      variant="outline"
-                      size="sm"
-                      className={`px-3 py-2 text-sm rounded-xl border transition-colors ${
-                        selectedProvider === 'asana'
-                          ? 'border-saramsa-brand/60 bg-saramsa-brand/10 text-saramsa-brand dark:text-saramsa-brand'
-                          : 'border-border/60 text-muted-foreground hover:bg-accent/60'
-                      }`}
-                      disabled={loading}
-                    >
-                      Asana
-                    </Button>
+                    ) : null
                   )}
                 </div>
 
                 {/* Account Selection (if multiple accounts) */}
                 {selectedProvider !== 'none' && (
                   <>
-                    {((selectedProvider === 'azure' && azureIntegrations.length > 1) ||
-                      (selectedProvider === 'jira' && jiraIntegrations.length > 1)) && (
+                    {providerIntegrations[selectedProvider].length > 1 && (
                       <div className="mb-3">
                         <label className="block text-xs text-muted-foreground dark:text-muted-foreground mb-1">
                           Select Account
@@ -260,7 +238,7 @@ export function CreateProjectModal({ onClose, onCreate, onImport, integrations, 
                           className="w-full px-3 py-2 text-sm border border-border/60 rounded-xl bg-background/80 text-foreground"
                           disabled={loading}
                         >
-                          {(selectedProvider === 'azure' ? azureIntegrations : jiraIntegrations).map((account) => (
+                          {providerIntegrations[selectedProvider].map((account) => (
                             <option key={account.id} value={account.id}>
                               {account.displayName}
                             </option>
@@ -406,4 +384,3 @@ export function CreateProjectModal({ onClose, onCreate, onImport, integrations, 
     </AnimatePresence>
   );
 }
-

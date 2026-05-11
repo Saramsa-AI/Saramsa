@@ -38,6 +38,7 @@ import { Checkbox } from "./checkbox";
 import { EditActionDrawer } from "./edit-action-drawer";
 import apiRequest from "@/lib/apiRequest";
 import { getRelatedInsightsForWorkItem } from "@/lib/insightTraceability";
+import { getProviderLabel, type WorkProvider } from "@/lib/providers";
 import { DEFAULT_QUALITY_RULES, evaluateWorkItems, type QualityReport, type QualityRules } from "@/lib/workItemQuality";
 import { sortWorkItemsByPriority } from "@/lib/workItemPrioritySort";
 
@@ -59,7 +60,7 @@ interface WorkItem {
 
 interface UserStoryListProps {
   userStories?: UserStory[];
-  platform?: 'azure' | 'jira' | 'asana';
+  platform?: WorkProvider;
   projectId?: string;
   projectKey?: string;
   onRegenerateAnalysis?: () => void;
@@ -125,11 +126,7 @@ export const UserStoryList = ({
   /** Items staged for the review/push flow (header multi-select or per-row push). */
   const [pushQueueItems, setPushQueueItems] = useState<ActionItem[]>([]);
 
-  const platformLabel = useMemo(() => {
-    if (platform === 'azure') return 'Azure DevOps';
-    if (platform === 'asana') return 'Asana';
-    return 'Jira';
-  }, [platform]);
+  const platformLabel = useMemo(() => getProviderLabel(platform), [platform]);
 
   const insightsList = useMemo(() => {
     const data = analysisData as Record<string, unknown> | null;

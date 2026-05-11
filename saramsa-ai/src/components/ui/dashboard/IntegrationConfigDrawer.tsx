@@ -9,9 +9,10 @@ import { AsanaIntegrationForm } from "@/components/config/asana/AsanaIntegration
 import { AzureDevOpsIntegrationForm } from "@/components/config/azure/AzureDevOpsIntegrationForm";
 import { JiraIntegrationForm } from "@/components/config/jira/JiraIntegrationForm";
 import { lockBodyScroll, unlockBodyScroll } from "@/lib/bodyScrollLock";
+import { getProviderDrawerTitle, type WorkProvider } from "@/lib/providers";
 
 interface IntegrationConfigDrawerProps {
-  platform: "jira" | "azure" | "asana" | null;
+  platform: WorkProvider | null;
   projectId: string;
   open: boolean;
   onClose: () => void;
@@ -52,12 +53,7 @@ export function IntegrationConfigDrawer({
 
   if (!modalRoot || !open || !platform) return null;
 
-  const title =
-    platform === "azure"
-      ? "Configure Azure DevOps"
-      : platform === "asana"
-      ? "Configure Asana Integration"
-      : "Configure Jira Integration";
+  const title = getProviderDrawerTitle(platform);
 
   return createPortal(
     <AnimatePresence>

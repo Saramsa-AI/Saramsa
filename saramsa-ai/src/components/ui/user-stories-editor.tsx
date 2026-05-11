@@ -10,6 +10,7 @@ import { Label } from './label';
 import { Badge } from './badge';
 import { Card, CardContent } from './card';
 import { Checkbox } from './checkbox';
+import { getProviderLabel, type WorkProvider } from '@/lib/providers';
 
 interface UserStory {
   id: string;
@@ -29,7 +30,7 @@ interface UserStoriesEditorProps {
   userStories: UserStory[];
   onSave: (stories: UserStory[]) => void;
   onPushToITSM: (stories: UserStory[]) => void;
-  platform: 'azure' | 'jira' | 'asana';
+  platform: WorkProvider;
   isLoading?: boolean;
 }
 
@@ -45,7 +46,7 @@ export function UserStoriesEditor({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
 
-  const platformLabel = platform === 'azure' ? 'Azure DevOps' : platform === 'asana' ? 'Asana' : 'Jira';
+  const platformLabel = getProviderLabel(platform);
 
   useEffect(() => {
     setEditingStories([...userStories]);
@@ -397,4 +398,3 @@ export function UserStoriesEditor({
     </div>
   );
 }
-
