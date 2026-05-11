@@ -168,7 +168,7 @@ class WorkItemSubmissionView(APIView):
     @handle_service_errors
     @async_to_sync
     async def post(self, request):
-        """Submit work items to external platforms (Azure DevOps/Jira)"""
+        """Submit work items to external platforms (Azure DevOps/Jira/Asana)"""
         logger.info("🔧 WorkItemSubmissionView called")
         
         user_id = request.user.id if hasattr(request, 'user') and request.user.is_authenticated else None
@@ -191,9 +191,9 @@ class WorkItemSubmissionView(APIView):
                 instance=request.path
             )
         
-        if platform not in ['azure', 'jira']:
+        if platform not in ['azure', 'jira', 'asana']:
             return StandardResponse.validation_error(
-                detail="platform must be either 'azure' or 'jira'", 
+                detail="platform must be one of 'azure', 'jira', or 'asana'", 
                 instance=request.path
             )
         

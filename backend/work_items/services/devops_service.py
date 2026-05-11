@@ -309,6 +309,8 @@ class DevOpsService:
                 return self._submit_to_azure_devops(user_id, work_items, project_config, integration_service)
             elif platform.lower() == 'jira':
                 return self._submit_to_jira(user_id, work_items, project_config, integration_service)
+            elif platform.lower() == 'asana':
+                return self._submit_to_asana(work_items, project_config)
             else:
                 raise ValueError(f"Unsupported platform: {platform}")
                 
@@ -581,6 +583,23 @@ class DevOpsService:
             
         except Exception as e:
             logger.error(f"Error submitting to Jira: {e}")
+            raise
+
+    def _submit_to_asana(self, work_items: List[Dict[str, Any]], project_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Submit work items to Asana via the Asana integration service."""
+        try:
+            from integrations.services import get_asana_service
+
+            project_id = project_config.get("id") or project_config.get("project_id")
+            if not project_id:
+                raise ValueError("Asana project configuration is missing the Saramsa project id.")
+
+            return get_asana_service().submit_work_items(
+                saramsa_project_id=str(project_id),
+                work_items=work_items,
+            )
+        except Exception as e:
+            logger.error(f"Error submitting to Asana: {e}")
             raise
     
     def group_work_items_by_feature(self, work_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:

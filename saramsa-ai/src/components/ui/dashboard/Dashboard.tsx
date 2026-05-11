@@ -1237,7 +1237,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           const workItemsResult = await dispatch(generateUserStories({
             analysisData: analysisData,
             comments: commentsToUse,
-            platform: (currentPlatform as 'azure' | 'jira') ?? 'azure',
+            platform: currentPlatform ?? 'azure',
             processTemplate,
             projectId: effectiveProjectId || undefined
           })).unwrap();
@@ -1279,7 +1279,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           const workItemsResult = await dispatch(generateUserStories({
             analysisData,
             comments: commentsToUse,
-            platform: (currentPlatform as 'azure' | 'jira') ?? 'azure',
+            platform: currentPlatform ?? 'azure',
             processTemplate,
             projectId: effectiveProjectId || undefined
           })).unwrap();

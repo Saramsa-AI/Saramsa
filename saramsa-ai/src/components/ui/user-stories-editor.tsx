@@ -29,7 +29,7 @@ interface UserStoriesEditorProps {
   userStories: UserStory[];
   onSave: (stories: UserStory[]) => void;
   onPushToITSM: (stories: UserStory[]) => void;
-  platform: 'azure' | 'jira';
+  platform: 'azure' | 'jira' | 'asana';
   isLoading?: boolean;
 }
 
@@ -44,6 +44,8 @@ export function UserStoriesEditor({
   const [selectedStories, setSelectedStories] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
+
+  const platformLabel = platform === 'azure' ? 'Azure DevOps' : platform === 'asana' ? 'Asana' : 'Jira';
 
   useEffect(() => {
     setEditingStories([...userStories]);
@@ -175,7 +177,7 @@ export function UserStoriesEditor({
             User Stories Editor
           </h2>
           <p className="text-sm text-muted-foreground dark:text-muted-foreground">
-            Edit and manage user stories before pushing to {platform === 'azure' ? 'Azure DevOps' : 'Jira'}
+            Edit and manage user stories before pushing to {platformLabel}
           </p>
         </div>
         
@@ -228,7 +230,7 @@ export function UserStoriesEditor({
             className="bg-gradient-to-r from-saramsa-gradient-from to-saramsa-gradient-to text-white"
           >
             <Send className="w-4 h-4 mr-2" />
-            Push to {platform === 'azure' ? 'Azure DevOps' : 'Jira'} ({selectedStories.size})
+            Push to {platformLabel} ({selectedStories.size})
           </Button>
         )}
       </div>
@@ -395,5 +397,4 @@ export function UserStoriesEditor({
     </div>
   );
 }
-
 

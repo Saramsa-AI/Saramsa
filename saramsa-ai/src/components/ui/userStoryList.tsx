@@ -125,6 +125,12 @@ export const UserStoryList = ({
   /** Items staged for the review/push flow (header multi-select or per-row push). */
   const [pushQueueItems, setPushQueueItems] = useState<ActionItem[]>([]);
 
+  const platformLabel = useMemo(() => {
+    if (platform === 'azure') return 'Azure DevOps';
+    if (platform === 'asana') return 'Asana';
+    return 'Jira';
+  }, [platform]);
+
   const insightsList = useMemo(() => {
     const data = analysisData as Record<string, unknown> | null;
     const nested = data?.analysisData as Record<string, unknown> | undefined;
@@ -560,9 +566,9 @@ export const UserStoryList = ({
       }
         
         if (created > 0) {
-          alert(`Successfully submitted ${created} user stories to ${platform === 'azure' ? 'Azure DevOps' : 'Jira'}${skipped > 0 ? ` (${skipped} already existed)` : ''}`);
+          alert(`Successfully submitted ${created} user stories to ${platformLabel}${skipped > 0 ? ` (${skipped} already existed)` : ''}`);
         } else if (skipped > 0 && failed === 0) {
-          alert(`All ${skipped} user stories were already created in ${platform === 'azure' ? 'Azure DevOps' : 'Jira'}`);
+          alert(`All ${skipped} user stories were already created in ${platformLabel}`);
         }
       } else {
         // Handle case where submission failed
@@ -780,7 +786,7 @@ export const UserStoryList = ({
   };
 
   const getPlatformDisplayName = () => {
-    return platform === 'azure' ? 'Azure DevOps' : 'Jira';
+    return platformLabel;
   };
 
   // Get submitted work items for the "Pushed to" section

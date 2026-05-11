@@ -423,7 +423,13 @@ export const submitUserStories = createAsyncThunk<
     const response = await apiRequest('post', '/insights/user-story-submission/', payload, true, false);
     return response.data;
   } catch (err: any) {
-    let errorMessage = `${data.platform === 'jira' ? 'Jira' : 'Azure DevOps'} user story submission failed. Please try again.`;
+    let errorMessage = `${
+      data.platform === 'jira'
+        ? 'Jira'
+        : data.platform === 'asana'
+        ? 'Asana'
+        : 'Azure DevOps'
+    } user story submission failed. Please try again.`;
     if (err.response?.status === 401) {
       errorMessage = 'Authentication required. Please login again.';
     } else if (err.response?.status === 400) {
