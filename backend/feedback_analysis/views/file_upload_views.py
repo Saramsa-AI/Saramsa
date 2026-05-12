@@ -390,7 +390,9 @@ class FeedbackFileUploadView(APIView):
                 "comments_count": len(original_comments),
                 "type": "user_data"
             }
-            saved_user_data = analysis_service.save_user_data(user_data_record)
+            saved_user_data = await sync_to_async(
+                analysis_service.save_user_data, thread_sensitive=True
+            )(user_data_record)
             if saved_user_data:
                 logger.info(f"Successfully saved user data: {len(original_comments)} comments for user {user_id}, project {project_id}")
             else:
@@ -418,10 +420,14 @@ class FeedbackFileUploadView(APIView):
                 # Store aspect suggestions for Step 3
                 "aspect_suggestions": aspect_suggestions if aspect_suggestions else None
             }
-            saved = analysis_service.save_analysis_data(analysis_record)
+            saved = await sync_to_async(
+                analysis_service.save_analysis_data, thread_sensitive=True
+            )(analysis_record)
             try:
                 if saved and saved.get('id'):
-                    analysis_service.update_project_last_analysis(project_id, saved['id'])
+                    await sync_to_async(
+                        analysis_service.update_project_last_analysis, thread_sensitive=True
+                    )(project_id, saved['id'])
             except Exception:
                 pass
 
@@ -448,7 +454,9 @@ class FeedbackFileUploadView(APIView):
                             taxonomy_age_days = (datetime.now() - created_dt).days
                         except Exception:
                             taxonomy_age_days = 0.0
-                    taxonomy_service.record_health_snapshot(project_id, taxonomy, {
+                    await sync_to_async(
+                        taxonomy_service.record_health_snapshot, thread_sensitive=True
+                    )(project_id, taxonomy, {
                         "last_unmapped_rate": unmapped_rate,
                         "last_avg_aspects_per_comment": avg_aspects,
                         "last_confidence_p95": None,
@@ -471,9 +479,16 @@ class FeedbackFileUploadView(APIView):
         path that takes the unmapped rate from ~84% to single digits for
         well-labeled CSVs.
         """
+        # taxonomy_service.get_active_taxonomy / create_initial_taxonomy hit
+        # the Django ORM through the taxonomy repository. The post() handler
+        # is wrapped with @async_to_sync which puts us inside a running
+        # event loop, so every sync ORM call needs to go through
+        # sync_to_async to avoid "You cannot call this from an async context".
         from ..services import get_taxonomy_service, get_aspect_suggestion_service
         taxonomy_service = get_taxonomy_service()
-        taxonomy = taxonomy_service.get_active_taxonomy(project_id, comments=None)
+        taxonomy = await sync_to_async(
+            taxonomy_service.get_active_taxonomy, thread_sensitive=True
+        )(project_id, comments=None)
         aspect_suggestions = None
 
         if not taxonomy:
@@ -484,11 +499,9 @@ class FeedbackFileUploadView(APIView):
                     f"Bootstrapping taxonomy from {len(seed_aspects)} seed aspects "
                     f"(from CSV classifier): {seed_aspects}"
                 )
-                taxonomy = taxonomy_service.create_initial_taxonomy(
-                    project_id,
-                    list(seed_aspects),
-                    source="csv_seed",
-                )
+                taxonomy = await sync_to_async(
+                    taxonomy_service.create_initial_taxonomy, thread_sensitive=True
+                )(project_id, list(seed_aspects), source="csv_seed")
                 aspect_suggestions = {
                     "identified_domain": "csv_seed",
                     "suggested_aspects": list(seed_aspects),
@@ -500,11 +513,9 @@ class FeedbackFileUploadView(APIView):
                     f"Aspect suggestions generated: domain='{aspect_suggestions['identified_domain']}', "
                     f"aspects={len(aspect_suggestions['suggested_aspects'])}"
                 )
-                taxonomy = taxonomy_service.create_initial_taxonomy(
-                    project_id,
-                    aspect_suggestions.get("suggested_aspects", []),
-                    source="gpt"
-                )
+                taxonomy = await sync_to_async(
+                    taxonomy_service.create_initial_taxonomy, thread_sensitive=True
+                )(project_id, aspect_suggestions.get("suggested_aspects", []), source="gpt")
         else:
             aspects = [a.get("label") or a.get("key") for a in taxonomy.get("aspects", []) if isinstance(a, dict)]
             aspect_suggestions = {
