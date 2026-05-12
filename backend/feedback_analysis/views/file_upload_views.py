@@ -380,26 +380,10 @@ class FeedbackFileUploadView(APIView):
         try:
             from ..services import get_analysis_service
             analysis_service = get_analysis_service()
-            
-            # Save original user data (comments) with user ID and project ID
-            user_data_record = {
-                "user_id": user_id,
-                "project_id": project_id,
-                "file_name": file_name,
-                "file_type": file_type,
-                "upload_date": datetime.now().isoformat(),
-                "comments": original_comments,
-                "comments_count": len(original_comments),
-                "type": "user_data"
-            }
-            saved_user_data = await sync_to_async(
-                analysis_service.save_user_data, thread_sensitive=True
-            )(user_data_record)
-            if saved_user_data:
-                logger.info(f"Successfully saved user data: {len(original_comments)} comments for user {user_id}, project {project_id}")
-            else:
-                logger.warning(f"Failed to save user data for user {user_id}, project {project_id}")
-            
+
+            # The dedicated save_user_data() method was removed long ago — the
+            # analysis_record below already stores original_comments and
+            # feedback as fields, so a separate user_data row is redundant.
             # Save canonical analysis entity linked to project WITH original comments and aspect suggestions
             analysis_id = str(uuid.uuid4())
             analysis_record = {
