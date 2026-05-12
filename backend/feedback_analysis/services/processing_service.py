@@ -126,6 +126,7 @@ class ProcessingService:
                                 batch_index=batch_index,
                                 expected_count=expected_count,
                                 batch_start_index=comment_start_index,
+                                analysis_type=analysis_type,
                             )
                         )
                         validation_errors = errors

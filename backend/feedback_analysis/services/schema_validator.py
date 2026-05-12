@@ -27,29 +27,38 @@ logger = logging.getLogger(__name__)
 class SchemaValidationService:
     """Service for validating LLM outputs against locked semantic schema."""
     
-    def validate_batch_output(self, llm_output: Any, batch_index: int = None, 
-                             expected_count: int = None, batch_start_index: int = None) -> Tuple[List[Dict], List[str], bool]:
+    def validate_batch_output(self, llm_output: Any, batch_index: int = None,
+                             expected_count: int = None, batch_start_index: int = None,
+                             analysis_type: int = 0) -> Tuple[List[Dict], List[str], bool]:
         """
         Validate LLM batch output against locked schema with integrity checks.
-        
-        CRITICAL VALIDATION RULES:
+
+        CRITICAL VALIDATION RULES (sentiment, analysis_type=0):
         1. Output is valid JSON
         2. Output length == input comment count (expected_count)
         3. Every comment_id exists exactly once (no duplicates)
         4. All enum fields contain allowed values
         5. All required fields present, no extra fields
-        
+
+        FOR DEEP ANALYSIS (analysis_type=1):
+        The work-items prompt is summary-shaped, not per-comment shaped — it
+        returns ``{"work_items": [...]}`` or similar nested object. Per-comment
+        validation (length, comment_id uniqueness) doesn't apply. We only check
+        that the output is valid JSON; the downstream aggregator treats deep
+        analysis as raw context, not an array of extractions.
+
         Args:
             llm_output: LLM response (string, dict, or list)
             batch_index: Optional batch index for logging
             expected_count: Expected number of comments in this batch (for integrity check)
             batch_start_index: Starting index for this batch (for comment_id fallback)
-            
+            analysis_type: 0 = sentiment (per-comment array), 1 = deep analysis (summary)
+
         Returns:
             Tuple of (valid_extractions, errors, is_valid)
-            - valid_extractions: List of validated extraction dicts (only if all valid)
+            - valid_extractions: List of validated extraction dicts (sentiment only)
             - errors: List of error messages
-            - is_valid: True if batch passes ALL validation rules, False otherwise
+            - is_valid: True if batch passes validation
         """
         batch_label = (batch_index + 1) if batch_index is not None else "?"
         logger.info(f"🔍 [Batch {batch_label}] Starting validation - Expected: {expected_count} items, Start index: {batch_start_index}")
@@ -92,7 +101,17 @@ class SchemaValidationService:
             logger.error(f"❌ [Batch {batch_label}] STEP 1 FAILED: {error_msg}")
             logger.error(f"🔍 [Batch {batch_label}] Raw response (first 1000 chars):\n{str(llm_output)[:1000] if isinstance(llm_output, str) else 'N/A'}")
             return [], errors, False
-        
+
+        # Deep analysis is summary-shaped (e.g. ``{"work_items": [...]}``) —
+        # per-comment integrity checks don't apply. Once the JSON parses, we
+        # accept it and hand it back unchanged.
+        if analysis_type == 1:
+            logger.info(
+                f"✅ [Batch {batch_label}] Deep analysis (type=1) — skipping "
+                f"per-comment validation, returning raw parsed JSON"
+            )
+            return [], [], True
+
         # STEP 2: VALIDATE - Output must be an array
         logger.info(f"🔍 [Batch {batch_label}] STEP 2: Checking if output is array...")
         if not isinstance(parsed, list):
