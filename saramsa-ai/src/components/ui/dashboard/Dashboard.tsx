@@ -1172,6 +1172,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         console.warn(`No work items generated for provider ${currentPlatform}`);
       }
       return;
+      /*
       if (currentPlatform === 'jira') {
         // For Jira, follow the same flow as Azure: general analysis -> work items generation
         
@@ -1346,6 +1347,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         }
       }
       
+      */
     } catch (e: any) {
       console.error('❌ Error generating work items:', e);
       
@@ -2057,95 +2059,61 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             </div>
             ) : (
             <div className="bg-card/80 rounded-2xl border border-border/60 p-6">
-              {selectedPlatform === 'jira' ? (
-                /* Jira User Stories View */
-                (() => {
-                  return loadedComments && loadedComments.length > 0;
-                })() ? (
-                  (() => {
-                    // Check if we have work items in deepAnalysis OR in currentProjectUserStories
-                    const hasDeepAnalysisWorkItems = deepAnalysis?.work_items && deepAnalysis.work_items.length > 0;
-                    const hasCurrentUserStories = currentProjectUserStories && currentProjectUserStories.length > 0;
-                    const hasAnyUserStories = hasDeepAnalysisWorkItems || hasCurrentUserStories;
-                    return hasAnyUserStories ? (
-                      (() => {
-                        // Prepare user stories data for display
-                        let userStoriesToDisplay = currentProjectUserStories;
-                        
-                        if (hasDeepAnalysisWorkItems) {
-                          // Store Jira user stories in Redux state like Azure does
-                          const jiraUserStory = {
-                            id: deepAnalysis.id,
-                            type: deepAnalysis.type || 'user_story',
-                            userId: deepAnalysis.userId,
-                            projectId: deepAnalysis.projectId,
-                            process_template: deepAnalysis.process_template || 'Agile',
-                            platform: deepAnalysis.platform,
-                            work_items: deepAnalysis.work_items,
-                            summary: deepAnalysis.summary,
-                            generated_at: deepAnalysis.generated_at,
-                            comments_count: deepAnalysis.comments_count || 0
-                          };
-                          
-                          // Check if we need to store this in Redux (similar to Azure logic)
-                          if (!hasCurrentUserStories) {
-                            dispatch(setCurrentProjectUserStories([jiraUserStory]));
-                          }
-                          
-                          userStoriesToDisplay = [jiraUserStory];
-                        }
-                        
-                        
-                        return (
-                          <UserStoryList 
-                            userStories={userStoriesToDisplay}
-                            platform="jira"
-                            projectId={currentProjectId}
-                            onRegenerateAnalysis={() => regenerateWorkItemsForProvider('jira')}
-                            isAnalyzing={loading}
-                          />
-                        );
-                      })()
-                    ) : (
-                      <div className="text-center py-8">
-                        <div className="w-16 h-16 mx-auto mb-4 bg-secondary/60 rounded-full flex items-center justify-center">
-                          <Sparkles className="w-8 h-8 text-muted-foreground" />
-                        </div>
-                        <h3 className="text-lg font-medium text-foreground mb-2">
-                          No User Stories Generated
-                        </h3>
-                        <p className="text-muted-foreground mb-4">
-                          User stories will be automatically generated after you analyze feedback data.
-                        </p>
-                        <p className="text-sm text-muted-foreground/70">
-                          Go to the Dashboard tab, upload feedback data, and click "Analyze" to generate user stories.
-                        </p>
-                      </div>
-                    );
-                  })()
-                ) : currentProjectUserStories && currentProjectUserStories.length > 0 ? (
-                  /* Show user stories even without loaded comments if they exist in Redux */
-                  <UserStoryList 
-                    userStories={currentProjectUserStories}
-                    platform="jira"
-                    projectId={currentProjectId}
-                    isAnalyzing={loading}
-                  />
-                ) : (
+              {(() => {
+                const activePlatform = selectedPlatform ?? 'azure';
+                const hasLoadedComments = (loadedComments?.length ?? 0) > 0;
+                const hasDeepAnalysisWorkItems = (deepAnalysis?.work_items?.length ?? 0) > 0;
+                const hasUserStories = currentProjectUserStories.length > 0;
+                const userStoriesFromDeepAnalysis = hasDeepAnalysisWorkItems
+                  ? [{
+                      id: deepAnalysis.id,
+                      type: deepAnalysis.type || 'user_story',
+                      userId: deepAnalysis.userId,
+                      projectId: deepAnalysis.projectId,
+                      process_template: deepAnalysis.process_template || getProviderProcessTemplate(activePlatform),
+                      platform: deepAnalysis.platform,
+                      work_items: deepAnalysis.work_items,
+                      summary: deepAnalysis.summary,
+                      generated_at: deepAnalysis.generated_at,
+                      comments_count: deepAnalysis.comments_count || 0,
+                    }]
+                  : [];
+                const userStoriesToDisplay = hasDeepAnalysisWorkItems
+                  ? userStoriesFromDeepAnalysis
+                  : currentProjectUserStories;
+
+                if (userStoriesToDisplay.length > 0) {
+                  return (
+                    <UserStoryList
+                      key={`user-stories-${deepAnalysis?.id || currentProjectUserStories?.[0]?.id || 'default'}`}
+                      userStories={userStoriesToDisplay}
+                      platform={activePlatform}
+                      projectId={currentProjectId}
+                      onRegenerateAnalysis={() => regenerateWorkItemsForProvider(activePlatform)}
+                      isAnalyzing={loading}
+                    />
+                  );
+                }
+
+                return (
                   <div className="text-center py-8">
                     <div className="w-16 h-16 mx-auto mb-4 bg-secondary/60 rounded-full flex items-center justify-center">
                       <Sparkles className="w-8 h-8 text-muted-foreground" />
                     </div>
                     <h3 className="text-lg font-medium text-foreground mb-2">
-                      No User Stories Found
+                      {hasLoadedComments ? 'No User Stories Generated' : 'No User Stories Found'}
                     </h3>
                     <p className="text-muted-foreground mb-4">
-                      {loadedComments && loadedComments.length > 0 
-                        ? "User stories should have been generated. Try refreshing or check the console for errors."
-                        : getProviderEmptyCommentsMessage('jira')
-                      }
+                      {hasLoadedComments
+                        ? 'User stories should have been generated. Try refreshing or check the console for errors.'
+                        : getProviderEmptyCommentsMessage(activePlatform)}
                     </p>
-                    {process.env.NODE_ENV === 'development' && (
+                    {!hasLoadedComments && (
+                      <p className="text-sm text-muted-foreground/70">
+                        {getProviderMissingWorkItemsMessage(activePlatform)}
+                      </p>
+                    )}
+                    {process.env.NODE_ENV === 'development' && hasUserStories === false && (
                       <button
                         onClick={() => {
                           const effectiveProjectId = currentProjectId || personalProjectId;
@@ -2164,45 +2132,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                       </button>
                     )}
                   </div>
-                )
-              ) : (
-                /* Azure DevOps / Asana User Stories View */
-                (() => {
-                  // Check if we have work items in the response
-                  const hasWorkItems = deepAnalysis?.work_items && deepAnalysis.work_items.length > 0;
-                  const hasValidDeepAnalysis = deepAnalysis && (deepAnalysis.work_items || deepAnalysis.work_items_by_feature);
-                  const hasUserStories = currentProjectUserStories && currentProjectUserStories.length > 0;
-                  
-                  // Simplified condition - show if we have ANY work items from either source
-                  const shouldShowUserStories = (hasValidDeepAnalysis && hasWorkItems) || hasUserStories;
-                  
-                  return shouldShowUserStories ? (
-                    <UserStoryList 
-                      key={`user-stories-${deepAnalysis?.id || currentProjectUserStories?.[0]?.id || 'default'}`} 
-                      userStories={hasWorkItems ? [{
-                        id: deepAnalysis.id,
-                        type: deepAnalysis.type || 'user_story',
-                        userId: deepAnalysis.userId,
-                        projectId: deepAnalysis.projectId,
-                        process_template: deepAnalysis.process_template || 'Agile',
-                        platform: deepAnalysis.platform,
-                        work_items: deepAnalysis.work_items,
-                        summary: deepAnalysis.summary,
-                        generated_at: deepAnalysis.generated_at,
-                        comments_count: deepAnalysis.comments_count || 0
-                      }] : currentProjectUserStories}
-                      platform={selectedPlatform ?? 'azure'}
-                      projectId={currentProjectId}
-                    />
-                  ) : (
-                    <div className="text-center py-8">
-                      <p className="text-muted-foreground">
-                        {getProviderMissingWorkItemsMessage(selectedPlatform ?? 'azure')}
-                      </p>
-                    </div>
-                  );
-                })()
-              )}
+                );
+              })()}
             </div>
             )}
 
