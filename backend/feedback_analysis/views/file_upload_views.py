@@ -90,14 +90,16 @@ class FeedbackFileUploadView(APIView):
                 instance=request.path
             )
 
-        # Get project context using analysis service
+        # Get project context using analysis service.
+        # ensure_project_context hits the Django ORM, so it has to be wrapped
+        # in sync_to_async here — async_to_sync above puts us inside a running
+        # event loop, and Django blocks bare sync ORM calls from that context.
         analysis_service = get_analysis_service()
 
         try:
-            resolved_project_id, project_doc, is_draft = analysis_service.ensure_project_context(
-                incoming_project_id,
-                user_id,
-            )
+            resolved_project_id, project_doc, is_draft = await sync_to_async(
+                analysis_service.ensure_project_context, thread_sensitive=True
+            )(incoming_project_id, user_id)
         except ValueError as e:
             return StandardResponse.validation_error(
                 detail=str(e),
