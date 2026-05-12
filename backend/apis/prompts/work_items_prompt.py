@@ -15,6 +15,17 @@ $feedback_data
 
 PLATFORM: $platform_name
 
+METADATA BRACKET CONVENTION:
+Some feedback items may start with a metadata block like:
+    [Persona: P1-Analyst | Plan: Pro | Platform: Web | Feature: Stock Screener | Rating: 4/5 | User-labeled sentiment: Positive]
+    <the actual comment follows>
+Use the bracketed context to:
+  - Group and segment work items (e.g., "Pro users on iOS report X")
+  - Reference affected personas / platforms / plans in business_value and description
+  - Inform priority (low ratings + negative sentiment + Pro plan → higher priority)
+Do NOT treat the bracketed keys (Persona, Plan, Platform, Rating, User-labeled sentiment)
+as feature areas. The Feature: tag IS a feature area; the others are dimensions.
+
 PROFESSIONAL STANDARDS:
 - Use clear, specific titles that developers can understand immediately
 - Write descriptions that include user impact and business context

@@ -294,10 +294,13 @@ class ProcessingService:
                 original_comments
             )
         
-        # Save insights to database
+        # Save insights to database. _save_insight hits the Django ORM via
+        # storage_service, so it must go through sync_to_async — process_feedback
+        # is async and Django blocks bare sync ORM calls from async context.
+        from asgiref.sync import sync_to_async
         insight_data = self._prepare_insight_data(text, normalized_results, comments_analysis, deep_analysis)
-        saved_analysis = self._save_insight(insight_data)
-        
+        saved_analysis = await sync_to_async(self._save_insight, thread_sensitive=True)(insight_data)
+
         if saved_analysis:
             logger.info(f"Analysis saved to database with ID: {saved_analysis.get('id')}")
 

@@ -24,6 +24,30 @@ You MUST follow these rules:
 - If a comment does not clearly map to an aspect, return an empty aspects array.
 - Be precise and conservative.
 
+METADATA BRACKET CONVENTION
+Some comments start with a metadata block of the form:
+
+  [Persona: ... | Plan: ... | Platform: ... | Feature: <name> | Rating: N/5 | User-labeled sentiment: ...]
+  <the actual comment text follows on the next line>
+
+The bracket carries structured context the customer attached to that row. Use
+it as follows:
+
+- If a "Feature: <name>" tag is present AND <name> matches one of the allowed
+  aspects (case-insensitive), include that aspect in the output for that
+  comment. The metadata is gold-label context the customer already provided —
+  trust it. Use the prose to identify *additional* aspects beyond the labeled one.
+- "User-labeled sentiment" is a strong hint about the overall sentiment of the
+  comment. Treat it as a prior, but if the prose clearly contradicts it, the
+  prose wins.
+- "Rating: N/5" is another sentiment hint (1–2 negative, 3 neutral, 4–5 positive).
+  Combine with text, do not blindly echo.
+- Do NOT extract Persona, Plan, Platform, or Rating values as aspects. Those
+  are dimension metadata, not content aspects.
+
+If a comment has no bracket prefix, treat the whole text as prose and extract
+aspects from the text alone.
+
 Allowed values:
 - sentiment: POSITIVE | NEGATIVE | NEUTRAL
 - confidence: HIGH | MEDIUM | LOW
