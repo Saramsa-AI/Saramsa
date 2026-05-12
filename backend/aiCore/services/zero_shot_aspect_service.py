@@ -63,9 +63,9 @@ class ZeroShotAspectService:
             "NLI_ASPECT_MODEL",
             "MoritzLaurer/deberta-v3-base-zeroshot-v2.0"
         )
-        # 0.60 is a good default for DeBERTa-v3 entailment scores: high enough
-        # to suppress noise, low enough to capture genuine aspect mentions.
-        self._threshold = float(os.getenv("NLI_ASPECT_THRESHOLD", "0.60"))
+        # 0.50 balances precision and recall for DeBERTa-v3 entailment:
+        # captures genuine aspect mentions while filtering noise.
+        self._threshold = float(os.getenv("NLI_ASPECT_THRESHOLD", "0.50"))
         self._max_aspects = int(os.getenv("NLI_MAX_ASPECTS_PER_COMMENT", "2"))
         self._batch_size = int(os.getenv("NLI_BATCH_SIZE", "32"))
         self._pipeline = None
