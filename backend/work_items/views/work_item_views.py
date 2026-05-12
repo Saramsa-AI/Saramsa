@@ -23,6 +23,7 @@ from authentication.permissions import IsProjectViewer, IsProjectEditor, IsProje
 from apis.core.response import StandardResponse
 from apis.core.error_handlers import handle_service_errors
 from ..services import get_devops_service, get_quality_gate_service
+from ..services.provider_adapters import get_supported_work_item_providers
 
 logger = logging.getLogger(__name__)
 
@@ -191,9 +192,10 @@ class WorkItemSubmissionView(APIView):
                 instance=request.path
             )
         
-        if platform not in ['azure', 'jira', 'asana']:
+        supported_platforms = get_supported_work_item_providers()
+        if platform not in supported_platforms:
             return StandardResponse.validation_error(
-                detail="platform must be one of 'azure', 'jira', or 'asana'", 
+                detail=f"platform must be one of {', '.join(repr(item) for item in supported_platforms)}", 
                 instance=request.path
             )
         

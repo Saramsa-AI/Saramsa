@@ -13,6 +13,12 @@ interface ProviderSelectionContent {
   availableCtaLabel: string;
 }
 
+interface ProviderWorkItemBehavior {
+  processTemplate: string;
+  emptyCommentsMessage: string;
+  missingWorkItemsMessage: string;
+}
+
 interface ProviderDefinition {
   id: WorkProvider;
   label: string;
@@ -21,6 +27,13 @@ interface ProviderDefinition {
   icon: LucideIcon;
   projectBadgeIcon?: LucideIcon;
   projectBadgeGlyph?: string;
+  capabilities: {
+    supportsImport: boolean;
+    supportsPush: boolean;
+    supportsProjectSync: boolean;
+    supportsWebhookBootstrap: boolean;
+  };
+  workItems: ProviderWorkItemBehavior;
   configSelection: ProviderSelectionContent;
   dashboardSelection: ProviderSelectionContent;
 }
@@ -35,6 +48,19 @@ export const providerDefinitions: Record<WorkProvider, ProviderDefinition> = {
     drawerTitle: "Configure Azure DevOps",
     icon: Download,
     projectBadgeIcon: Cloud,
+    capabilities: {
+      supportsImport: true,
+      supportsPush: true,
+      supportsProjectSync: true,
+      supportsWebhookBootstrap: false,
+    },
+    workItems: {
+      processTemplate: "Agile",
+      emptyCommentsMessage:
+        "No comments available. Please upload feedback data to use Azure DevOps integration.",
+      missingWorkItemsMessage:
+        "No deep analysis data available. Please upload feedback data to generate work items.",
+    },
     configSelection: {
       availableDescription:
         "Connect your Azure DevOps organization for seamless work item creation",
@@ -70,6 +96,19 @@ export const providerDefinitions: Record<WorkProvider, ProviderDefinition> = {
     drawerTitle: "Configure Jira Integration",
     icon: Globe,
     projectBadgeGlyph: "J",
+    capabilities: {
+      supportsImport: true,
+      supportsPush: true,
+      supportsProjectSync: true,
+      supportsWebhookBootstrap: false,
+    },
+    workItems: {
+      processTemplate: "Agile",
+      emptyCommentsMessage:
+        "No comments available. Please upload feedback data to use Jira integration.",
+      missingWorkItemsMessage:
+        "No deep analysis data available. Please upload feedback data to generate work items.",
+    },
     configSelection: {
       availableDescription:
         "Integrate with Jira for comprehensive project management",
@@ -105,6 +144,19 @@ export const providerDefinitions: Record<WorkProvider, ProviderDefinition> = {
     drawerTitle: "Configure Asana Integration",
     icon: CheckSquare,
     projectBadgeIcon: CheckSquare,
+    capabilities: {
+      supportsImport: true,
+      supportsPush: true,
+      supportsProjectSync: true,
+      supportsWebhookBootstrap: true,
+    },
+    workItems: {
+      processTemplate: "Agile",
+      emptyCommentsMessage:
+        "No comments available. Please upload feedback data to use Asana integration.",
+      missingWorkItemsMessage:
+        "No deep analysis data available. Please upload feedback data to generate tasks.",
+    },
     configSelection: {
       availableDescription:
         "Connect Asana to mirror customer insights into task planning",
@@ -145,6 +197,18 @@ export function getProviderShortLabel(provider: WorkProvider): string {
 
 export function getProviderDrawerTitle(provider: WorkProvider): string {
   return providerDefinitions[provider].drawerTitle;
+}
+
+export function getProviderProcessTemplate(provider: WorkProvider): string {
+  return providerDefinitions[provider].workItems.processTemplate;
+}
+
+export function getProviderEmptyCommentsMessage(provider: WorkProvider): string {
+  return providerDefinitions[provider].workItems.emptyCommentsMessage;
+}
+
+export function getProviderMissingWorkItemsMessage(provider: WorkProvider): string {
+  return providerDefinitions[provider].workItems.missingWorkItemsMessage;
 }
 
 export function getProviderStatus(

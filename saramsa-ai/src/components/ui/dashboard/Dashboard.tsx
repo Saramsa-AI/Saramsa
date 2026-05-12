@@ -36,7 +36,12 @@ import {
 
 import type { AnalysisData } from '@/types/analysis';
 import { apiRequest } from '@/lib/apiRequest';
-import type { WorkProvider } from '@/lib/providers';
+import {
+  getProviderEmptyCommentsMessage,
+  getProviderMissingWorkItemsMessage,
+  getProviderProcessTemplate,
+  type WorkProvider,
+} from '@/lib/providers';
 import { Check, Loader2, Sparkles, AlertCircle, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { UploadPanel } from './UploadPanel';
@@ -1143,10 +1148,34 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         setIsGeneratingUserStories(false);
         return;
       }
+      commentsToUse = commentsToUse ?? [];
+      const providerDrivenResult = await dispatch(generateUserStories({
+        analysisData,
+        comments: commentsToUse,
+        platform: currentPlatform,
+        processTemplate: getProviderProcessTemplate(currentPlatform),
+        projectId: effectiveProjectId || undefined,
+      })).unwrap();
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('usage-updated'));
+      }
+
+      if (providerDrivenResult?.work_items && providerDrivenResult.work_items.length > 0) {
+        dispatch(setDeepAnalysis({
+          ...providerDrivenResult,
+          work_items: providerDrivenResult.work_items,
+          work_items_by_feature: providerDrivenResult.work_items_by_feature,
+          summary: providerDrivenResult.summary,
+        }));
+      } else {
+        console.warn(`No work items generated for provider ${currentPlatform}`);
+      }
+      return;
       if (currentPlatform === 'jira') {
         // For Jira, follow the same flow as Azure: general analysis -> work items generation
         
-        if (commentsToUse && commentsToUse.length > 0) {
+        if ((commentsToUse ?? []).length > 0) {
           // Step 1: Get Jira project metadata for better work item generation
           let jiraProjectMetadata = null;
           const selectedJiraProjectId = null;
@@ -1162,7 +1191,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           // Step 2: Generate work items using the analysis data and Jira metadata
           const workItemsResult = await dispatch(generateUserStories({
             analysisData,
-            comments: commentsToUse, // Use the loaded comments
+            comments: commentsToUse ?? [], // Use the loaded comments
             platform: 'jira',
             processTemplate: 'Agile', // Default for Jira
             projectId: effectiveProjectId || undefined,
@@ -1182,7 +1211,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             setTimeout(() => {
               dispatch(fetchUserStoriesByProject({ 
                 projectId: formattedProjectId,
-                userId: user.id || user.user_id
+                userId: user?.id || user?.user_id || ''
               }));
             }, 1000);
           }
@@ -1230,14 +1259,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         
         
         // Check if we have comments and analysis data available
-        if (commentsToUse && commentsToUse.length > 0 && analysisData) {
+        if ((commentsToUse ?? []).length > 0 && analysisData) {
           
           // Use existing analysis data instead of calling analyzeComments again
           
           // Generate work items from the existing analysis data
           const workItemsResult = await dispatch(generateUserStories({
             analysisData: analysisData,
-            comments: commentsToUse,
+            comments: commentsToUse ?? [],
             platform: currentPlatform ?? 'azure',
             processTemplate,
             projectId: effectiveProjectId || undefined
@@ -1267,7 +1296,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               setTimeout(() => {
                 dispatch(fetchUserStoriesByProject({ 
                   projectId: formattedProjectId,
-                  userId: user.id || user.user_id
+                  userId: user?.id || user?.user_id || ''
                 }));
               }, 1000);
             }
@@ -1279,7 +1308,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           // Fallback to old method using analysis data
           const workItemsResult = await dispatch(generateUserStories({
             analysisData,
-            comments: commentsToUse,
+            comments: commentsToUse ?? [],
             platform: currentPlatform ?? 'azure',
             processTemplate,
             projectId: effectiveProjectId || undefined
@@ -1309,7 +1338,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               setTimeout(() => {
                 dispatch(fetchUserStoriesByProject({ 
                   projectId: formattedProjectId,
-                  userId: user.id || user.user_id
+                  userId: user?.id || user?.user_id || ''
                 }));
               }, 1000);
             }
@@ -1338,10 +1367,44 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         setTimeout(() => {
           dispatch(fetchUserStoriesByProject({ 
             projectId: formattedProjectId,
-            userId: user.id || user.user_id
+            userId: user?.id || user?.user_id || ''
           }));
         }, 1000);
       }
+    }
+  }
+
+  async function regenerateWorkItemsForProvider(platform: WorkProvider) {
+    if (!loadedComments || loadedComments.length === 0) {
+      return;
+    }
+
+    try {
+      if (!analysisData) {
+        console.error(`No analysis data available for ${platform} work item generation`);
+        return;
+      }
+
+      const workItemsResult = await dispatch(generateUserStories({
+        analysisData,
+        comments: loadedComments,
+        platform,
+        processTemplate: getProviderProcessTemplate(platform),
+        projectId: projectId || undefined,
+      })).unwrap();
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('usage-updated'));
+      }
+
+      dispatch(setDeepAnalysis({
+        ...workItemsResult,
+        work_items: workItemsResult.work_items,
+        work_items_by_feature: workItemsResult.work_items_by_feature,
+        summary: workItemsResult.summary,
+      }));
+    } catch (error) {
+      console.error(`Failed to regenerate ${platform} analysis:`, error);
     }
   }
 
@@ -2038,57 +2101,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                             userStories={userStoriesToDisplay}
                             platform="jira"
                             projectId={currentProjectId}
-                            onRegenerateAnalysis={async () => {
-                              if (loadedComments && loadedComments.length > 0) {
-                                try {
-                                  // Use existing analysis data instead of calling analyzeComments again
-                                  const analysisResult = analysisData;
-                                  
-                                  if (!analysisResult) {
-                                    console.error('No analysis data available for Jira work item generation');
-                                    return;
-                                  }
-                                  
-                                  // Step 1: Get Jira project metadata
-                                  let jiraProjectMetadata = null;
-                                  const selectedJiraProjectId = null;
-                                  
-                                  if (selectedJiraProjectId) {
-                                    try {
-                                      jiraProjectMetadata = null;
-                                    } catch (e) {
-                                      console.warn('Failed to fetch Jira project metadata:', e);
-                                    }
-                                  }
-                                  
-                                  // Step 3: Generate work items
-                                  const workItemsResult = await dispatch(generateUserStories({
-                                    analysisData: analysisResult,
-                                    comments: loadedComments, // Add the original comments
-                                    platform: selectedPlatform === 'jira' ? 'jira' : 'azure',
-                                    processTemplate: 'Agile',
-                                    projectId: projectId || undefined,
-                                    projectMetadata: jiraProjectMetadata
-                                  })).unwrap();
-
-                                  // Trigger usage badge refresh after work items generation
-                                  if (typeof window !== 'undefined') {
-                                    window.dispatchEvent(new Event('usage-updated'));
-                                  }
-
-                                  // Structure the data properly for the UserStories component
-                                  const structuredData = {
-                                    ...workItemsResult,
-                                    work_items: workItemsResult.work_items,
-                                    work_items_by_feature: workItemsResult.work_items_by_feature,
-                                    summary: workItemsResult.summary
-                                  };
-                                  dispatch(setDeepAnalysis(structuredData));
-                                } catch (error) {
-                                  console.error('Failed to regenerate Jira analysis:', error);
-                                }
-                              }
-                            }}
+                            onRegenerateAnalysis={() => regenerateWorkItemsForProvider('jira')}
                             isAnalyzing={loading}
                           />
                         );
@@ -2129,7 +2142,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                     <p className="text-muted-foreground mb-4">
                       {loadedComments && loadedComments.length > 0 
                         ? "User stories should have been generated. Try refreshing or check the console for errors."
-                        : "No comments available. Please upload feedback data to use Jira integration."
+                        : getProviderEmptyCommentsMessage('jira')
                       }
                     </p>
                     {process.env.NODE_ENV === 'development' && (
@@ -2138,7 +2151,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                           const effectiveProjectId = currentProjectId || personalProjectId;
                           if (effectiveProjectId && user?.id) {
                             const formattedProjectId = effectiveProjectId.startsWith('project_') ? effectiveProjectId.replace('project_', '') : effectiveProjectId;
-                            const userId = user.id || user.user_id;
+                            const userId = user?.id || user?.user_id || '';
                             dispatch(fetchUserStoriesByProject({
                               projectId: formattedProjectId,
                               userId
@@ -2184,7 +2197,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                   ) : (
                     <div className="text-center py-8">
                       <p className="text-muted-foreground">
-                        No deep analysis data available. Please upload feedback data to generate user stories.
+                        {getProviderMissingWorkItemsMessage(selectedPlatform ?? 'azure')}
                       </p>
                     </div>
                   );

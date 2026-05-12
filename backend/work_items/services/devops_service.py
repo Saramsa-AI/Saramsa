@@ -17,6 +17,7 @@ from feedback_analysis.services.narration_service import get_narration_service
 import logging
 from .work_item_candidate_service import get_work_item_candidate_service
 from .comment_sampler import sample_comments_for_candidates
+from .provider_adapters import get_provider_config
 
 logger = logging.getLogger(__name__)
 
@@ -301,18 +302,13 @@ class DevOpsService:
                                    platform: str, project_config: Dict[str, Any]) -> Dict[str, Any]:
         """Submit work items to external platform - delegate to integrations service."""
         try:
-            # Import here to avoid circular dependency
-            from integrations.services import get_integration_service
-            integration_service = get_integration_service()
-            
-            if platform.lower() == 'azure':
-                return self._submit_to_azure_devops(user_id, work_items, project_config, integration_service)
-            elif platform.lower() == 'jira':
-                return self._submit_to_jira(user_id, work_items, project_config, integration_service)
-            elif platform.lower() == 'asana':
-                return self._submit_to_asana(work_items, project_config)
-            else:
-                raise ValueError(f"Unsupported platform: {platform}")
+            provider_config = get_provider_config(platform)
+            return provider_config.submission_adapter.submit(
+                service=self,
+                user_id=user_id,
+                work_items=work_items,
+                project_config=project_config,
+            )
                 
         except Exception as e:
             logger.error(f"Error submitting to {platform}: {e}")
