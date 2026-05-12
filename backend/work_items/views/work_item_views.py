@@ -23,7 +23,11 @@ from authentication.permissions import IsProjectViewer, IsProjectEditor, IsProje
 from apis.core.response import StandardResponse
 from apis.core.error_handlers import handle_service_errors
 from ..services import get_devops_service, get_quality_gate_service
-from ..services.provider_adapters import get_supported_work_item_providers
+from ..services.provider_adapters import (
+    get_default_process_template,
+    get_provider_config,
+    get_supported_work_item_providers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +52,7 @@ class WorkItemGenerationView(APIView):
         from billing.quota import check_quota, record_usage, QuotaExceeded
 
         analysis_data = request.data.get("analysis_data")
-        process_template = request.data.get("process_template", "Agile")
+        process_template = request.data.get("process_template")
         incoming_project_id = request.data.get("project_id")
         platform = request.data.get("platform", "azure")
         company_name = request.data.get("company_name")
@@ -60,6 +64,18 @@ class WorkItemGenerationView(APIView):
 
         if not analysis_data:
             return StandardResponse.validation_error(detail="Analysis data is required.", instance=request.path)
+
+        try:
+            provider_config = get_provider_config(platform)
+        except ValueError as exc:
+            return StandardResponse.validation_error(
+                detail=str(exc),
+                instance=request.path,
+            )
+
+        process_template = process_template or get_default_process_template(
+            provider_config.provider
+        )
 
         # Validate project ID is provided
         if not incoming_project_id:
@@ -99,7 +115,7 @@ class WorkItemGenerationView(APIView):
         try:
             result = await devops_service.generate_work_items_from_analysis(
                 analysis_data=analysis_data,
-                platform=platform,
+                platform=provider_config.provider,
                 process_template=process_template,
                 company_name=company_name,
                 project_metadata=project_metadata,
@@ -134,7 +150,7 @@ class WorkItemGenerationView(APIView):
                 )(
                     user_id=user_id_str,
                     work_items=work_items,
-                    platform=platform,
+                    platform=provider_config.provider,
                     project_id=resolved_project_id,
                     analysis_id=analysis_id
                 )

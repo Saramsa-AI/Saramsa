@@ -115,3 +115,7 @@ def get_provider_config(provider: str) -> WorkItemProviderConfig:
         return WORK_ITEM_PROVIDER_CONFIGS[normalized_provider]
     except KeyError as exc:
         raise ValueError(f"Unsupported platform: {provider}") from exc
+
+
+def get_default_process_template(provider: str) -> str:
+    return get_provider_config(provider).process_template
