@@ -151,18 +151,26 @@ class LocalProcessingService:
 
         logger.info(f"Processing {len(comments)} comments with {len(aspects)} aspects (run: {run_id})")
 
+        # Strip bracket metadata before ML processing (20-30% token reduction for NLI + sentiment)
+        # The enriched metadata is only useful for LLM narration, not local ML models.
+        stripped_comments = [self._strip_bracket_metadata(c) for c in comments]
+
         # Step 1: Aspect classification (NLI or similarity, via factory)
         similarity_results = self.aspect_service.classify_aspects(
-            comments, aspects, run_id, is_cancelled=is_cancelled
+            stripped_comments, aspects, run_id, is_cancelled=is_cancelled
         )
+
+        # Restore original comment text (with brackets) in similarity results for display + LLM narration
+        for i, result in enumerate(similarity_results):
+            result["comment_text"] = comments[i]
 
         # Step 2: Aspect-relative sentiment
         # 2a. Get comment-level sentiment for overall counts
-        comment_sentiments = self.sentiment_service.classify_batch(comments)
+        comment_sentiments = self.sentiment_service.classify_batch(stripped_comments)
 
-        # 2b. Compute aspect-relative sentiment (sentence-level)
+        # 2b. Compute aspect-relative sentiment (sentence-level, uses stripped text internally)
         combined_matches = self._compute_aspect_relative_sentiment(
-            similarity_results, comment_sentiments, aspects
+            similarity_results, comment_sentiments, aspects, stripped_comments
         )
 
         # Step 3: aggregate + keywords (now uses per-aspect sentiment)
@@ -202,6 +210,31 @@ class LocalProcessingService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _strip_bracket_metadata(text: str) -> str:
+        """
+        Strip enriched-comment bracket metadata added by column_classifier.
+
+        Example:
+          "[Persona: P1-Analyst | Rating: 4/5 | Feature: Stock Screener]\nThe screener is great."
+          → "The screener is great."
+
+        The bracket metadata is useful for LLM narration (helps GPT understand
+        context) but adds noise for ML models (NLI, sentiment, embeddings) that
+        work better on raw user text.
+        """
+        if not text or not text.startswith("["):
+            return text
+
+        # Find the closing bracket and newline
+        bracket_end = text.find("]\n")
+        if bracket_end == -1:
+            # No bracket pattern found
+            return text
+
+        # Return text after the bracket + newline
+        return text[bracket_end + 2:].strip()
+
+    @staticmethod
     def _split_sentences(text: str) -> List[str]:
         """Split text into sentences. Returns [text] if only one sentence."""
         sentences = _SENTENCE_RE.split(text)
@@ -213,12 +246,19 @@ class LocalProcessingService:
         similarity_results: List[Dict[str, Any]],
         comment_sentiments: List[SentimentResult],
         aspects: List[str],
+        stripped_comments: List[str],
     ) -> List[AspectMatch]:
         """
         For each comment, find the best-matching sentence per assigned aspect
         and run sentiment on that sentence instead of the whole comment.
 
         For single-sentence comments, uses the comment-level sentiment directly.
+
+        Args:
+            similarity_results: NLI/aspect classification results (comment_text has original with brackets)
+            comment_sentiments: Sentiment for stripped comments (already computed on stripped text)
+            aspects: List of aspect names
+            stripped_comments: Comments with bracket metadata removed (used for sentence splitting)
         """
         embedding_service = self.embedding_service
 
@@ -227,11 +267,12 @@ class LocalProcessingService:
         aspect_to_idx = {a: i for i, a in enumerate(aspects)}
 
         # Collect all sentences that need sentiment (deduplicated)
+        # Use stripped_comments for sentence splitting (no bracket noise)
         sentence_set: Dict[str, None] = {}  # ordered set via dict
         comment_sentence_map: List[Tuple[List[str], bool]] = []  # (sentences, is_multi)
 
-        for sim_result in similarity_results:
-            sentences = self._split_sentences(sim_result["comment_text"])
+        for stripped_comment in stripped_comments:
+            sentences = self._split_sentences(stripped_comment)
             is_multi = len(sentences) > 1
             comment_sentence_map.append((sentences, is_multi))
             if is_multi:
