@@ -313,11 +313,13 @@ class FeedbackFileUploadView(APIView):
         GET /api/feedback/analysis/<analysis_id>/.
         """
         from ..services.task_service import process_feedback_task
+        from apis.infrastructure.cache_service import get_cache_service
 
         analysis_id = str(uuid.uuid4())
         company_name = os.path.splitext(file_name or '')[0] or None
+        comments_count = len(original_comments)
 
-        def _enqueue():
+        def _enqueue_and_index():
             # .delay() pushes the message to the Celery broker (Redis). Even
             # though it's fast, treat it as blocking I/O so we don't stall
             # the asyncio event loop on slow broker round-trips.
@@ -329,10 +331,35 @@ class FeedbackFileUploadView(APIView):
                 analysis_id,
                 frozen_aspects,
             )
-            return result.id
+            task_id = result.id
+
+            # Mirror the bookkeeping POST /api/insights/analyze/ does so the
+            # task-status endpoint can authorize this user against the task,
+            # and so the tasks-list endpoint surfaces it in history.
+            try:
+                cache = get_cache_service()
+                started_at = datetime.now().isoformat()
+                cache.set(f"task_start:{task_id}", started_at, ttl=3600)
+                tasks_key = f"tasks:{user_id}"
+                existing = cache.get(tasks_key, default=[])
+                if not isinstance(existing, list):
+                    existing = []
+                existing = [t for t in existing if t.get("task_id") != task_id]
+                existing.insert(0, {
+                    "task_id": task_id,
+                    "analysis_id": analysis_id,
+                    "project_id": project_id,
+                    "file_name": file_name,
+                    "started_at": started_at,
+                    "comment_count": comments_count,
+                })
+                cache.set(tasks_key, existing[:15], ttl=86400)
+            except Exception as exc:
+                logger.warning(f"Failed to record task history for {task_id}: {exc}")
+            return task_id
 
         try:
-            task_id = await sync_to_async(_enqueue, thread_sensitive=True)()
+            task_id = await sync_to_async(_enqueue_and_index, thread_sensitive=True)()
         except Exception as exc:
             logger.exception("Failed to queue process_feedback_task on Celery")
             return StandardResponse.error(
@@ -345,7 +372,7 @@ class FeedbackFileUploadView(APIView):
         logger.info(
             f"📤 Upload dispatched to Celery: task_id={task_id} "
             f"analysis_id={analysis_id} project={project_id} "
-            f"file={file_name} type={file_type} comments={len(original_comments)}"
+            f"file={file_name} type={file_type} comments={comments_count}"
         )
 
         return StandardResponse.success(
