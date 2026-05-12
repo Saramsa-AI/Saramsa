@@ -63,10 +63,10 @@ class ZeroShotAspectService:
             "NLI_ASPECT_MODEL",
             "MoritzLaurer/deberta-v3-base-zeroshot-v2.0"
         )
-        # 0.50 balances precision and recall for DeBERTa-v3 entailment:
-        # captures genuine aspect mentions while filtering noise.
-        self._threshold = float(os.getenv("NLI_ASPECT_THRESHOLD", "0.50"))
-        self._max_aspects = int(os.getenv("NLI_MAX_ASPECTS_PER_COMMENT", "2"))
+        # 0.40 provides optimal balance: high recall with good precision
+        # Captures genuine aspect mentions while filtering noise.
+        self._threshold = float(os.getenv("NLI_ASPECT_THRESHOLD", "0.40"))
+        self._max_aspects = int(os.getenv("NLI_MAX_ASPECTS_PER_COMMENT", "3"))
         self._batch_size = int(os.getenv("NLI_BATCH_SIZE", "32"))
         self._pipeline = None
         self._dtype = None
