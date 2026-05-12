@@ -16,6 +16,10 @@ from asgiref.sync import async_to_sync, sync_to_async
 import logging
 
 from ..services import get_analysis_service, get_processing_service
+from ..services.column_classifier_service import (
+    build_enriched_comments,
+    classify_columns,
+)
 from ..language_check import UnsupportedLanguage, assert_english
 from authentication.permissions import IsProjectEditor
 from apis.core.response import StandardResponse
@@ -51,27 +55,8 @@ class FeedbackFileUploadView(APIView):
                 elif 'reviews' in data and isinstance(data['reviews'], list):
                     comments = [str(review) for review in data['reviews'] if review]
         
-        elif file_type == 'csv':
-            if isinstance(data, list) and len(data) > 0:
-                # Look for common comment column names
-                comment_columns = ['comment', 'comments', 'feedback', 'review', 'reviews', 'text', 'content', 'message']
-                first_row = data[0]
-                
-                # Find the comment column
-                comment_column = None
-                for col in comment_columns:
-                    if col in first_row:
-                        comment_column = col
-                        break
-                
-                if comment_column:
-                    comments = [str(row[comment_column]) for row in data if row.get(comment_column)]
-                else:
-                    # Fallback: use the first column
-                    first_col = list(first_row.keys())[0] if first_row else None
-                    if first_col:
-                        comments = [str(row[first_col]) for row in data if row.get(first_col)]
-        
+        # CSV is handled by the LLM-based column classifier in _process_csv_file;
+        # this method is JSON-only now.
         return comments
 
     @async_to_sync
@@ -269,10 +254,44 @@ class FeedbackFileUploadView(APIView):
             decoded_file = file.read().decode('utf-8').splitlines()
             reader = csv.DictReader(decoded_file)
             csv_data = [row for row in reader]
-            
-            # Extract original comments before processing
-            original_comments = self.extract_comments_from_data(csv_data, 'csv')
-            logger.info(f"📊 CSV Upload: Extracted {len(original_comments)} comments from file")
+
+            if not csv_data:
+                return StandardResponse.validation_error(
+                    detail='CSV file is empty.',
+                    errors=[{"field": "file", "message": "No rows found."}],
+                    instance=request.path,
+                )
+
+            # LLM-based column classification: figure out which column is the
+            # feedback text vs. which are dimensions (Persona, Plan, Platform,
+            # Feature, Rating, user-labeled sentiment). Each comment then gets
+            # a "[dim: val | dim: val]" prefix so the downstream pipeline can
+            # see the context for free. Feature-area-like column values are
+            # returned separately for taxonomy seeding.
+            headers = list(csv_data[0].keys())
+            classification = await sync_to_async(classify_columns, thread_sensitive=True)(headers, csv_data)
+            if not classification.get("primary_text"):
+                return StandardResponse.validation_error(
+                    detail='Could not identify a feedback text column.',
+                    errors=[{
+                        "field": "file",
+                        "message": (
+                            "No column looks like free-form feedback text. "
+                            f"Columns found: {headers}. "
+                            "Rename the text column to something like 'feedback_text' or 'comment'."
+                        ),
+                    }],
+                    instance=request.path,
+                )
+
+            original_comments, seed_values = build_enriched_comments(csv_data, classification)
+            logger.info(
+                f"📊 CSV Upload: classifier={classification.get('source')} "
+                f"primary={classification.get('primary_text')!r} "
+                f"context={classification.get('context')} "
+                f"seed_col={classification.get('taxonomy_seed_column')!r} "
+                f"seed_values={seed_values} -> {len(original_comments)} enriched comments"
+            )
 
             try:
                 assert_english(original_comments)
@@ -283,9 +302,12 @@ class FeedbackFileUploadView(APIView):
                     instance=request.path,
                 )
 
-            # Step 2: Resolve project-owned taxonomy (Phase-1)
+            # Step 2: Resolve project-owned taxonomy (Phase-1).
+            # Pass the LLM-detected feature column values as taxonomy seeds —
+            # this is what cuts the "84% unmapped" rate we kept seeing on rich
+            # CSVs whose feature_area / category column was being ignored.
             taxonomy, aspect_suggestions = await self._resolve_taxonomy_for_upload(
-                project_id, original_comments
+                project_id, original_comments, seed_aspects=seed_values
             )
             frozen_aspects = [a.get("label") or a.get("key") for a in taxonomy.get("aspects", []) if isinstance(a, dict)]
             logger.info(f"🔒 Using frozen aspect list: {frozen_aspects}")
@@ -438,11 +460,16 @@ class FeedbackFileUploadView(APIView):
         except Exception as e:
             logger.error(f"Error saving to PostgreSQL: {e}")
 
-    async def _resolve_taxonomy_for_upload(self, project_id, original_comments):
+    async def _resolve_taxonomy_for_upload(self, project_id, original_comments, seed_aspects=None):
         """
         Resolve project-owned taxonomy for uploads.
 
-        If no taxonomy exists, bootstrap once using GPT and persist version=1.
+        If no taxonomy exists, bootstrap once and persist version=1. When
+        ``seed_aspects`` is provided (from the CSV column classifier — e.g.
+        distinct ``feature_area`` values), those are used directly as the
+        taxonomy and we skip the GPT bootstrap call entirely. This is the
+        path that takes the unmapped rate from ~84% to single digits for
+        well-labeled CSVs.
         """
         from ..services import get_taxonomy_service, get_aspect_suggestion_service
         taxonomy_service = get_taxonomy_service()
@@ -450,17 +477,34 @@ class FeedbackFileUploadView(APIView):
         aspect_suggestions = None
 
         if not taxonomy:
-            aspect_service = get_aspect_suggestion_service()
-            aspect_suggestions = await aspect_service.suggest_aspects(original_comments)
-            logger.info(
-                f"Aspect suggestions generated: domain='{aspect_suggestions['identified_domain']}', "
-                f"aspects={len(aspect_suggestions['suggested_aspects'])}"
-            )
-            taxonomy = taxonomy_service.create_initial_taxonomy(
-                project_id,
-                aspect_suggestions.get("suggested_aspects", []),
-                source="gpt"
-            )
+            if seed_aspects:
+                # Customer-provided categories beat anything an LLM would
+                # guess from prose. Use them as-is for v1 of the taxonomy.
+                logger.info(
+                    f"Bootstrapping taxonomy from {len(seed_aspects)} seed aspects "
+                    f"(from CSV classifier): {seed_aspects}"
+                )
+                taxonomy = taxonomy_service.create_initial_taxonomy(
+                    project_id,
+                    list(seed_aspects),
+                    source="csv_seed",
+                )
+                aspect_suggestions = {
+                    "identified_domain": "csv_seed",
+                    "suggested_aspects": list(seed_aspects),
+                }
+            else:
+                aspect_service = get_aspect_suggestion_service()
+                aspect_suggestions = await aspect_service.suggest_aspects(original_comments)
+                logger.info(
+                    f"Aspect suggestions generated: domain='{aspect_suggestions['identified_domain']}', "
+                    f"aspects={len(aspect_suggestions['suggested_aspects'])}"
+                )
+                taxonomy = taxonomy_service.create_initial_taxonomy(
+                    project_id,
+                    aspect_suggestions.get("suggested_aspects", []),
+                    source="gpt"
+                )
         else:
             aspects = [a.get("label") or a.get("key") for a in taxonomy.get("aspects", []) if isinstance(a, dict)]
             aspect_suggestions = {
