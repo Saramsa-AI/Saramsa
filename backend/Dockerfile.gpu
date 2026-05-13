@@ -1,0 +1,50 @@
+# GPU-optimized Dockerfile for Celery Worker with Spot GPU support
+# Derived from backend/Dockerfile with GPU-specific optimizations
+
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+
+# Install Python 3.10 and build dependencies
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-venv \
+    python3-pip \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.10 as default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install PyTorch with CUDA support (GPU-specific)
+RUN pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cu121
+
+# Copy application code
+COPY . .
+
+# Environment variables for GPU optimization
+ENV PYTHONUNBUFFERED=1
+ENV NLI_BACKEND=gpu
+ENV CUDA_VISIBLE_DEVICES=0
+ENV NLI_BATCH_SIZE=128
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import torch; assert torch.cuda.is_available()" || exit 1
+
+# Run Celery worker listening to GPU queue
+CMD celery -A apis worker \
+    --loglevel=info \
+    --concurrency=1 \
+    --pool=solo \
+    --queues=gpu_ml_tasks \
+    --hostname=gpu-worker@%h \
+    --max-tasks-per-child=10 \
+    --time-limit=3600 \
+    --soft-time-limit=3300
