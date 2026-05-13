@@ -989,13 +989,36 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         const lines = text.split(/\r?\n/).filter(Boolean);
         if (lines.length > 0) {
           const header = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase());
-          const commentIdx = header.indexOf('comment');
+
+          // Try multiple column name patterns for feedback text
+          const possibleColumns = [
+            'feedback_text', 'feedback', 'comment', 'text',
+            'review', 'message', 'description', 'content'
+          ];
+
+          let commentIdx = -1;
+          for (const colName of possibleColumns) {
+            commentIdx = header.indexOf(colName);
+            if (commentIdx >= 0) break;
+          }
+
+          // If no match, find the column with longest average text (likely the feedback column)
+          if (commentIdx < 0 && lines.length > 2) {
+            const sampleRows = lines.slice(1, Math.min(6, lines.length));
+            const avgLengths = header.map((_, idx) => {
+              const sum = sampleRows.reduce((acc, line) => {
+                const cells = parseCSVLine(line);
+                return acc + (cells[idx]?.length || 0);
+              }, 0);
+              return sum / sampleRows.length;
+            });
+            commentIdx = avgLengths.indexOf(Math.max(...avgLengths));
+          }
+
           if (commentIdx >= 0) {
             comments = lines.slice(1)
               .map(line => (parseCSVLine(line)[commentIdx] || '').trim())
               .filter(Boolean);
-          } else {
-            comments = lines.slice(1).map(line => (parseCSVLine(line)[0] || '').trim()).filter(Boolean);
           }
         }
       }
