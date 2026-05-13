@@ -141,7 +141,7 @@ IMPORTANT RULES:
   - Too generic (e.g., "experience", "overall", "service quality")
   - Too specific or issue-level (e.g., "AC not working", "login button broken")
   - Full sentences or complaints
-- Do NOT exceed 6–10 aspects.
+- Generate 12-15 aspects to ensure comprehensive coverage of all feedback dimensions.
 - You are NOT analyzing sentiment.
 - You are NOT summarizing feedback.
 - You are ONLY identifying the domain and proposing grouping dimensions.
