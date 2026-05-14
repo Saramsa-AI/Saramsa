@@ -65,7 +65,7 @@ export const createProject = createAsyncThunk(
     name: string; 
     description?: string;
     externalLinks?: Array<{
-      provider: string;
+      provider: WorkProvider;
       integrationAccountId: string;
       externalId: string;
       externalKey?: string;
@@ -84,7 +84,7 @@ export const createProject = createAsyncThunk(
       // If external links provided, use the first one to set platform and integration details
       if (data.externalLinks && data.externalLinks.length > 0) {
         const link = data.externalLinks[0];
-        payload.platform = getProviderPlatformKey(link.provider as WorkProvider);
+        payload.platform = getProviderPlatformKey(link.provider);
         payload.external_project_id = link.externalId;
         payload.integration_account_id = link.integrationAccountId;
         payload.external_url = link.url;

@@ -166,13 +166,15 @@ export function LinearIntegrationForm({ onContinue, onBack, targetProjectId }: L
         integrationAccountId = integrationResponse.data.data.account.id;
       }
 
-      const teamUrl = selectedProjectData?.url || (selectedProjectData?.key
-        ? `https://linear.app/team/${selectedProjectData.key}`
-        : 'https://linear.app');
+      // Backend builds the proper https://linear.app/<urlKey>/team/<key>
+      // URL using the workspace urlKey it persisted. If for some reason
+      // it's missing, fall back to the workspace landing — never the
+      // short https://linear.app/team/<key> form, which 404s.
+      const teamUrl = selectedProjectData?.url || 'https://linear.app/';
 
       if (currentSaramsaProject && normalizedTargetProjectId) {
         const linearExternalLink = {
-          provider: 'linear',
+          provider: 'linear' as const,
           integrationAccountId: integrationAccountId,
           externalId: selectedProject,
           externalKey: selectedProjectData?.key,
@@ -223,7 +225,7 @@ export function LinearIntegrationForm({ onContinue, onBack, targetProjectId }: L
         name: selectedProjectData?.name || 'Linear Team',
         description: `Imported from Linear team ${selectedProjectData?.key || selectedProject}`,
         externalLinks: [{
-          provider: 'linear',
+          provider: 'linear' as const,
           integrationAccountId: integrationAccountId,
           externalId: selectedProject,
           externalKey: selectedProjectData?.key,

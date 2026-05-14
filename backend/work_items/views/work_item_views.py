@@ -185,7 +185,7 @@ class WorkItemSubmissionView(APIView):
     @handle_service_errors
     @async_to_sync
     async def post(self, request):
-        """Submit work items to external platforms (Azure DevOps/Jira/Asana)"""
+        """Submit work items to external platforms (Azure DevOps/Jira/Asana/Linear)"""
         logger.info("🔧 WorkItemSubmissionView called")
         
         user_id = request.user.id if hasattr(request, 'user') and request.user.is_authenticated else None

@@ -423,8 +423,12 @@ class ExternalApiService:
     def _build_linear_team_url(self, url_key: str, team_key: str) -> str:
         if not team_key:
             return ""
+        # Linear team URLs require the workspace urlKey:
+        # https://linear.app/<urlKey>/team/<teamKey>. The shorter
+        # https://linear.app/team/<teamKey> form 404s, so fall back to
+        # the workspace landing rather than persisting a broken link.
         if not url_key:
-            return f"https://linear.app/team/{team_key}"
+            return "https://linear.app/"
         return f"https://linear.app/{url_key}/team/{team_key}"
 
     def test_linear_connection(self, api_key: str) -> Dict[str, Any]:

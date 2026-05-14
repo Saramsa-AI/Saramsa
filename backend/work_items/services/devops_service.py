@@ -657,12 +657,16 @@ class DevOpsService:
             )
 
             results: List[Dict[str, Any]] = []
+            # Total time we're willing to sleep across all 429 retries in
+            # this batch — bounds worst-case worker stall regardless of
+            # how many items we're submitting.
+            retry_budget = [60.0]
             for work_item in work_items:
                 payload = {
                     "query": mutation,
                     "variables": {"input": self._build_linear_payload(work_item, team_id)},
                 }
-                response = self._post_linear_with_rate_limit_retry(headers, payload)
+                response = self._post_linear_with_rate_limit_retry(headers, payload, retry_budget)
 
                 if response.status_code != 200:
                     results.append({
@@ -709,13 +713,20 @@ class DevOpsService:
             logger.error(f"Error submitting to Linear: {e}")
             raise
 
-    def _post_linear_with_rate_limit_retry(self, headers: Dict[str, str], payload: Dict[str, Any]):
-        """POST to Linear and retry once on HTTP 429, honoring Retry-After."""
+    def _post_linear_with_rate_limit_retry(self, headers: Dict[str, str], payload: Dict[str, Any],
+                                           retry_budget: List[float]):
+        """POST to Linear and retry once on HTTP 429, honoring Retry-After.
+
+        `retry_budget` is a single-element list shared across all calls in
+        a submission batch; this function decrements it in place. Once
+        exhausted (<= 0) we stop sleeping and just return the 429 response,
+        so a 50-item batch can't stall a worker for `50 * 30s`.
+        """
         import time
 
         url = "https://api.linear.app/graphql"
         response = requests.post(url, headers=headers, json=payload, timeout=30)
-        if response.status_code != 429:
+        if response.status_code != 429 or retry_budget[0] <= 0:
             return response
 
         retry_after_raw = response.headers.get("Retry-After", "1")
@@ -723,8 +734,10 @@ class DevOpsService:
             retry_after = max(0.0, float(retry_after_raw))
         except (TypeError, ValueError):
             retry_after = 1.0
-        # Cap so a malicious / runaway header can't stall the worker indefinitely.
-        time.sleep(min(retry_after, 30))
+        # Cap per-call sleep AND the remaining batch budget; whichever is smaller wins.
+        sleep_for = min(retry_after, 30, retry_budget[0])
+        retry_budget[0] -= sleep_for
+        time.sleep(sleep_for)
         return requests.post(url, headers=headers, json=payload, timeout=30)
     
     def group_work_items_by_feature(self, work_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:

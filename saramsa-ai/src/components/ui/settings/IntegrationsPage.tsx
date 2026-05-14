@@ -37,6 +37,7 @@ import {
 import { SlackIntegrationForm } from "@/components/ui/settings/SlackIntegrationForm";
 import { DashboardIntegrationModal } from "@/components/ui/dashboard/DashboardIntegrationModal";
 import { BaseModal } from "@/components/ui/modals/BaseModal";
+import { getProviderPlatformKey, isWorkProvider } from "@/lib/providers";
 import type { IntegrationAccount } from "@/store/features/integrations/integrationsSlice";
 import { Button } from "@/components/ui/button";
 
@@ -151,12 +152,6 @@ export function IntegrationsPage() {
         asana: "Asana",
         linear: "Linear",
       };
-      const platformByProvider: Record<string, string> = {
-        azure: "azure_devops",
-        jira: "jira",
-        asana: "asana",
-        linear: "linear",
-      };
 
       // Create the project using the same endpoint as config pages
       const res = await apiRequest(
@@ -165,7 +160,9 @@ export function IntegrationsPage() {
         {
           project_name: project.name,
           description: `Imported from ${providerDisplayName[project.provider] || project.provider}`,
-          platform: platformByProvider[project.provider] || project.provider,
+          platform: isWorkProvider(project.provider)
+            ? getProviderPlatformKey(project.provider)
+            : project.provider,
           external_project_id: project.id,
           external_url: project.url || "",
           integration_account_id: account.id,

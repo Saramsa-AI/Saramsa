@@ -112,7 +112,7 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
 
     try {
       const projectsResponse = await apiRequest('post', '/integrations/external/projects/', {
-        provider: 'jira',
+        provider: 'jira' as const,
         domain: config.domain,
         email: config.email,
         api_token: config.apiToken,
@@ -179,7 +179,7 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
 
       if (currentSaramsaProject && normalizedTargetProjectId) {
         const jiraExternalLink = {
-          provider: 'jira',
+          provider: 'jira' as const,
           integrationAccountId: integrationAccountId,
           externalId: selectedProject,
           externalKey: selectedProjectData?.key,
@@ -230,7 +230,7 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
         name: selectedProjectData?.name || 'Jira Project',
         description: `Imported from Jira: ${config.domain}`,
         externalLinks: [{
-          provider: 'jira',
+          provider: 'jira' as const,
           integrationAccountId: integrationAccountId,
           externalId: selectedProject,
           externalKey: selectedProjectData?.key,
