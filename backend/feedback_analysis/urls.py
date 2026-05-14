@@ -14,6 +14,12 @@ from .views import (
     DigestPreviewView,
     DigestSendNowView,
 )
+from .views.dimensions_views import (
+    DimensionDiscoveryView,
+    DimensionQueryView,
+    DimensionBreakdownView,
+)
+from .views.filtered_analysis_views import FilteredAnalysisView
 
 urlpatterns = [
     # Analysis by ID
@@ -36,4 +42,10 @@ urlpatterns = [
     path('digest/preferences/', DigestPreferenceView.as_view(), name='digest_preferences'),
     path('digest/preview/', DigestPreviewView.as_view(), name='digest_preview'),
     path('digest/send-now/', DigestSendNowView.as_view(), name='digest_send_now'),
+
+    # Dimension discovery and querying (structured-dimensions feature)
+    path('projects/<str:project_id>/dimensions/', DimensionDiscoveryView.as_view(), name='dimension_discovery'),
+    path('analysis/query/', DimensionQueryView.as_view(), name='dimension_query'),
+    path('insights/breakdown/', DimensionBreakdownView.as_view(), name='dimension_breakdown'),
+    path('analysis/filtered/', FilteredAnalysisView.as_view(), name='filtered_analysis'),
 ]

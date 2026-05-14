@@ -32,6 +32,7 @@ export type AnalysisData = {
   analysisType: string;
   rawLlm: any;
   insights?: string[];
+  dimensions?: Array<Record<string, any>>;
   analysisData: {
     overall: SentimentBreakdown;
     counts: { total: number; positive: number; negative: number; neutral: number };
