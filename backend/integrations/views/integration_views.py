@@ -234,6 +234,47 @@ def create_asana_integration(request):
         )
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@handle_service_errors
+def create_linear_integration(request):
+    """Create Linear integration account via personal API key."""
+    user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
+    data = request.data
+
+    api_key = data.get('api_key', '').strip()
+    workspace_name = data.get('workspace_name', '').strip()
+
+    if not organization_id or not api_key:
+        return StandardResponse.validation_error(
+            detail='Active organization and API key are required',
+            errors=[
+                {"field": "organization_id", "message": "Active organization is required."} if not organization_id else None,
+                {"field": "api_key", "message": "This field is required."} if not api_key else None,
+            ],
+            instance=request.path,
+        )
+
+    try:
+        integration_service = get_integration_service()
+        account = integration_service.create_linear_integration(
+            user_id, organization_id, api_key, workspace_name,
+        )
+        return StandardResponse.created(
+            data={'account': account},
+            message='Linear integration configured successfully',
+        )
+    except ValueError as e:
+        return StandardResponse.error(
+            title="Connection test failed",
+            detail=str(e),
+            status_code=400,
+            error_type="connection-test-failed",
+            instance=request.path,
+        )
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 @handle_service_errors

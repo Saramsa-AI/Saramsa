@@ -175,7 +175,7 @@ export function AzureDevOpsIntegrationForm({ onContinue, onBack, targetProjectId
       }
 
       const azureExternalLink = {
-          provider: 'azure',
+          provider: 'azure' as const,
           integrationAccountId: integrationAccountId,
           externalId: selectedProject,
           url: `https://dev.azure.com/${orgName}/${selectedProjectData?.name}`,

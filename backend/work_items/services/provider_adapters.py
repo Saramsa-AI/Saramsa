@@ -86,6 +86,27 @@ class AsanaSubmissionAdapter:
         return service._submit_to_asana(work_items, project_config)
 
 
+class LinearSubmissionAdapter:
+    provider = "linear"
+
+    def submit(
+        self,
+        *,
+        service: "DevOpsService",
+        user_id: str,
+        work_items: List[Dict[str, Any]],
+        project_config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        from integrations.services import get_integration_service
+
+        return service._submit_to_linear(
+            user_id,
+            work_items,
+            project_config,
+            get_integration_service(),
+        )
+
+
 WORK_ITEM_PROVIDER_CONFIGS: Dict[str, WorkItemProviderConfig] = {
     "azure": WorkItemProviderConfig(
         provider="azure",
@@ -101,6 +122,11 @@ WORK_ITEM_PROVIDER_CONFIGS: Dict[str, WorkItemProviderConfig] = {
         provider="asana",
         process_template="Agile",
         submission_adapter=AsanaSubmissionAdapter(),
+    ),
+    "linear": WorkItemProviderConfig(
+        provider="linear",
+        process_template="Agile",
+        submission_adapter=LinearSubmissionAdapter(),
     ),
 }
 

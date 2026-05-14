@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import { IntegrationConfigDrawer } from "./IntegrationConfigDrawer";
 import { IntegrationPlatformSelectorModal } from "@/components/ui/integrations/IntegrationPlatformSelectorModal";
+import type { WorkProvider } from "@/lib/providers";
 
 interface DashboardIntegrationModalProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
-  initialPlatform?: 'azure' | 'jira' | 'asana' | null;
+  initialPlatform?: WorkProvider | null;
 }
 
 export function DashboardIntegrationModal({
@@ -17,7 +18,7 @@ export function DashboardIntegrationModal({
   projectId,
   initialPlatform = null,
 }: DashboardIntegrationModalProps) {
-  const [selectedPlatform, setSelectedPlatform] = useState<'azure' | 'jira' | 'asana' | null>(null);
+  const [selectedPlatform, setSelectedPlatform] = useState<WorkProvider | null>(null);
   const allowPlatformSelection = !initialPlatform;
 
   useEffect(() => {
@@ -31,7 +32,7 @@ export function DashboardIntegrationModal({
     }
   }, [isOpen, initialPlatform]);
 
-  const handlePlatformSelect = (platform: 'azure' | 'jira' | 'asana') => {
+  const handlePlatformSelect = (platform: WorkProvider) => {
     setSelectedPlatform(platform);
   };
 

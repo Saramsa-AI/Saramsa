@@ -597,6 +597,149 @@ class DevOpsService:
         except Exception as e:
             logger.error(f"Error submitting to Asana: {e}")
             raise
+
+    def _normalize_linear_priority(self, work_item: Dict[str, Any]) -> int:
+        # Linear priority enum: 0=No priority, 1=Urgent, 2=High, 3=Medium, 4=Low.
+        # Default to Medium for parity with Jira's "Medium" fallback rather
+        # than silently demoting unranked items to "No priority".
+        raw = str(work_item.get("priority") or "").strip().lower()
+        mapping = {
+            "urgent": 1,
+            "critical": 1,
+            "high": 2,
+            "medium": 3,
+            "normal": 3,
+            "low": 4,
+        }
+        return mapping.get(raw, 3)
+
+    def _build_linear_payload(self, work_item: Dict[str, Any], team_id: str) -> Dict[str, Any]:
+        description = work_item.get("description") or work_item.get("acceptance_criteria") or ""
+        acceptance = work_item.get("acceptance_criteria") or work_item.get("acceptance") or ""
+        if acceptance and acceptance not in description:
+            description = f"{description}\n\nAcceptance criteria:\n{acceptance}".strip()
+
+        return {
+            "teamId": team_id,
+            "title": work_item.get("title") or "Untitled issue",
+            "description": description,
+            "priority": self._normalize_linear_priority(work_item),
+        }
+
+    def _submit_to_linear(self, user_id: str, work_items: List[Dict[str, Any]],
+                          project_config: Dict[str, Any], integration_service) -> Dict[str, Any]:
+        """Submit work items to Linear via the Linear GraphQL API."""
+        try:
+            organization_id = project_config.get("organizationId") or project_config.get("organization_id")
+            integration = integration_service.get_integration_account_by_provider(
+                user_id, 'linear', organization_id=organization_id
+            )
+            if not integration:
+                raise ValueError("Linear integration not found. Please configure integration first.")
+
+            account_with_creds = integration_service.get_decrypted_credentials(
+                user_id, 'linear', organization_id=organization_id
+            )
+            if not account_with_creds:
+                raise ValueError("Failed to retrieve Linear credentials")
+
+            api_key = account_with_creds['credentials']['api_key']
+            external_link = self._get_project_external_link(project_config, "linear")
+            team_id = external_link.get("externalId") or project_config.get('team_id')
+            if not team_id:
+                raise ValueError("Linear project configuration is missing a team id.")
+
+            headers = integration_service.external_api_service._linear_headers(api_key)
+            mutation = (
+                "mutation IssueCreate($input: IssueCreateInput!) {"
+                " issueCreate(input: $input) {"
+                " success issue { id identifier url title } } }"
+            )
+
+            results: List[Dict[str, Any]] = []
+            # Total time we're willing to sleep across all 429 retries in
+            # this batch — bounds worst-case worker stall regardless of
+            # how many items we're submitting.
+            retry_budget = [60.0]
+            for work_item in work_items:
+                payload = {
+                    "query": mutation,
+                    "variables": {"input": self._build_linear_payload(work_item, team_id)},
+                }
+                response = self._post_linear_with_rate_limit_retry(headers, payload, retry_budget)
+
+                if response.status_code != 200:
+                    results.append({
+                        "success": False,
+                        "story_id": work_item.get("id"),
+                        "error": f"Linear API returned status {response.status_code}: {response.text}",
+                    })
+                    continue
+
+                body = response.json() or {}
+                if body.get("errors"):
+                    error_message = body["errors"][0].get("message", "Unknown Linear error")
+                    results.append({
+                        "success": False,
+                        "story_id": work_item.get("id"),
+                        "error": error_message,
+                    })
+                    continue
+
+                issue = ((body.get("data") or {}).get("issueCreate") or {}).get("issue") or {}
+                results.append({
+                    "success": True,
+                    "story_id": work_item.get("id"),
+                    "issue_key": issue.get("identifier"),
+                    "url": issue.get("url"),
+                })
+
+            successful = [result for result in results if result.get("success")]
+            failed = [result for result in results if not result.get("success")]
+            first_success = successful[0] if successful else {}
+
+            return {
+                "success": len(failed) == 0,
+                "submitted_count": len(successful),
+                "failed_count": len(failed),
+                "platform": "linear",
+                "team_id": team_id,
+                "external_id": first_success.get("issue_key"),
+                "external_url": first_success.get("url"),
+                "results": results,
+            }
+
+        except Exception as e:
+            logger.error(f"Error submitting to Linear: {e}")
+            raise
+
+    def _post_linear_with_rate_limit_retry(self, headers: Dict[str, str], payload: Dict[str, Any],
+                                           retry_budget: List[float]):
+        """POST to Linear and retry once on HTTP 429, honoring Retry-After.
+
+        `retry_budget` is a single-element list shared across all calls in
+        a submission batch; this function decrements it in place. Once
+        exhausted (<= 0) we stop sleeping and just return the 429 response,
+        so a 50-item batch can't stall a worker for `50 * 30s`.
+        """
+        import time
+
+        url = "https://api.linear.app/graphql"
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        if response.status_code != 429 or retry_budget[0] <= 0:
+            return response
+
+        retry_after_raw = response.headers.get("Retry-After", "1")
+        try:
+            retry_after = max(0.0, float(retry_after_raw))
+        except (TypeError, ValueError):
+            retry_after = 1.0
+        # Cap per-call sleep AND the remaining batch budget; whichever is smaller wins.
+        sleep_for = min(retry_after, 30, retry_budget[0])
+        # Decrement BEFORE sleeping so an interrupted sleep still counts.
+        retry_budget[0] -= sleep_for
+        time.sleep(sleep_for)
+        return requests.post(url, headers=headers, json=payload, timeout=30)
     
     def group_work_items_by_feature(self, work_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         """Groups work items by their 'feature_area' or 'featurearea' attribute."""

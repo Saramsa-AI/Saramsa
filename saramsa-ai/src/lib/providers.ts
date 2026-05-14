@@ -1,7 +1,18 @@
 import type { LucideIcon } from "lucide-react";
-import { CheckSquare, Cloud, Download, Globe } from "lucide-react";
+import { CheckSquare, Cloud, Download, Globe, Layers } from "lucide-react";
 
-export type WorkProvider = "azure" | "jira" | "asana";
+export type WorkProvider = "azure" | "jira" | "asana" | "linear";
+
+const providerPlatformKeys: Record<WorkProvider, string> = {
+  azure: "azure_devops",
+  jira: "jira",
+  asana: "asana",
+  linear: "linear",
+};
+
+export function getProviderPlatformKey(provider: WorkProvider): string {
+  return providerPlatformKeys[provider];
+}
 
 type ProviderStatus = "available" | "configured";
 
@@ -38,7 +49,7 @@ interface ProviderDefinition {
   dashboardSelection: ProviderSelectionContent;
 }
 
-export const providerOrder: WorkProvider[] = ["azure", "jira", "asana"];
+export const providerOrder: WorkProvider[] = ["azure", "jira", "asana", "linear"];
 
 export const providerDefinitions: Record<WorkProvider, ProviderDefinition> = {
   azure: {
@@ -185,6 +196,54 @@ export const providerDefinitions: Record<WorkProvider, ProviderDefinition> = {
       availableCtaLabel: "Connect Asana",
     },
   },
+  linear: {
+    id: "linear",
+    label: "Linear",
+    shortLabel: "Linear",
+    drawerTitle: "Configure Linear Integration",
+    icon: Layers,
+    projectBadgeGlyph: "L",
+    capabilities: {
+      supportsImport: true,
+      supportsPush: true,
+      supportsProjectSync: true,
+      supportsWebhookBootstrap: false,
+    },
+    workItems: {
+      processTemplate: "Agile",
+      emptyCommentsMessage:
+        "No comments available. Please upload feedback data to use Linear integration.",
+      missingWorkItemsMessage:
+        "No deep analysis data available. Please upload feedback data to generate issues.",
+    },
+    configSelection: {
+      availableDescription:
+        "Connect Linear so triaged feedback turns into team-ready issues",
+      configuredDescription: "Linear integration is already configured",
+      features: [
+        "Personal API Key Auth",
+        "Team-level Mapping",
+        "Auto Issue Creation",
+        "Markdown Descriptions",
+      ],
+      configuredCtaLabel: "Review setup",
+      availableCtaLabel: "Connect Linear",
+    },
+    dashboardSelection: {
+      availableDescription:
+        "Integrate your project with Linear so feedback flows into team issue queues",
+      configuredDescription:
+        "Linear integration is already configured. You can link another team.",
+      features: [
+        "Team Detection",
+        "Issue Creation",
+        "Priority Mapping",
+        "Markdown Descriptions",
+      ],
+      configuredCtaLabel: "Review setup",
+      availableCtaLabel: "Connect Linear",
+    },
+  },
 };
 
 export function getProviderLabel(provider: WorkProvider): string {
@@ -250,5 +309,5 @@ export function getProviderSelectionCards(
 }
 
 export function isWorkProvider(value: string): value is WorkProvider {
-  return value === "azure" || value === "jira" || value === "asana";
+  return value === "azure" || value === "jira" || value === "asana" || value === "linear";
 }

@@ -4,25 +4,24 @@ import { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch, RootState } from "@/store/store";
 import { fetchProjects, createProject } from "@/store/features/projects/projectsSlice";
-import { JiraFormPanel } from './JiraFormPanel';
+import { LinearFormPanel } from './LinearFormPanel';
 import { apiRequest } from '@/lib/apiRequest';
 
-interface JiraIntegrationFormProps {
+interface LinearIntegrationFormProps {
   onContinue: (projectId: string) => void;
   onBack: () => void;
   targetProjectId?: string;
 }
 
-export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: JiraIntegrationFormProps) {
+export function LinearIntegrationForm({ onContinue, onBack, targetProjectId }: LinearIntegrationFormProps) {
   const dispatch = useDispatch<AppDispatch>();
   const { accounts } = useSelector((state: RootState) => state.integrations);
   const { projects: saramsaProjects } = useSelector((state: RootState) => state.projects);
 
   const [config, setConfig] = useState({
-    email: '',
-    apiToken: '',
-    domain: '',
-    projectKey: ''
+    apiKey: '',
+    teamId: '',
+    teamKey: '',
   });
   const [isLoading, setIsLoading] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
@@ -42,7 +41,7 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
   const linkedProjects: { [key: string]: { id: string; name: string } } = {};
   saramsaProjects?.forEach(project => {
     project.externalLinks?.forEach(link => {
-      if (link.provider === 'jira') {
+      if (link.provider === 'linear') {
         linkedProjects[link.externalId] = { id: project.id, name: project.name };
       }
     });
@@ -53,39 +52,34 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
   }, [dispatch]);
 
   useEffect(() => {
-    const jiraAccount = accounts.find(acc => acc.provider === 'jira');
-    if (jiraAccount) {
+    const linearAccount = accounts.find(acc => acc.provider === 'linear');
+    if (linearAccount) {
       setIsExistingIntegration(true);
-      setConfig(prev => ({
-        ...prev,
-        domain: jiraAccount.metadata.domain || '',
-        email: jiraAccount.metadata.email || ''
-      }));
-      fetchProjectsForExistingIntegration(jiraAccount);
+      fetchProjectsForExistingIntegration(linearAccount);
     }
   }, [accounts]);
 
-  const fetchProjectsForExistingIntegration = async (jiraAccount: any) => {
+  const fetchProjectsForExistingIntegration = async (linearAccount: any) => {
     setIsLoading(true);
     setErrorMessage('');
     setValidationStatus('loading');
 
     try {
-      const projectsResponse = await apiRequest('get', `/integrations/external/projects/?provider=jira&accountId=${jiraAccount.id}`, undefined, true);
+      const projectsResponse = await apiRequest('get', `/integrations/external/projects/?provider=linear&accountId=${linearAccount.id}`, undefined, true);
 
       if (projectsResponse.data.success) {
         setProjects(projectsResponse.data.data.projects || []);
         setValidationStatus('success');
         setErrorMessage('');
       } else {
-        setErrorMessage(projectsResponse.data.error || 'Failed to fetch projects');
+        setErrorMessage(projectsResponse.data.error || 'Failed to fetch teams');
         setValidationStatus('error');
       }
     } catch (error: any) {
       if (error.response?.data?.error) {
         setErrorMessage(error.response.data.error);
       } else {
-        setErrorMessage('Failed to connect to Jira. Please check your credentials.');
+        setErrorMessage('Failed to connect to Linear. Please check your API key.');
       }
       setValidationStatus('error');
     } finally {
@@ -100,8 +94,8 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
   };
 
   const handleValidateConfig = async () => {
-    if (!config.email || !config.apiToken || !config.domain) {
-      setErrorMessage('Please fill in all required fields');
+    if (!config.apiKey) {
+      setErrorMessage('Please enter your Linear API key');
       setValidationStatus('error');
       return;
     }
@@ -111,11 +105,8 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
     setValidationStatus('loading');
 
     try {
-      const projectsResponse = await apiRequest('post', '/integrations/external/projects/', {
-        provider: 'jira' as const,
-        domain: config.domain,
-        email: config.email,
-        api_token: config.apiToken,
+      const projectsResponse = await apiRequest('post', '/integrations/linear/projects/', {
+        api_key: config.apiKey,
       }, true);
 
       if (projectsResponse.data.success) {
@@ -123,14 +114,14 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
         setValidationStatus('success');
         setErrorMessage('');
       } else {
-        setErrorMessage(projectsResponse.data.error || 'Failed to fetch projects');
+        setErrorMessage(projectsResponse.data.error || 'Failed to fetch teams');
         setValidationStatus('error');
       }
     } catch (error: any) {
       if (error.response?.data?.error) {
         setErrorMessage(error.response.data.error);
       } else {
-        setErrorMessage('Failed to connect to Jira. Please check your credentials.');
+        setErrorMessage('Failed to connect to Linear. Please check your API key.');
       }
       setValidationStatus('error');
     } finally {
@@ -142,13 +133,13 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
     setSelectedProject(projectId);
     const selectedProjectData = projects.find(p => p.id === projectId);
     if (selectedProjectData) {
-      setConfig(prev => ({ ...prev, projectKey: selectedProjectData.key }));
+      setConfig(prev => ({ ...prev, teamId: projectId, teamKey: selectedProjectData.key }));
     }
   };
 
   const handleContinue = async () => {
     if (!selectedProject) {
-      setErrorMessage('Please select a project to continue');
+      setErrorMessage('Please select a team to continue');
       return;
     }
 
@@ -161,37 +152,41 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
       let integrationAccountId;
 
       if (isExistingIntegration) {
-        const jiraAccount = accounts.find(acc => acc.provider === 'jira');
-        if (!jiraAccount) throw new Error('Jira integration not found');
-        integrationAccountId = jiraAccount.id;
+        const linearAccount = accounts.find(acc => acc.provider === 'linear');
+        if (!linearAccount) throw new Error('Linear integration not found');
+        integrationAccountId = linearAccount.id;
       } else {
-        const integrationResponse = await apiRequest('post', '/integrations/jira/', {
-          domain: config.domain,
-          email: config.email,
-          api_token: config.apiToken
+        const integrationResponse = await apiRequest('post', '/integrations/linear/', {
+          api_key: config.apiKey,
         }, true);
 
         if (!integrationResponse.data.success) {
-          throw new Error(integrationResponse.data.error || 'Failed to create Jira integration');
+          throw new Error(integrationResponse.data.error || 'Failed to create Linear integration');
         }
         integrationAccountId = integrationResponse.data.data.account.id;
       }
 
+      // Backend builds the proper https://linear.app/<urlKey>/team/<key>
+      // URL using the workspace urlKey it persisted. If for some reason
+      // it's missing, fall back to the workspace landing — never the
+      // short https://linear.app/team/<key> form, which 404s.
+      const teamUrl = selectedProjectData?.url || 'https://linear.app/';
+
       if (currentSaramsaProject && normalizedTargetProjectId) {
-        const jiraExternalLink = {
-          provider: 'jira' as const,
+        const linearExternalLink = {
+          provider: 'linear' as const,
           integrationAccountId: integrationAccountId,
           externalId: selectedProject,
           externalKey: selectedProjectData?.key,
-          url: `https://${config.domain}/browse/${selectedProjectData?.key}`,
+          url: teamUrl,
           status: 'ok',
           lastSyncedAt: null,
           syncMetadata: {}
         };
 
         const nextExternalLinks = [
-          ...(currentSaramsaProject.externalLinks || []).filter(link => link.provider !== 'jira'),
-          jiraExternalLink,
+          ...(currentSaramsaProject.externalLinks || []).filter(link => link.provider !== 'linear'),
+          linearExternalLink,
         ];
 
         await apiRequest('patch', `/integrations/projects/${normalizedTargetProjectId}/`, {
@@ -206,7 +201,7 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
       try {
         const checkResponse = await apiRequest(
           'get',
-          `/integrations/external/projects/check/?provider=jira&externalId=${selectedProject}`,
+          `/integrations/external/projects/check/?provider=linear&externalId=${selectedProject}`,
           undefined,
           true
         );
@@ -220,21 +215,21 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
         const message =
           checkError?.response?.data?.error ||
           checkError?.message ||
-          'Failed to verify whether this Jira project is already linked.';
+          'Failed to verify whether this Linear team is already linked.';
         setErrorMessage(message);
         setValidationStatus('error');
         throw new Error(message);
       }
 
       const projectData = {
-        name: selectedProjectData?.name || 'Jira Project',
-        description: `Imported from Jira: ${config.domain}`,
+        name: selectedProjectData?.name || 'Linear Team',
+        description: `Imported from Linear team ${selectedProjectData?.key || selectedProject}`,
         externalLinks: [{
-          provider: 'jira' as const,
+          provider: 'linear' as const,
           integrationAccountId: integrationAccountId,
           externalId: selectedProject,
           externalKey: selectedProjectData?.key,
-          url: `https://${config.domain}/browse/${selectedProjectData?.key}`,
+          url: teamUrl,
           status: 'ok',
           lastSyncedAt: null,
           syncMetadata: {}
@@ -248,23 +243,22 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
         try {
           const checkResponse = await apiRequest(
             'get',
-            `/integrations/external/projects/check/?provider=jira&externalId=${selectedProject}`,
+            `/integrations/external/projects/check/?provider=linear&externalId=${selectedProject}`,
             undefined,
             true
           );
           if (checkResponse.data.data.exists && checkResponse.data.data.project) {
-            const existingProject = checkResponse.data.data.project;
-            onContinue(existingProject.id);
+            onContinue(checkResponse.data.data.project.id);
             return;
           }
         } catch (lookupError: any) {
-          const message =
+          setErrorMessage(
             lookupError?.response?.data?.error ||
-            lookupError?.message ||
-            'Failed to resolve the existing Jira project after a conflict.';
-          setErrorMessage(message);
+              lookupError?.message ||
+              'Failed to resolve the existing Linear team after a conflict.'
+          );
           setValidationStatus('error');
-          throw new Error(message);
+          return;
         }
       }
       setErrorMessage(e instanceof Error ? e.message : 'Failed to create project');
@@ -275,7 +269,7 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
   };
 
   return (
-    <JiraFormPanel
+    <LinearFormPanel
       config={config}
       onConfigChange={handleConfigChange}
       onValidateConfiguration={handleValidateConfig}
@@ -293,4 +287,3 @@ export function JiraIntegrationForm({ onContinue, onBack, targetProjectId }: Jir
     />
   );
 }
-

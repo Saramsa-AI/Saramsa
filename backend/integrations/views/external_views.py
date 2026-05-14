@@ -235,6 +235,58 @@ def get_dashboard_azure_projects(request):
     )
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@handle_service_errors
+def get_linear_projects(request):
+    """List Linear teams visible to the supplied API key (for config page)."""
+    api_key = request.data.get('api_key')
+    organization_id = _get_active_organization_id(request)
+
+    forbidden = _require_org_admin(request, organization_id)
+    if forbidden is not None:
+        return forbidden
+
+    if not api_key:
+        return StandardResponse.validation_error(
+            detail='API key is required',
+            errors=[{"field": "api_key", "message": "This field is required."}],
+            instance=request.path,
+        )
+
+    integration_service = get_integration_service()
+    projects = integration_service.get_external_projects(
+        request.user.id,
+        "linear",
+        organization_id=organization_id,
+        api_key=api_key,
+    )
+
+    return StandardResponse.success(
+        data={'projects': projects},
+        message='Linear teams retrieved successfully',
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@handle_service_errors
+def get_dashboard_linear_projects(request):
+    """Get user's imported Linear projects from database (for dashboard)."""
+    user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
+
+    project_service = get_project_service()
+    linear_projects = project_service.get_projects_by_provider(
+        str(user_id), 'linear', organization_id=organization_id,
+    )
+
+    return StandardResponse.success(
+        data={'projects': linear_projects},
+        message='Linear projects retrieved from database',
+    )
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 @handle_service_errors
@@ -299,6 +351,17 @@ def get_external_projects(request):
                 api_token = request.data.get('api_token')
                 projects = integration_service.get_external_projects(
                     user_id, provider, organization_id=organization_id, domain=domain, email=email, api_token=api_token
+                )
+            elif provider == 'asana':
+                pat_token = request.data.get('pat_token')
+                workspace_gid = request.data.get('workspace_gid')
+                projects = integration_service.get_external_projects(
+                    user_id, provider, organization_id=organization_id, pat_token=pat_token, workspace_gid=workspace_gid
+                )
+            elif provider == 'linear':
+                api_key = request.data.get('api_key')
+                projects = integration_service.get_external_projects(
+                    user_id, provider, organization_id=organization_id, api_key=api_key
                 )
             else:
                 return StandardResponse.validation_error(
