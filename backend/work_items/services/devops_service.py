@@ -736,6 +736,7 @@ class DevOpsService:
             retry_after = 1.0
         # Cap per-call sleep AND the remaining batch budget; whichever is smaller wins.
         sleep_for = min(retry_after, 30, retry_budget[0])
+        # Decrement BEFORE sleeping so an interrupted sleep still counts.
         retry_budget[0] -= sleep_for
         time.sleep(sleep_for)
         return requests.post(url, headers=headers, json=payload, timeout=30)
