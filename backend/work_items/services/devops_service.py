@@ -597,6 +597,126 @@ class DevOpsService:
         except Exception as e:
             logger.error(f"Error submitting to Asana: {e}")
             raise
+
+    def _normalize_linear_priority(self, work_item: Dict[str, Any]) -> int:
+        raw = str(work_item.get("priority") or "").strip().lower()
+        mapping = {
+            "urgent": 1,
+            "critical": 1,
+            "high": 2,
+            "medium": 3,
+            "normal": 3,
+            "low": 4,
+        }
+        return mapping.get(raw, 0)
+
+    def _build_linear_payload(self, work_item: Dict[str, Any], team_id: str) -> Dict[str, Any]:
+        description = work_item.get("description") or work_item.get("acceptance_criteria") or ""
+        acceptance = work_item.get("acceptance_criteria") or work_item.get("acceptance") or ""
+        if acceptance and acceptance not in description:
+            description = f"{description}\n\nAcceptance criteria:\n{acceptance}".strip()
+
+        return {
+            "teamId": team_id,
+            "title": work_item.get("title") or "Untitled issue",
+            "description": description,
+            "priority": self._normalize_linear_priority(work_item),
+        }
+
+    def _submit_to_linear(self, user_id: str, work_items: List[Dict[str, Any]],
+                          project_config: Dict[str, Any], integration_service) -> Dict[str, Any]:
+        """Submit work items to Linear via the Linear GraphQL API."""
+        try:
+            organization_id = project_config.get("organizationId") or project_config.get("organization_id")
+            integration = integration_service.get_integration_account_by_provider(
+                user_id, 'linear', organization_id=organization_id
+            )
+            if not integration:
+                raise ValueError("Linear integration not found. Please configure integration first.")
+
+            account_with_creds = integration_service.get_decrypted_credentials(
+                user_id, 'linear', organization_id=organization_id
+            )
+            if not account_with_creds:
+                raise ValueError("Failed to retrieve Linear credentials")
+
+            api_key = account_with_creds['credentials']['api_key']
+            external_link = self._get_project_external_link(project_config, "linear")
+            team_id = (
+                external_link.get("externalId")
+                or project_config.get('team_id')
+                or project_config.get('id')
+            )
+            if not team_id:
+                raise ValueError("Linear project configuration is missing a team id.")
+
+            headers = {
+                "Authorization": api_key,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            mutation = (
+                "mutation IssueCreate($input: IssueCreateInput!) {"
+                " issueCreate(input: $input) {"
+                " success issue { id identifier url title } } }"
+            )
+
+            results: List[Dict[str, Any]] = []
+            for work_item in work_items:
+                payload = {
+                    "query": mutation,
+                    "variables": {"input": self._build_linear_payload(work_item, team_id)},
+                }
+                response = requests.post(
+                    "https://api.linear.app/graphql",
+                    headers=headers,
+                    json=payload,
+                    timeout=30,
+                )
+                if response.status_code != 200:
+                    results.append({
+                        "success": False,
+                        "story_id": work_item.get("id"),
+                        "error": f"Linear API returned status {response.status_code}: {response.text}",
+                    })
+                    continue
+
+                body = response.json() or {}
+                if body.get("errors"):
+                    error_message = body["errors"][0].get("message", "Unknown Linear error")
+                    results.append({
+                        "success": False,
+                        "story_id": work_item.get("id"),
+                        "error": error_message,
+                    })
+                    continue
+
+                issue = ((body.get("data") or {}).get("issueCreate") or {}).get("issue") or {}
+                results.append({
+                    "success": True,
+                    "story_id": work_item.get("id"),
+                    "issue_key": issue.get("identifier"),
+                    "url": issue.get("url"),
+                })
+
+            successful = [result for result in results if result.get("success")]
+            failed = [result for result in results if not result.get("success")]
+            first_success = successful[0] if successful else {}
+
+            return {
+                "success": len(failed) == 0,
+                "submitted_count": len(successful),
+                "failed_count": len(failed),
+                "platform": "linear",
+                "team_id": team_id,
+                "external_id": first_success.get("issue_key"),
+                "external_url": first_success.get("url"),
+                "results": results,
+            }
+
+        except Exception as e:
+            logger.error(f"Error submitting to Linear: {e}")
+            raise
     
     def group_work_items_by_feature(self, work_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         """Groups work items by their 'feature_area' or 'featurearea' attribute."""

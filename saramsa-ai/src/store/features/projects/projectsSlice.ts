@@ -89,12 +89,18 @@ export const createProject = createAsyncThunk(
             ? 'azure_devops'
             : link.provider === 'asana'
             ? 'asana'
+            : link.provider === 'linear'
+            ? 'linear'
             : 'jira';
         payload.external_project_id = link.externalId;
         payload.integration_account_id = link.integrationAccountId;
         payload.external_url = link.url;
         if (link.externalKey) {
-          payload.jira_project_key = link.externalKey;
+          if (link.provider === 'linear') {
+            payload.linear_team_key = link.externalKey;
+          } else {
+            payload.jira_project_key = link.externalKey;
+          }
         }
       } else {
         payload.platform = 'standalone';
@@ -144,17 +150,21 @@ export const importProjectFromExternal = createAsyncThunk(
           ? 'azure_devops'
           : data.provider === 'asana'
           ? 'asana'
+          : data.provider === 'linear'
+          ? 'linear'
           : 'jira',
       external_project_id: data.externalProject.id,
       integration_account_id: data.integrationAccountId,
     };
-    
+
     // Add provider-specific fields from the explicit selection payload instead of browser storage.
     if (data.provider === 'azure') {
       createData.azure_project_name = data.externalProject.name;
       createData.azure_process_template = data.externalProject.templateName;
     } else if (data.provider === 'jira') {
       createData.jira_project_key = data.externalProject.key;
+    } else if (data.provider === 'linear') {
+      createData.linear_team_key = data.externalProject.key;
     }
     
     const response = await apiRequest('post', '/integrations/projects/create/', createData, true);

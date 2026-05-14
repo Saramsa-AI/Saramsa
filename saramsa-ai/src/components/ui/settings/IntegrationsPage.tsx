@@ -33,6 +33,7 @@ import {
   Folder,
   Users,
   MessageSquare,
+  Triangle,
 } from "lucide-react";
 import { SlackIntegrationForm } from "@/components/ui/settings/SlackIntegrationForm";
 import { DashboardIntegrationModal } from "@/components/ui/dashboard/DashboardIntegrationModal";
@@ -127,7 +128,7 @@ export function IntegrationsPage() {
     }
   };
 
-  const handleFetchProjects = async (provider: "azure" | "jira" | "asana") => {
+  const handleFetchProjects = async (provider: "azure" | "jira" | "asana" | "linear") => {
     const account = accounts.find((acc) => acc.provider === provider);
     if (account) {
       await dispatch(
@@ -145,26 +146,34 @@ export function IntegrationsPage() {
         throw new Error("Integration account not found");
       }
 
+      const providerDisplayName: Record<string, string> = {
+        azure: "Azure DevOps",
+        jira: "Jira",
+        asana: "Asana",
+        linear: "Linear",
+      };
+      const platformByProvider: Record<string, string> = {
+        azure: "azure_devops",
+        jira: "jira",
+        asana: "asana",
+        linear: "linear",
+      };
+
       // Create the project using the same endpoint as config pages
       const res = await apiRequest(
         "post",
         "/integrations/projects/create/",
         {
           project_name: project.name,
-          description: `Imported from ${
-            project.provider === "azure" ? "Azure DevOps" : "Jira"
-          }`,
-          platform:
-            project.provider === "azure"
-              ? "azure_devops"
-              : project.provider === "asana"
-              ? "asana"
-              : "jira",
+          description: `Imported from ${providerDisplayName[project.provider] || project.provider}`,
+          platform: platformByProvider[project.provider] || project.provider,
           external_project_id: project.id,
           external_url: project.url || "",
           integration_account_id: account.id,
           ...(project.provider === "jira" &&
             project.key && { jira_project_key: project.key }),
+          ...(project.provider === "linear" &&
+            project.key && { linear_team_key: project.key }),
           ...(project.provider === "azure" &&
             project.templateName && {
               azure_process_template: project.templateName,
@@ -254,6 +263,12 @@ export function IntegrationsPage() {
             <CheckSquare className="w-4 h-4 text-white" />
           </div>
         );
+      case "linear":
+        return (
+          <div className="w-8 h-8 bg-gradient-to-br from-saramsa-gradient-from to-saramsa-gradient-to rounded-xl flex items-center justify-center shadow-lg">
+            <Triangle className="w-4 h-4 text-white" />
+          </div>
+        );
       default:
         return (
           <div className="w-8 h-8 bg-gradient-to-br from-saramsa-gradient-from to-saramsa-gradient-to rounded-xl flex items-center justify-center shadow-lg">
@@ -268,6 +283,7 @@ export function IntegrationsPage() {
       case "azure": return "Azure DevOps";
       case "jira": return "Jira Cloud";
       case "asana": return "Asana";
+      case "linear": return "Linear";
       case "slack": return "Slack";
       default: return provider;
     }
@@ -454,7 +470,7 @@ export function IntegrationsPage() {
                   <div className="flex items-center gap-2">
                     {(account.provider as string) !== "slack" && (
                       <Button
-                        onClick={() => handleFetchProjects(account.provider as "azure" | "jira" | "asana")}
+                        onClick={() => handleFetchProjects(account.provider as "azure" | "jira" | "asana" | "linear")}
                         disabled={fetchingProjects[account.provider]}
                         variant="saramsa"
                         className="flex items-center gap-2 px-3 py-2 text-sm"

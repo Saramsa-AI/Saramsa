@@ -84,10 +84,21 @@ class ProjectCreateView(APIView):
         # Create external links if importing from external platform
         external_links = []
         if platform != 'standalone' and external_project_id:
-            provider = 'azure' if platform == 'azure_devops' else 'jira'
+            platform_to_provider = {
+                'azure_devops': 'azure',
+                'jira': 'jira',
+                'asana': 'asana',
+                'linear': 'linear',
+            }
+            provider = platform_to_provider.get(platform, 'jira')
             external_url = request.data.get('external_url', '')
-            external_key = request.data.get('jira_project_key') if provider == 'jira' else None
-            
+            if provider == 'jira':
+                external_key = request.data.get('jira_project_key')
+            elif provider == 'linear':
+                external_key = request.data.get('linear_team_key')
+            else:
+                external_key = None
+
             external_links.append({
                 'provider': provider,
                 'integrationAccountId': integration_account_id or 'legacy',

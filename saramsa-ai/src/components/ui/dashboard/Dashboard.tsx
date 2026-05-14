@@ -213,6 +213,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       ? 'asana'
       : provider === 'azure'
       ? 'azure'
+      : provider === 'linear'
+      ? 'linear'
       : null;
   }, [projects, projectId]);
 

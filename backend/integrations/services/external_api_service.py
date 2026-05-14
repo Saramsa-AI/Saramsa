@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 ASANA_API_BASE = "https://app.asana.com/api/1.0"
+LINEAR_API_URL = "https://api.linear.app/graphql"
 
 
 class ExternalApiService:
@@ -408,6 +409,91 @@ class ExternalApiService:
         return items
 
 
+    # ------------------------------------------------------------------
+    # Linear (personal API key, GraphQL)
+    # ------------------------------------------------------------------
+
+    def _linear_headers(self, api_key: str) -> Dict[str, str]:
+        return {
+            "Authorization": api_key,
+            "Content-Type": "application/json",
+        }
+
+    def test_linear_connection(self, api_key: str) -> Dict[str, Any]:
+        """Test Linear connection by fetching the viewer."""
+        try:
+            if not api_key:
+                return {"success": False, "error": "API key is required"}
+
+            response = httpx.post(
+                LINEAR_API_URL,
+                headers=self._linear_headers(api_key),
+                json={"query": "query { viewer { id name email } }"},
+                timeout=15,
+            )
+
+            if response.status_code == 200:
+                body = response.json() or {}
+                if body.get("errors"):
+                    error_message = body["errors"][0].get("message", "Unknown Linear error")
+                    return {"success": False, "error": error_message}
+                viewer = (body.get("data") or {}).get("viewer") or {}
+                return {
+                    "success": True,
+                    "message": "Connection successful",
+                    "user": viewer.get("name", ""),
+                    "user_id": viewer.get("id", ""),
+                    "email": viewer.get("email", ""),
+                }
+            if response.status_code == 401:
+                return {"success": False, "error": "Invalid Linear API key or insufficient permissions"}
+            return {
+                "success": False,
+                "error": f"Linear connection failed with status {response.status_code}",
+            }
+
+        except httpx.TimeoutException:
+            return {"success": False, "error": "Connection timeout - check your network"}
+        except httpx.RequestError as exc:
+            return {"success": False, "error": f"Network error: {exc}"}
+        except Exception as exc:
+            logger.error(f"Error testing Linear connection: {exc}")
+            return {"success": False, "error": "An unexpected error occurred"}
+
+    def fetch_linear_teams(self, api_key: str) -> List[Dict[str, Any]]:
+        """List Linear teams visible to the supplied API key."""
+        if not api_key:
+            raise ValueError("API key is required")
+
+        response = httpx.post(
+            LINEAR_API_URL,
+            headers=self._linear_headers(api_key),
+            json={"query": "query { teams { nodes { id key name description } } }"},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            raise Exception(
+                f"Linear API returned status {response.status_code}: {response.text}"
+            )
+        body = response.json() or {}
+        if body.get("errors"):
+            error_message = body["errors"][0].get("message", "Unknown Linear error")
+            raise Exception(f"Linear API error: {error_message}")
+
+        nodes = ((body.get("data") or {}).get("teams") or {}).get("nodes") or []
+        teams: List[Dict[str, Any]] = []
+        for node in nodes:
+            team_key = node.get("key", "")
+            teams.append({
+                "id": node.get("id"),
+                "key": team_key,
+                "name": node.get("name", ""),
+                "description": node.get("description", ""),
+                "url": f"https://linear.app/team/{team_key}" if team_key else "",
+            })
+        return teams
+
+
 # Global service instance
 _external_api_service = None
 
@@ -435,3 +521,11 @@ def fetch_azure_projects(organization: str, pat_token: str) -> List[Dict[str, An
 def fetch_jira_projects(domain: str, email: str, api_token: str) -> List[Dict[str, Any]]:
     """Legacy wrapper - use get_external_api_service().fetch_jira_projects() instead."""
     return get_external_api_service().fetch_jira_projects(domain, email, api_token)
+
+def test_linear_connection(api_key: str) -> Dict[str, Any]:
+    """Legacy wrapper - use get_external_api_service().test_linear_connection() instead."""
+    return get_external_api_service().test_linear_connection(api_key)
+
+def fetch_linear_teams(api_key: str) -> List[Dict[str, Any]]:
+    """Legacy wrapper - use get_external_api_service().fetch_linear_teams() instead."""
+    return get_external_api_service().fetch_linear_teams(api_key)

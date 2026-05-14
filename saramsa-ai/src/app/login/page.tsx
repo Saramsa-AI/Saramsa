@@ -115,7 +115,7 @@ function LoginPageInner() {
                 const accounts = saved.data?.data?.accounts || [];
                 const hasConfiguredWorkIntegration = accounts.some(
                   (acc: any) =>
-                    ['azure', 'jira', 'asana'].includes(acc.provider) &&
+                    ['azure', 'jira', 'asana', 'linear'].includes(acc.provider) &&
                     acc.status === 'active'
                 );
 

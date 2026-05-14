@@ -2,12 +2,13 @@
 
 import { useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { 
-  FolderPlus, 
-  Cloud, 
+import {
+  FolderPlus,
+  Cloud,
   CheckSquare,
   AlertCircle,
-  ExternalLink
+  ExternalLink,
+  Triangle,
 } from 'lucide-react';
 import type { IntegrationAccount } from '@/store/features/integrations/integrationsSlice';
 import { Button } from '@/components/ui/button';
@@ -15,7 +16,7 @@ import { Button } from '@/components/ui/button';
 interface NewProjectDropdownProps {
   onClose: () => void;
   onCreateProject: () => void;
-  onImportProject: (provider: 'azure' | 'jira' | 'asana') => void;
+  onImportProject: (provider: 'azure' | 'jira' | 'asana' | 'linear') => void;
   integrations: IntegrationAccount[];
 }
 
@@ -30,6 +31,7 @@ export function NewProjectDropdown({
   const azureIntegrations = integrations.filter(acc => acc.provider === 'azure' && acc.status === 'active');
   const jiraIntegrations = integrations.filter(acc => acc.provider === 'jira' && acc.status === 'active');
   const asanaIntegrations = integrations.filter(acc => acc.provider === 'asana' && acc.status === 'active');
+  const linearIntegrations = integrations.filter(acc => acc.provider === 'linear' && acc.status === 'active');
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -42,7 +44,7 @@ export function NewProjectDropdown({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [onClose]);
 
-  const handleImportClick = (provider: 'azure' | 'jira' | 'asana') => {
+  const handleImportClick = (provider: 'azure' | 'jira' | 'asana' | 'linear') => {
     onImportProject(provider);
   };
 
@@ -144,6 +146,30 @@ export function NewProjectDropdown({
           )}
         </Button>
 
+        {/* Import from Linear */}
+        <Button
+          onClick={() => handleImportClick('linear')}
+          disabled={linearIntegrations.length === 0}
+          variant="ghost"
+          className="flex items-center gap-3 w-full px-3 py-3 text-left hover:bg-accent/60 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <div className="w-8 h-8 bg-secondary/70 border border-border/60 rounded-xl flex items-center justify-center">
+            <Triangle className="w-4 h-4 text-foreground" />
+          </div>
+          <div className="flex-1">
+            <p className="font-medium text-foreground">Import from Linear</p>
+            <p className="text-sm text-muted-foreground">
+              {linearIntegrations.length > 0
+                ? `${linearIntegrations.length} account${linearIntegrations.length !== 1 ? 's' : ''} connected`
+                : 'No accounts connected'
+              }
+            </p>
+          </div>
+          {linearIntegrations.length === 0 && (
+            <AlertCircle className="w-4 h-4 text-yellow-500" />
+          )}
+        </Button>
+
         {/* No integrations message */}
         {integrations.length === 0 && (
           <>
@@ -156,7 +182,7 @@ export function NewProjectDropdown({
                     Connect your DevOps platforms
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Go to Settings {'>'} Integrations to connect Azure DevOps, Jira, or Asana
+                    Go to Settings {'>'} Integrations to connect Azure DevOps, Jira, Asana, or Linear
                   </p>
                   <a
                     href="/settings"
