@@ -49,6 +49,7 @@ import { AdvancedWordCloud } from './AdvancedWordCloud';
 import { UserStoryList } from '../userStoryList';
 
 import { AnalysisRunList } from './AnalysisRunList';
+// import { DynamicFilterBar } from '../../dashboard/DynamicFilterBar'; // TODO: Re-enable when filters are fully implemented
 
 // Local interface for the component
 interface LocalFeatureSentiment {
@@ -163,6 +164,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   }, [dispatch, initialSelectedAnalysisId]);
   const [wordCloudView, setWordCloudView] = useState<'split' | 'advanced'>('split');
   const [resultsTab, setResultsTab] = useState<'insights' | 'workitems'>('insights');
+  // const [dimensionFilters, setDimensionFilters] = useState<any[]>([]); // TODO: Re-enable when filters are fully implemented
+  // const [filteredStats, setFilteredStats] = useState<any>(null);
 
   const projectId = typeof window !== 'undefined' ? localStorage.getItem('project_id') : null;
   const selectedProjectName = projects?.find((p: any) => p.id === (currentProjectId || projectId))?.name;
@@ -856,6 +859,38 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     })();
   }, [currentProjectId, dispatch]);
 
+  // TODO: Re-enable when filters are fully implemented
+  // Fetch filtered analysis when dimension filters change
+  // useEffect(() => {
+  //   const fetchFilteredData = async () => {
+  //     if (!selectedAnalysisId || dimensionFilters.length === 0) {
+  //       setFilteredStats(null);
+  //       return;
+  //     }
+  //
+  //     try {
+  //       const response = await apiRequest(
+  //         'post',
+  //         '/api/feedback/analysis/filtered/',
+  //         {
+  //           analysis_id: selectedAnalysisId,
+  //           filters: dimensionFilters
+  //         },
+  //         true
+  //       );
+  //
+  //       if (response.data?.data) {
+  //         setFilteredStats(response.data.data);
+  //       }
+  //     } catch (error) {
+  //       console.error('Failed to fetch filtered analysis:', error);
+  //       setFilteredStats(null);
+  //     }
+  //   };
+  //
+  //   fetchFilteredData();
+  // }, [dimensionFilters, selectedAnalysisId]);
+
   const handleCloudConnect = () => {
     if (typeof window !== 'undefined') {
       window.location.href = '/settings?tab=integrations';
@@ -879,8 +914,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     const lowerName = fileName.toLowerCase();
     const effectiveProjectId = currentProjectId || personalProjectId || undefined;
 
-    // PDF/DOCX: server-side extraction keeps the JS bundle light.
-    if (lowerName.endsWith('.pdf') || lowerName.endsWith('.docx')) {
+    // PDF/DOCX/CSV/JSON/XLSX: server-side extraction with dimension support
+    if (lowerName.endsWith('.pdf') || lowerName.endsWith('.docx') ||
+        lowerName.endsWith('.csv') || lowerName.endsWith('.xlsx') ||
+        lowerName.endsWith('.xls') || lowerName.endsWith('.json')) {
       try {
         setTopError(null);
         dispatch(clearError());
@@ -1897,6 +1934,43 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                 </div>
               ) : (
                 <>
+                  {/* Dynamic Dimension Filters */}
+                  {/* TODO: Re-enable when filters are fully implemented */}
+                  {/* {hasAnalysisResults && currentProjectId && (
+                    <DynamicFilterBar
+                      projectId={currentProjectId}
+                      onFiltersChange={setDimensionFilters}
+                      className="mb-4"
+                    />
+                  )} */}
+
+                  {/* Filtered Stats Banner */}
+                  {/* {filteredStats && dimensionFilters.length > 0 && (
+                    <div className="mb-4 p-4 bg-saramsa-brand/10 border border-saramsa-brand/20 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="text-sm font-medium text-saramsa-brand">
+                            Showing {filteredStats.filtered_comments} of {filteredStats.total_comments} comments ({filteredStats.filtered_percentage}%)
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {dimensionFilters.length} filter{dimensionFilters.length === 1 ? '' : 's'} applied
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setDimensionFilters([])}
+                          className="text-xs text-saramsa-brand hover:underline"
+                        >
+                          Clear filters
+                        </button>
+                      </div>
+                      {filteredStats.note && (
+                        <div className="mt-2 text-xs text-muted-foreground italic">
+                          {filteredStats.note}
+                        </div>
+                      )}
+                    </div>
+                  )} */}
+
                   {/* Metrics Cards */}
                   {hasAnalysisResults && <MetricsCards metrics={metrics} />}
 
@@ -1916,6 +1990,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                           onRegenerateAnalysis={handleRegenerateAnalysis}
                           hasEditedFeaturesProp={Object.keys(editedKeywords).length > 0}
                           hasComments={!!loadedComments && loadedComments.length > 0}
+                          projectId={currentProjectId}
+                          analysisId={latestAnalysis?.analysis_id}
                         />
                     </div>
                   )}
