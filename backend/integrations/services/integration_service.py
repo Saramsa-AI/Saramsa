@@ -54,7 +54,7 @@ class IntegrationService:
             "azure": ["vso.project", "vso.code", "vso.work"],
             "jira": ["read:project", "write:issue", "read:issue"],
             "asana": ["tasks:read", "tasks:write", "projects:read", "users:read"],
-            "linear": ["read", "write", "issues:create"],
+            "linear": ["read", "write"],
         }
         return scopes_map.get(provider, [])
     
@@ -438,15 +438,18 @@ class IntegrationService:
                 "tokenEncrypted": encrypted_token,
                 "tokenType": "api_key",
             }
+            resolved_workspace_name = workspace_name or test_result.get("workspace_name", "")
             metadata = {
-                "workspaceName": workspace_name,
+                "workspaceId": test_result.get("workspace_id", ""),
+                "workspaceName": resolved_workspace_name,
+                "workspaceUrlKey": test_result.get("workspace_url_key", ""),
                 "userId": test_result.get("user_id", ""),
                 "userName": test_result.get("user", ""),
                 "email": test_result.get("email", ""),
                 "baseUrl": "https://linear.app",
             }
 
-            display_name = f"{workspace_name or 'Linear'} (Linear)"
+            display_name = f"{resolved_workspace_name or 'Linear'} (Linear)"
             account_data = self._create_integration_account_document(
                 user_id=user_id,
                 organization_id=organization_id,

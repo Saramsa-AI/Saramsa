@@ -599,6 +599,9 @@ class DevOpsService:
             raise
 
     def _normalize_linear_priority(self, work_item: Dict[str, Any]) -> int:
+        # Linear priority enum: 0=No priority, 1=Urgent, 2=High, 3=Medium, 4=Low.
+        # Default to Medium for parity with Jira's "Medium" fallback rather
+        # than silently demoting unranked items to "No priority".
         raw = str(work_item.get("priority") or "").strip().lower()
         mapping = {
             "urgent": 1,
@@ -608,7 +611,7 @@ class DevOpsService:
             "normal": 3,
             "low": 4,
         }
-        return mapping.get(raw, 0)
+        return mapping.get(raw, 3)
 
     def _build_linear_payload(self, work_item: Dict[str, Any], team_id: str) -> Dict[str, Any]:
         description = work_item.get("description") or work_item.get("acceptance_criteria") or ""
@@ -642,19 +645,11 @@ class DevOpsService:
 
             api_key = account_with_creds['credentials']['api_key']
             external_link = self._get_project_external_link(project_config, "linear")
-            team_id = (
-                external_link.get("externalId")
-                or project_config.get('team_id')
-                or project_config.get('id')
-            )
+            team_id = external_link.get("externalId") or project_config.get('team_id')
             if not team_id:
                 raise ValueError("Linear project configuration is missing a team id.")
 
-            headers = {
-                "Authorization": api_key,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            }
+            headers = integration_service.external_api_service._linear_headers(api_key)
             mutation = (
                 "mutation IssueCreate($input: IssueCreateInput!) {"
                 " issueCreate(input: $input) {"
@@ -667,12 +662,8 @@ class DevOpsService:
                     "query": mutation,
                     "variables": {"input": self._build_linear_payload(work_item, team_id)},
                 }
-                response = requests.post(
-                    "https://api.linear.app/graphql",
-                    headers=headers,
-                    json=payload,
-                    timeout=30,
-                )
+                response = self._post_linear_with_rate_limit_retry(headers, payload)
+
                 if response.status_code != 200:
                     results.append({
                         "success": False,
@@ -717,6 +708,24 @@ class DevOpsService:
         except Exception as e:
             logger.error(f"Error submitting to Linear: {e}")
             raise
+
+    def _post_linear_with_rate_limit_retry(self, headers: Dict[str, str], payload: Dict[str, Any]):
+        """POST to Linear and retry once on HTTP 429, honoring Retry-After."""
+        import time
+
+        url = "https://api.linear.app/graphql"
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        if response.status_code != 429:
+            return response
+
+        retry_after_raw = response.headers.get("Retry-After", "1")
+        try:
+            retry_after = max(0.0, float(retry_after_raw))
+        except (TypeError, ValueError):
+            retry_after = 1.0
+        # Cap so a malicious / runaway header can't stall the worker indefinitely.
+        time.sleep(min(retry_after, 30))
+        return requests.post(url, headers=headers, json=payload, timeout=30)
     
     def group_work_items_by_feature(self, work_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         """Groups work items by their 'feature_area' or 'featurearea' attribute."""

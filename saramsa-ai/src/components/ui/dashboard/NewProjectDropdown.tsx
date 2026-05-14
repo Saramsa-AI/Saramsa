@@ -8,7 +8,6 @@ import {
   CheckSquare,
   AlertCircle,
   ExternalLink,
-  Triangle,
 } from 'lucide-react';
 import type { IntegrationAccount } from '@/store/features/integrations/integrationsSlice';
 import { Button } from '@/components/ui/button';
@@ -154,7 +153,7 @@ export function NewProjectDropdown({
           className="flex items-center gap-3 w-full px-3 py-3 text-left hover:bg-accent/60 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <div className="w-8 h-8 bg-secondary/70 border border-border/60 rounded-xl flex items-center justify-center">
-            <Triangle className="w-4 h-4 text-foreground" />
+            <span className="text-foreground text-sm font-bold">L</span>
           </div>
           <div className="flex-1">
             <p className="font-medium text-foreground">Import from Linear</p>

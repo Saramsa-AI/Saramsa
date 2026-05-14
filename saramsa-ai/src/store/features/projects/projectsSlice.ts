@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
-import type { WorkProvider } from '@/lib/providers';
+import { getProviderPlatformKey, type WorkProvider } from '@/lib/providers';
 
 export interface ProjectExternalLink {
   provider: WorkProvider;
@@ -84,14 +84,7 @@ export const createProject = createAsyncThunk(
       // If external links provided, use the first one to set platform and integration details
       if (data.externalLinks && data.externalLinks.length > 0) {
         const link = data.externalLinks[0];
-        payload.platform =
-          link.provider === 'azure'
-            ? 'azure_devops'
-            : link.provider === 'asana'
-            ? 'asana'
-            : link.provider === 'linear'
-            ? 'linear'
-            : 'jira';
+        payload.platform = getProviderPlatformKey(link.provider as WorkProvider);
         payload.external_project_id = link.externalId;
         payload.integration_account_id = link.integrationAccountId;
         payload.external_url = link.url;
@@ -145,14 +138,7 @@ export const importProjectFromExternal = createAsyncThunk(
     const createData: any = {
       project_name: data.externalProject.name,
       description: data.externalProject.description,
-      platform:
-        data.provider === 'azure'
-          ? 'azure_devops'
-          : data.provider === 'asana'
-          ? 'asana'
-          : data.provider === 'linear'
-          ? 'linear'
-          : 'jira',
+      platform: getProviderPlatformKey(data.provider),
       external_project_id: data.externalProject.id,
       integration_account_id: data.integrationAccountId,
     };

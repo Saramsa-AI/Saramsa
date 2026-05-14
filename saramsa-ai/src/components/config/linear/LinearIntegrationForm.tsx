@@ -246,18 +246,17 @@ export function LinearIntegrationForm({ onContinue, onBack, targetProjectId }: L
             true
           );
           if (checkResponse.data.data.exists && checkResponse.data.data.project) {
-            const existingProject = checkResponse.data.data.project;
-            onContinue(existingProject.id);
+            onContinue(checkResponse.data.data.project.id);
             return;
           }
         } catch (lookupError: any) {
-          const message =
+          setErrorMessage(
             lookupError?.response?.data?.error ||
-            lookupError?.message ||
-            'Failed to resolve the existing Linear team after a conflict.';
-          setErrorMessage(message);
+              lookupError?.message ||
+              'Failed to resolve the existing Linear team after a conflict.'
+          );
           setValidationStatus('error');
-          throw new Error(message);
+          return;
         }
       }
       setErrorMessage(e instanceof Error ? e.message : 'Failed to create project');

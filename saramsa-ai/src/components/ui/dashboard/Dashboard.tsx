@@ -40,6 +40,7 @@ import {
   getProviderEmptyCommentsMessage,
   getProviderMissingWorkItemsMessage,
   getProviderProcessTemplate,
+  isWorkProvider,
   type WorkProvider,
 } from '@/lib/providers';
 import { Check, Loader2, Sparkles, AlertCircle, CheckCircle } from 'lucide-react';
@@ -207,15 +208,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     if (!projects || !projects.length) return null;
     const proj = projects.find((p: any) => p.id === projectId);
     const provider = proj?.externalLinks?.[0]?.provider;
-    return provider === 'jira'
-      ? 'jira'
-      : provider === 'asana'
-      ? 'asana'
-      : provider === 'azure'
-      ? 'azure'
-      : provider === 'linear'
-      ? 'linear'
-      : null;
+    return typeof provider === 'string' && isWorkProvider(provider) ? provider : null;
   }, [projects, projectId]);
 
   const hasGeneratedWorkItems = useMemo(

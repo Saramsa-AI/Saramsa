@@ -417,10 +417,18 @@ class ExternalApiService:
         return {
             "Authorization": api_key,
             "Content-Type": "application/json",
+            "Accept": "application/json",
         }
 
+    def _build_linear_team_url(self, url_key: str, team_key: str) -> str:
+        if not team_key:
+            return ""
+        if not url_key:
+            return f"https://linear.app/team/{team_key}"
+        return f"https://linear.app/{url_key}/team/{team_key}"
+
     def test_linear_connection(self, api_key: str) -> Dict[str, Any]:
-        """Test Linear connection by fetching the viewer."""
+        """Test Linear connection by fetching the viewer and the workspace."""
         try:
             if not api_key:
                 return {"success": False, "error": "API key is required"}
@@ -428,7 +436,9 @@ class ExternalApiService:
             response = httpx.post(
                 LINEAR_API_URL,
                 headers=self._linear_headers(api_key),
-                json={"query": "query { viewer { id name email } }"},
+                json={
+                    "query": "query { viewer { id name email } organization { id name urlKey } }"
+                },
                 timeout=15,
             )
 
@@ -437,16 +447,28 @@ class ExternalApiService:
                 if body.get("errors"):
                     error_message = body["errors"][0].get("message", "Unknown Linear error")
                     return {"success": False, "error": error_message}
-                viewer = (body.get("data") or {}).get("viewer") or {}
+                data = body.get("data") or {}
+                viewer = data.get("viewer") or {}
+                organization = data.get("organization") or {}
                 return {
                     "success": True,
                     "message": "Connection successful",
                     "user": viewer.get("name", ""),
                     "user_id": viewer.get("id", ""),
                     "email": viewer.get("email", ""),
+                    "workspace_id": organization.get("id", ""),
+                    "workspace_name": organization.get("name", ""),
+                    "workspace_url_key": organization.get("urlKey", ""),
                 }
             if response.status_code == 401:
                 return {"success": False, "error": "Invalid Linear API key or insufficient permissions"}
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After", "")
+                wait_hint = f" Retry after {retry_after}s." if retry_after else ""
+                return {
+                    "success": False,
+                    "error": f"Linear rate limit exceeded.{wait_hint}",
+                }
             return {
                 "success": False,
                 "error": f"Linear connection failed with status {response.status_code}",
@@ -461,16 +483,27 @@ class ExternalApiService:
             return {"success": False, "error": "An unexpected error occurred"}
 
     def fetch_linear_teams(self, api_key: str) -> List[Dict[str, Any]]:
-        """List Linear teams visible to the supplied API key."""
+        """List Linear teams visible to the supplied API key.
+
+        Includes the workspace urlKey in the same query so each team
+        carries a fully-formed `https://linear.app/<urlKey>/team/<teamKey>`
+        URL (the short form `https://linear.app/team/<teamKey>` 404s).
+        """
         if not api_key:
             raise ValueError("API key is required")
 
         response = httpx.post(
             LINEAR_API_URL,
             headers=self._linear_headers(api_key),
-            json={"query": "query { teams { nodes { id key name description } } }"},
+            json={
+                "query": "query { organization { urlKey } teams { nodes { id key name description } } }"
+            },
             timeout=30,
         )
+        if response.status_code == 429:
+            retry_after = response.headers.get("Retry-After", "")
+            wait_hint = f" Retry after {retry_after}s." if retry_after else ""
+            raise Exception(f"Linear rate limit exceeded.{wait_hint}")
         if response.status_code != 200:
             raise Exception(
                 f"Linear API returned status {response.status_code}: {response.text}"
@@ -480,7 +513,9 @@ class ExternalApiService:
             error_message = body["errors"][0].get("message", "Unknown Linear error")
             raise Exception(f"Linear API error: {error_message}")
 
-        nodes = ((body.get("data") or {}).get("teams") or {}).get("nodes") or []
+        data = body.get("data") or {}
+        url_key = ((data.get("organization") or {}).get("urlKey")) or ""
+        nodes = ((data.get("teams") or {}).get("nodes")) or []
         teams: List[Dict[str, Any]] = []
         for node in nodes:
             team_key = node.get("key", "")
@@ -489,7 +524,7 @@ class ExternalApiService:
                 "key": team_key,
                 "name": node.get("name", ""),
                 "description": node.get("description", ""),
-                "url": f"https://linear.app/team/{team_key}" if team_key else "",
+                "url": self._build_linear_team_url(url_key, team_key),
             })
         return teams
 

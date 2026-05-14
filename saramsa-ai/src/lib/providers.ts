@@ -1,7 +1,18 @@
 import type { LucideIcon } from "lucide-react";
-import { CheckSquare, Cloud, Download, Globe, Triangle } from "lucide-react";
+import { CheckSquare, Cloud, Download, Globe, Layers } from "lucide-react";
 
 export type WorkProvider = "azure" | "jira" | "asana" | "linear";
+
+const providerPlatformKeys: Record<WorkProvider, string> = {
+  azure: "azure_devops",
+  jira: "jira",
+  asana: "asana",
+  linear: "linear",
+};
+
+export function getProviderPlatformKey(provider: WorkProvider): string {
+  return providerPlatformKeys[provider];
+}
 
 type ProviderStatus = "available" | "configured";
 
@@ -190,8 +201,8 @@ export const providerDefinitions: Record<WorkProvider, ProviderDefinition> = {
     label: "Linear",
     shortLabel: "Linear",
     drawerTitle: "Configure Linear Integration",
-    icon: Triangle,
-    projectBadgeIcon: Triangle,
+    icon: Layers,
+    projectBadgeGlyph: "L",
     capabilities: {
       supportsImport: true,
       supportsPush: true,

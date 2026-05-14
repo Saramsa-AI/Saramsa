@@ -352,6 +352,17 @@ def get_external_projects(request):
                 projects = integration_service.get_external_projects(
                     user_id, provider, organization_id=organization_id, domain=domain, email=email, api_token=api_token
                 )
+            elif provider == 'asana':
+                pat_token = request.data.get('pat_token')
+                workspace_gid = request.data.get('workspace_gid')
+                projects = integration_service.get_external_projects(
+                    user_id, provider, organization_id=organization_id, pat_token=pat_token, workspace_gid=workspace_gid
+                )
+            elif provider == 'linear':
+                api_key = request.data.get('api_key')
+                projects = integration_service.get_external_projects(
+                    user_id, provider, organization_id=organization_id, api_key=api_key
+                )
             else:
                 return StandardResponse.validation_error(
                     detail=f'Unsupported provider: {provider}',

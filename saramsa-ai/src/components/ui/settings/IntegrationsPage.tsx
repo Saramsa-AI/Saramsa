@@ -33,7 +33,6 @@ import {
   Folder,
   Users,
   MessageSquare,
-  Triangle,
 } from "lucide-react";
 import { SlackIntegrationForm } from "@/components/ui/settings/SlackIntegrationForm";
 import { DashboardIntegrationModal } from "@/components/ui/dashboard/DashboardIntegrationModal";
@@ -266,7 +265,7 @@ export function IntegrationsPage() {
       case "linear":
         return (
           <div className="w-8 h-8 bg-gradient-to-br from-saramsa-gradient-from to-saramsa-gradient-to rounded-xl flex items-center justify-center shadow-lg">
-            <Triangle className="w-4 h-4 text-white" />
+            <span className="text-white text-sm font-bold">L</span>
           </div>
         );
       default:

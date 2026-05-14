@@ -20,7 +20,6 @@ import {
   AlertCircle,
   ArrowRight,
   Users,
-  Triangle,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -115,7 +114,7 @@ export function ImportProjectModal({ provider, onClose, onSuccess }: ImportProje
         return {
           name: 'Linear',
           color: 'bg-secondary/70 border border-border/60',
-          icon: <Triangle className="w-5 h-5 text-foreground" />,
+          icon: <span className="text-foreground font-bold">L</span>,
           baseUrl: 'https://linear.app'
         };
     }

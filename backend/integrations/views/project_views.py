@@ -90,7 +90,13 @@ class ProjectCreateView(APIView):
                 'asana': 'asana',
                 'linear': 'linear',
             }
-            provider = platform_to_provider.get(platform, 'jira')
+            provider = platform_to_provider.get(platform)
+            if not provider:
+                return StandardResponse.validation_error(
+                    detail=f'Unsupported platform: {platform}',
+                    errors=[{"field": "platform", "message": f"'{platform}' is not a supported platform."}],
+                    instance=request.path,
+                )
             external_url = request.data.get('external_url', '')
             if provider == 'jira':
                 external_key = request.data.get('jira_project_key')

@@ -15,7 +15,6 @@ import {
   Shield,
   ArrowRight,
   ArrowLeft,
-  Triangle,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -316,8 +315,8 @@ export const LinearFormPanel = ({
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3 flex-1">
-                                <div className="flex-shrink-0">
-                                  <Triangle className="w-5 h-5 text-saramsa-brand" />
+                                <div className="flex-shrink-0 w-5 h-5 rounded bg-saramsa-brand text-white flex items-center justify-center">
+                                  <span className="text-xs font-bold">L</span>
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <div className="font-medium text-foreground dark:text-foreground">
