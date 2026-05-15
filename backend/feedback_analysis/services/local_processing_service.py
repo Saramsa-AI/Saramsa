@@ -125,6 +125,7 @@ class LocalProcessingService:
     """
 
     UNMAPPED_WARNING_THRESHOLD = 0.12
+    AUTO_REGENERATE_THRESHOLD = 0.70  # If >70% unmapped (i.e. <30% mapped), auto-regenerate taxonomy
     MAX_EVIDENCE_SAMPLES = 30
     SAMPLES_PER_ASPECT = 5
 
@@ -137,8 +138,14 @@ class LocalProcessingService:
     def process_comments(self, comments: List[str], aspects: List[str],
                          company_name: str = "Company", run_id: str = None,
                          is_cancelled: Optional[Callable[[], bool]] = None,
-                         user_id: Optional[str] = None) -> ProcessingResult:
-        """Run the full pipeline and return a ProcessingResult."""
+                         user_id: Optional[str] = None,
+                         regenerate_callback: Optional[Callable[[List[str]], List[str]]] = None) -> ProcessingResult:
+        """Run the full pipeline and return a ProcessingResult.
+
+        Args:
+            regenerate_callback: Optional callback that takes comments and returns new aspects.
+                Called when unmapped rate is too high (taxonomy mismatch detected).
+        """
         start_time = time.time()
 
         if not comments:
@@ -159,6 +166,33 @@ class LocalProcessingService:
         similarity_results = self.aspect_service.classify_aspects(
             stripped_comments, aspects, run_id, is_cancelled=is_cancelled
         )
+
+        # Step 1b: Check mapping rate and auto-regenerate taxonomy if too low
+        if regenerate_callback is not None:
+            unmapped_count = sum(1 for r in similarity_results if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])
+            unmapped_rate = unmapped_count / max(len(similarity_results), 1)
+            if unmapped_rate > self.AUTO_REGENERATE_THRESHOLD:
+                logger.warning(
+                    f"🔄 AUTO-REGENERATE: {unmapped_rate:.1%} unmapped ({unmapped_count}/{len(similarity_results)}) "
+                    f"exceeds threshold {self.AUTO_REGENERATE_THRESHOLD:.0%}. "
+                    f"Domain mismatch detected. Regenerating taxonomy from comments..."
+                )
+                try:
+                    new_aspects = regenerate_callback(comments)
+                    if new_aspects and len(new_aspects) > 0:
+                        logger.info(f"✅ Generated {len(new_aspects)} new aspects: {new_aspects[:5]}...")
+                        aspects = new_aspects
+                        # Re-run NLI with new aspects
+                        similarity_results = self.aspect_service.classify_aspects(
+                            stripped_comments, aspects, f"{run_id}_regen", is_cancelled=is_cancelled
+                        )
+                        new_unmapped = sum(1 for r in similarity_results if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])
+                        new_rate = new_unmapped / max(len(similarity_results), 1)
+                        logger.info(f"📈 After regeneration: {(1-new_rate):.1%} mapped (was {(1-unmapped_rate):.1%})")
+                    else:
+                        logger.warning("Regenerate callback returned no aspects; keeping original taxonomy.")
+                except Exception as e:
+                    logger.exception(f"Auto-regenerate failed: {e}. Continuing with original taxonomy.")
 
         # Restore original comment text (with brackets) in similarity results for display + LLM narration
         for i, result in enumerate(similarity_results):
@@ -196,8 +230,8 @@ class LocalProcessingService:
             aggregated_stats=aggregated_stats,
             processing_time=processing_time,
             model_info={
-                "aspect_model": self.aspect_service.MODEL_NAME,
-                "sentiment_model": self.sentiment_service.MODEL_NAME,
+                "aspect_model": getattr(self.aspect_service, 'MODEL_NAME', 'ensemble'),
+                "sentiment_model": getattr(self.sentiment_service, 'MODEL_NAME', 'distilbert'),
                 "processing_method": "local_ml_pipeline_aspect_sentiment",
             },
             insights=insights,

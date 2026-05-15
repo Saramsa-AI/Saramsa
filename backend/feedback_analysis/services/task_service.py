@@ -32,20 +32,21 @@ class TaskService:
         self.local_processing_service = None
         self._use_local_pipeline = USE_LOCAL_PIPELINE
     
-    def process_feedback_background(self, comments, company_name, user_id_str, project_id, analysis_id, task_id=None, suggested_aspects=None):
+    def process_feedback_background(self, comments, company_name, user_id_str, project_id, analysis_id, task_id=None, suggested_aspects=None, dimensions=None):
         """
         Process user feedback using either local ML pipeline or LLM-based processing.
-        
+
         The processing method is determined by the USE_LOCAL_PIPELINE environment variable:
         - If True: Uses local ML models (embedding + sentiment) with single GPT synthesis call
         - If False: Uses existing LLM-based chunked processing (backward compatibility)
-        
+
         Args:
             comments: List of comment strings
             company_name: Optional company name
             user_id_str: User ID string
             project_id: Project ID string
             suggested_aspects: Optional list of frozen aspects (if None, will generate)
+            dimensions: Optional list of dimension dicts per comment (structured-dimensions feature)
         """
         logger.info(f"📈 Background task started: feedback analysis for project {project_id}")
         logger.info(f"🔍 Processing method: {'Local ML Pipeline' if USE_LOCAL_PIPELINE else 'LLM-based chunking'}")
@@ -67,7 +68,7 @@ class TaskService:
             if self._use_local_pipeline:
                 health.start_stage("local_pipeline")
                 result = self._process_with_local_pipeline(
-                    comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects
+                    comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects, dimensions
                 )
                 health.end_stage("local_pipeline")
             else:
@@ -108,7 +109,7 @@ class TaskService:
             cache.set(f"analysis_failed:{analysis_id}", True, ttl=86400)
             raise
     
-    def _process_with_local_pipeline(self, comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects=None):
+    def _process_with_local_pipeline(self, comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects=None, dimensions=None):
         """
         Process feedback using the local ML pipeline.
         
@@ -129,13 +130,41 @@ class TaskService:
         
         # 1. Resolve aspect taxonomy (cached → last analysis → GPT suggestion)
         taxonomy, resolved_aspects = self._resolve_taxonomy(comments, project_id, suggested_aspects)
-        
+
         # 2. Process through local ML pipeline
         run_id = str(uuid.uuid4())
         logger.info(f"🚀 Processing {len(comments)} comments through local ML pipeline (run: {run_id})")
 
         # Build cooperative cancellation checker (Windows solo pool ignores SIGTERM)
         is_cancelled = self._build_cancel_checker(analysis_id)
+
+        # Build regenerate callback - called when mapping is too low (domain mismatch)
+        def _regenerate_taxonomy(input_comments):
+            """Generate fresh taxonomy from current comments and save to project."""
+            import asyncio
+            from feedback_analysis.services.aspect_suggestion_service import AspectSuggestionService
+            from feedback_analysis.services.taxonomy_service import get_taxonomy_service
+
+            suggestion_service = AspectSuggestionService()
+            result = asyncio.run(suggestion_service.suggest_aspects(
+                comments=input_comments,
+                company_name=company_name,
+                user_id=user_id_str,
+                project_id=project_id,
+            ))
+            new_aspects = result.get("suggested_aspects", [])
+
+            # Save new taxonomy to project (archives old one)
+            if new_aspects:
+                try:
+                    taxonomy_service = get_taxonomy_service()
+                    taxonomy_service.create_initial_taxonomy(
+                        project_id, new_aspects, source="auto_regenerate"
+                    )
+                    logger.info(f"💾 Saved new taxonomy to project {project_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to save new taxonomy: {e}")
+            return new_aspects
 
         pipeline_result = self.local_processing_service.process_comments(
             comments=comments,
@@ -144,6 +173,7 @@ class TaskService:
             run_id=run_id,
             is_cancelled=is_cancelled,
             user_id=user_id_str,
+            regenerate_callback=_regenerate_taxonomy,
         )
         
         logger.info(f"✅ Local ML pipeline completed in {pipeline_result.processing_time:.2f}s")
@@ -182,6 +212,7 @@ class TaskService:
             'processing_method': 'local_ml_pipeline',
             'model_info': pipeline_result.model_info,
             'processing_time': pipeline_result.processing_time,
+            'dimensions': dimensions if dimensions else [],  # Structured dimensions from CSV
             'insights': pipeline_result.insights,
             'pipeline_work_items': pipeline_result.work_items
         }
@@ -318,7 +349,8 @@ class TaskService:
             'feedback': comments,  # Alternative field name
             'company_name': company_name,
             'comments_count': len(comments),
-            'processing_method': 'llm_chunking'
+            'processing_method': 'llm_chunking',
+            'dimensions': dimensions if dimensions else []  # Store structured dimensions if provided
         }
         
         logger.info(f"🔍 DEBUG: About to save insight_data with keys: {list(insight_data.keys())}")
@@ -815,18 +847,19 @@ def get_task_service():
 
 # Celery task wrapper - this stays at module level for Celery discovery
 @shared_task(name="feedback_analysis.tasks.process_feedback_task")
-def process_feedback_task(comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects=None):
+def process_feedback_task(comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects=None, dimensions=None):
     """
     Celery background task wrapper for feedback processing.
     Delegates to TaskService for actual business logic.
-    
+
     Args:
         comments: List of comment strings
         company_name: Optional company name
         user_id_str: User ID string
         project_id: Project ID string
         suggested_aspects: Optional list of frozen aspects (if None, will generate in background task)
+        dimensions: Optional list of dimension dicts per comment (structured-dimensions feature)
     """
     task_service = get_task_service()
     task_id = getattr(current_task.request, "id", None)
-    return task_service.process_feedback_background(comments, company_name, user_id_str, project_id, analysis_id, task_id, suggested_aspects)
+    return task_service.process_feedback_background(comments, company_name, user_id_str, project_id, analysis_id, task_id, suggested_aspects, dimensions)
