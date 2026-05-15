@@ -272,11 +272,19 @@ class FeedbackFileIngestView(APIView):
             logger.warning("Could not look up company_name for ingest: %s", exc)
 
         analysis_id = str(uuid.uuid4())
+        # Phase 1: Accept force_regenerate flag to override locked taxonomy
+        force_regenerate = str(
+            request.POST.get("force_regenerate")
+            or request.query_params.get("force_regenerate")
+            or ""
+        ).lower() in ("true", "1", "yes")
+
         task_callable = get_process_feedback_task()
         try:
             task = task_callable.delay(
                 comments, company_name, user_id_str, project_id, analysis_id,
-                suggested_aspects=None, dimensions=dimensions if dimensions else []
+                suggested_aspects=None, dimensions=dimensions if dimensions else [],
+                force_regenerate=force_regenerate
             )
         except Exception as exc:
             err_msg = str(exc).lower()

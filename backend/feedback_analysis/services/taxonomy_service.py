@@ -56,8 +56,17 @@ class TaxonomyService:
         suggested_aspects = aspect_result.get("suggested_aspects", [])
         return self.create_initial_taxonomy(project_id, suggested_aspects, source="gpt")
 
-    def create_initial_taxonomy(self, project_id: str, aspects: List[str], source: str = "gpt") -> Dict[str, Any]:
-        """Create initial taxonomy for a project (version 1 or next)."""
+    def create_initial_taxonomy(self, project_id: str, aspects: List[str], source: str = "gpt",
+                                domain: Optional[str] = None, is_locked: bool = False) -> Dict[str, Any]:
+        """Create initial taxonomy for a project (version 1 or next).
+
+        Args:
+            project_id: Project ID
+            aspects: List of aspect labels
+            source: Origin of taxonomy (gpt, auto_regenerate, template, manual)
+            domain: Optional domain name (e.g. "hospitality", "fintech")
+            is_locked: If True, prevents silent auto-regeneration (requires user override)
+        """
         now = datetime.now(timezone.utc).isoformat()
         next_version = max(1, self.taxonomy_repo.get_latest_version(project_id) + 1)
         taxonomy_id = str(uuid.uuid4())
@@ -74,12 +83,16 @@ class TaxonomyService:
                     "key": self._normalize_aspect_key(a),
                     "label": str(a),
                     "synonyms": [],
+                    "usage_count": 0,  # Phase 3: track aspect usage
+                    "last_used_at": None,
                 }
                 for a in aspects
                 if a
             ],
             "source": source,
             "is_pinned": False,
+            "is_locked": is_locked,  # Phase 1: locked taxonomies don't auto-regen
+            "domain": domain or "unknown",  # Phase 1/2: track domain
             "created_at": now,
             "updated_at": now,
             "health_snapshot": {
@@ -96,6 +109,58 @@ class TaxonomyService:
         except Exception as e:
             logger.warning(f"Failed to archive other taxonomies after creation: {e}")
         return created
+
+    def add_aspects_to_taxonomy(self, project_id: str, taxonomy: Dict[str, Any],
+                                 new_aspects: List[str]) -> Dict[str, Any]:
+        """Phase 3: Additive growth - add new aspects to existing taxonomy without replacing."""
+        existing_keys = {a.get("key") for a in taxonomy.get("aspects", []) if isinstance(a, dict)}
+        now = datetime.now(timezone.utc).isoformat()
+
+        added = []
+        for label in new_aspects:
+            key = self._normalize_aspect_key(label)
+            if key in existing_keys:
+                continue
+            added.append({
+                "key": key,
+                "label": str(label),
+                "synonyms": [],
+                "usage_count": 0,
+                "last_used_at": None,
+                "added_at": now,
+            })
+
+        if not added:
+            logger.info(f"No new aspects to add - all {len(new_aspects)} already exist")
+            return taxonomy
+
+        taxonomy["aspects"] = taxonomy.get("aspects", []) + added
+        taxonomy["updated_at"] = now
+        taxonomy["aspect_count"] = len(taxonomy["aspects"])
+        logger.info(f"Added {len(added)} new aspects to taxonomy: {[a['label'] for a in added]}")
+
+        # Update in repository
+        try:
+            self.taxonomy_repo.update(taxonomy.get("id"), project_id, taxonomy)
+        except Exception as e:
+            logger.warning(f"Failed to persist additive taxonomy update: {e}")
+
+        return taxonomy
+
+    def update_aspect_usage(self, project_id: str, taxonomy: Dict[str, Any], used_aspects: List[str]) -> None:
+        """Phase 3: Track which aspects were used in this analysis."""
+        if not taxonomy or not used_aspects:
+            return
+        used_keys = {self._normalize_aspect_key(a) for a in used_aspects}
+        now = datetime.now(timezone.utc).isoformat()
+        for aspect in taxonomy.get("aspects", []):
+            if isinstance(aspect, dict) and aspect.get("key") in used_keys:
+                aspect["usage_count"] = aspect.get("usage_count", 0) + 1
+                aspect["last_used_at"] = now
+        try:
+            self.taxonomy_repo.update(taxonomy.get("id"), project_id, taxonomy)
+        except Exception as e:
+            logger.warning(f"Failed to update aspect usage: {e}")
 
     def mark_taxonomy_degraded(self, project_id: str, taxonomy: Dict[str, Any], metrics: Optional[Dict[str, Any]]) -> None:
         """

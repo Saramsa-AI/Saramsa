@@ -167,32 +167,38 @@ class LocalProcessingService:
             stripped_comments, aspects, run_id, is_cancelled=is_cancelled
         )
 
-        # Step 1b: Check mapping rate and auto-regenerate taxonomy if too low
+        # Step 1b: Check mapping rate and adaptive taxonomy update
+        # Phase 1+3: Locked taxonomies skip regen; partial matches use additive growth
         if regenerate_callback is not None:
             unmapped_count = sum(1 for r in similarity_results if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])
             unmapped_rate = unmapped_count / max(len(similarity_results), 1)
+            mapping_rate = 1 - unmapped_rate
+
             if unmapped_rate > self.AUTO_REGENERATE_THRESHOLD:
                 logger.warning(
-                    f"🔄 AUTO-REGENERATE: {unmapped_rate:.1%} unmapped ({unmapped_count}/{len(similarity_results)}) "
-                    f"exceeds threshold {self.AUTO_REGENERATE_THRESHOLD:.0%}. "
-                    f"Domain mismatch detected. Regenerating taxonomy from comments..."
+                    f"🔄 LOW MAPPING DETECTED: {mapping_rate:.1%} mapped "
+                    f"({len(similarity_results) - unmapped_count}/{len(similarity_results)}). "
+                    f"Attempting adaptive taxonomy update..."
                 )
                 try:
-                    new_aspects = regenerate_callback(comments)
-                    if new_aspects and len(new_aspects) > 0:
-                        logger.info(f"✅ Generated {len(new_aspects)} new aspects: {new_aspects[:5]}...")
+                    new_aspects = regenerate_callback(comments, mapping_rate)
+                    if new_aspects is None:
+                        # Phase 1: Locked taxonomy - don't re-run, just continue
+                        logger.info("🔒 Taxonomy locked; keeping original aspects (will produce limited features).")
+                    elif len(new_aspects) > 0:
+                        logger.info(f"✅ Got {len(new_aspects)} aspects from callback: {new_aspects[:5]}...")
                         aspects = new_aspects
-                        # Re-run NLI with new aspects
+                        # Re-run NLI with updated aspects
                         similarity_results = self.aspect_service.classify_aspects(
                             stripped_comments, aspects, f"{run_id}_regen", is_cancelled=is_cancelled
                         )
                         new_unmapped = sum(1 for r in similarity_results if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])
                         new_rate = new_unmapped / max(len(similarity_results), 1)
-                        logger.info(f"📈 After regeneration: {(1-new_rate):.1%} mapped (was {(1-unmapped_rate):.1%})")
+                        logger.info(f"📈 After taxonomy update: {(1-new_rate):.1%} mapped (was {mapping_rate:.1%})")
                     else:
                         logger.warning("Regenerate callback returned no aspects; keeping original taxonomy.")
                 except Exception as e:
-                    logger.exception(f"Auto-regenerate failed: {e}. Continuing with original taxonomy.")
+                    logger.exception(f"Adaptive taxonomy update failed: {e}. Continuing with original taxonomy.")
 
         # Restore original comment text (with brackets) in similarity results for display + LLM narration
         for i, result in enumerate(similarity_results):
