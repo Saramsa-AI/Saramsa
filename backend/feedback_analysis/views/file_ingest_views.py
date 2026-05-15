@@ -143,20 +143,9 @@ class FeedbackFileIngestView(APIView):
 
                 # Read file into structured format
                 content = upload.read()
-                if ext == ".csv":
-                    df = pd.read_csv(io.BytesIO(content))
-                elif ext == ".xlsx":
-                    df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
-                elif ext == ".xls":
-                    try:
-                        df = pd.read_excel(io.BytesIO(content), engine='xlrd')
-                    except ImportError:
-                        return StandardResponse.validation_error(
-                            detail='.xls files are not supported. Please convert to .xlsx or .csv format.',
-                            errors=[{"field": "file", "message": "Old Excel format (.xls) requires xlrd library"}],
-                            instance=request.path,
-                        )
-                elif ext == ".json":
+
+                # Handle JSON separately (can be plain text or structured)
+                if ext == ".json":
                     # Parse JSON - support both array of objects and object with array
                     json_data = json_lib.loads(content.decode('utf-8'))
                     if isinstance(json_data, dict):
@@ -171,30 +160,76 @@ class FeedbackFileIngestView(APIView):
                             errors=[{"field": "file", "message": "Invalid JSON structure"}],
                             instance=request.path,
                         )
-                    df = pd.DataFrame(json_data)
 
-                csv_data = df.to_dict('records')
-                headers = list(df.columns)
+                    # Check if it's an array of strings (plain text) or array of objects (structured)
+                    if len(json_data) > 0 and isinstance(json_data[0], str):
+                        # Plain text JSON array - treat like TXT file
+                        comments = [line.strip() for line in json_data if line and line.strip()]
+                        dimensions = []
+                        logger.info(f"Plain text JSON processed: {len(comments)} comments")
+                    else:
+                        # Structured JSON - process with column classification
+                        df = pd.DataFrame(json_data)
+                        csv_data = df.to_dict('records')
+                        headers = list(df.columns)
 
-                # Classify columns
-                classification = classify_columns(headers, csv_data)
-                if not classification.get("primary_text"):
-                    return StandardResponse.validation_error(
-                        detail='Could not identify a feedback text column in the file.',
-                        errors=[{"field": "file", "message": "No text column found"}],
-                        instance=request.path,
-                    )
+                        # Classify columns
+                        classification = classify_columns(headers, csv_data)
+                        if not classification.get("primary_text"):
+                            return StandardResponse.validation_error(
+                                detail='Could not identify a feedback text column in the file.',
+                                errors=[{"field": "file", "message": "No text column found"}],
+                                instance=request.path,
+                            )
 
-                # Build structured comments with dimensions
-                structured_comments, seed_values = build_structured_comments(csv_data, classification)
+                        # Build structured comments with dimensions
+                        structured_comments, seed_values = build_structured_comments(csv_data, classification)
 
-                # Extract plain text comments for ML processing
-                comments = [sc['text'] for sc in structured_comments]
+                        # Extract plain text comments for ML processing
+                        comments = [sc['text'] for sc in structured_comments]
 
-                # Extract dimensions for each comment
-                dimensions = [sc['dimensions'] for sc in structured_comments]
+                        # Extract dimensions for each comment
+                        dimensions = [sc['dimensions'] for sc in structured_comments]
 
-                logger.info(f"Structured file ({ext}) processed: {len(comments)} comments, {len(dimensions)} dimension objects")
+                        logger.info(f"Structured JSON processed: {len(comments)} comments, {len(dimensions)} dimension objects")
+                else:
+                    # CSV/Excel files - always structured
+                    if ext == ".csv":
+                        df = pd.read_csv(io.BytesIO(content))
+                    elif ext == ".xlsx":
+                        df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
+                    elif ext == ".xls":
+                        try:
+                            df = pd.read_excel(io.BytesIO(content), engine='xlrd')
+                        except ImportError:
+                            return StandardResponse.validation_error(
+                                detail='.xls files are not supported. Please convert to .xlsx or .csv format.',
+                                errors=[{"field": "file", "message": "Old Excel format (.xls) requires xlrd library"}],
+                                instance=request.path,
+                            )
+
+                    csv_data = df.to_dict('records')
+                    headers = list(df.columns)
+
+                    # Classify columns
+                    classification = classify_columns(headers, csv_data)
+                    if not classification.get("primary_text"):
+                        return StandardResponse.validation_error(
+                            detail='Could not identify a feedback text column in the file.',
+                            errors=[{"field": "file", "message": "No text column found"}],
+                            instance=request.path,
+                        )
+
+                    # Build structured comments with dimensions
+                    structured_comments, seed_values = build_structured_comments(csv_data, classification)
+
+                    # Extract plain text comments for ML processing
+                    comments = [sc['text'] for sc in structured_comments]
+
+                    # Extract dimensions for each comment
+                    dimensions = [sc['dimensions'] for sc in structured_comments]
+
+                    logger.info(f"Structured file ({ext}) processed: {len(comments)} comments, {len(dimensions)} dimension objects")
             else:
                 comments = extract_comments_from_text(upload)
         except ValueError as exc:
