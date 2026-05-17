@@ -32,7 +32,7 @@ def _extract_validation_errors(detail: Any) -> list[dict]:
         errors.append({"message": str(detail)})
     return errors
 
-
+# Added verbose logs
 def handle_service_errors(func: Callable) -> Callable:
     """
     Decorator to handle service layer errors and return standardized responses.
