@@ -241,9 +241,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const analysisProgressUi = useMemo(() => {
     // Only show progress bar when the currently selected task is the one being analyzed
     // i.e. the user is watching a live run, not viewing a historical entry
-    const isViewingActiveRun = selectedAnalysisId?.startsWith('analyzing_');
+    const isViewingActiveRun = !!selectedAnalysisId?.startsWith('analyzing_');
     const isCurrentlyAnalyzing = isViewingActiveRun && (isAnalyzing || analysisStatus === 'pending' || analysisStatus === 'processing');
-    const isGeneratingItems = isGeneratingUserStories;
+    const isGeneratingItems = isViewingActiveRun && isGeneratingUserStories;
 
     // Don't show progress bar for old completed analyses that are just being viewed
     if (!isCurrentlyAnalyzing && !isGeneratingItems) {
@@ -256,20 +256,22 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       case 'processing':
         return { label: 'Processing', width: 'w-2/3', tone: 'bg-orange-500/80', text: 'text-orange-600 dark:text-orange-400' };
       case 'success':
-        if (isGeneratingUserStories) {
+        if (isGeneratingItems) {
           return { label: 'Generating Work Items', width: 'w-3/4', tone: 'bg-orange-600/80', text: 'text-orange-600 dark:text-orange-400' };
         }
-        // Only show completion status briefly after analysis finishes, not for historical views
         if (isViewingActiveRun) {
           return { label: 'Completed', width: 'w-full', tone: 'bg-saramsa-brand/80', text: 'text-saramsa-brand' };
         }
         return null;
       case 'failure':
-        return { label: 'Failed', width: 'w-full', tone: 'bg-red-700/80', text: 'text-red-700 dark:text-red-400' };
+        if (isViewingActiveRun) {
+          return { label: 'Failed', width: 'w-full', tone: 'bg-red-700/80', text: 'text-red-700 dark:text-red-400' };
+        }
+        return null;
       default:
         return null;
     }
-  }, [analysisStatus, isGeneratingUserStories, isAnalyzing]);
+  }, [analysisStatus, isGeneratingUserStories, isAnalyzing, selectedAnalysisId]);
 
   const analysisProgressSteps = useMemo(() => {
     const base = [
@@ -309,7 +311,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
 
     return base;
-  }, [analysisStatus, hasGeneratedWorkItems, isGeneratingUserStories, isAnalyzing]);
+  }, [analysisStatus, hasGeneratedWorkItems, isGeneratingUserStories, isAnalyzing, selectedAnalysisId]);
 
 
   // Handle regeneration of analysis

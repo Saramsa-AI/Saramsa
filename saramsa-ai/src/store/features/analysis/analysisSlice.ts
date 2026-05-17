@@ -559,9 +559,17 @@ const analysisSlice = createSlice({
       state.historyError = null;
       state.selectedAnalysisId = null;
       state.fetchingAnalysisById = false;
+      state.analysisStatus = 'idle';
+      state.isAnalyzing = false;
+      state.taskId = null;
     },
     setSelectedAnalysisId: (state, action: PayloadAction<string | null>) => {
       state.selectedAnalysisId = action.payload;
+      // Reset analysis status when switching to a historical (non-live) task
+      if (!action.payload || !action.payload.startsWith('analyzing_')) {
+        state.analysisStatus = 'idle';
+        state.isAnalyzing = false;
+      }
     },
     prependToHistory: (state, action: PayloadAction<AnalysisHistoryEntry>) => {
       const entry = action.payload;
