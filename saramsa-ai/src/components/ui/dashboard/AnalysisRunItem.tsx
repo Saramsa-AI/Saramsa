@@ -11,12 +11,14 @@ interface AnalysisRunItemProps {
   onClick: () => void;
   onRename: (id: string, name: string) => void;
   onDelete?: (id: string) => Promise<void>;
+  onCancel?: (id: string, taskId: string) => Promise<void>;
   index: number;
   totalCount?: number;
 }
 
-export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, index, totalCount }: AnalysisRunItemProps) {
+export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, onCancel, index, totalCount }: AnalysisRunItemProps) {
   const isPending = entry.status === 'analyzing';
+  const isCancelled = entry.status === 'cancelled';
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -95,15 +97,19 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
       className={`w-full text-left px-3 py-3 rounded-none transition-all duration-200 cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-saramsa-brand/50 ${
         isPending
           ? 'bg-amber-500/10 shadow-sm'
-          : isActive
-            ? 'bg-saramsa-brand/10 shadow-sm'
-            : 'bg-card/60 hover:bg-secondary/60'
+          : isCancelled
+            ? 'bg-muted/40'
+            : isActive
+              ? 'bg-saramsa-brand/10 shadow-sm'
+              : 'bg-card/60 hover:bg-secondary/60'
       }`}
     >
       {/* Name / Date row */}
       <div className="flex items-center gap-2 mb-1">
         {isPending ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500 flex-shrink-0" />
+        ) : isCancelled ? (
+          <span className="w-2 h-2 rounded-full bg-muted-foreground/40 flex-shrink-0" />
         ) : isActive ? (
           <span className="w-2 h-2 rounded-full bg-saramsa-brand animate-pulse flex-shrink-0" />
         ) : (
@@ -129,10 +135,10 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
           </div>
         ) : (
           <>
-            <span className={`text-sm font-medium truncate ${isPending ? 'text-amber-600 dark:text-amber-400' : isActive ? 'text-foreground' : 'text-muted-foreground'}`}>
-              {isPending ? 'Analyzing...' : displayName}
+            <span className={`text-sm font-medium truncate ${isPending ? 'text-amber-600 dark:text-amber-400' : isCancelled ? 'text-muted-foreground/60 line-through' : isActive ? 'text-foreground' : 'text-muted-foreground'}`}>
+              {isPending ? 'Analyzing...' : isCancelled ? (entry.file_name || displayName) : displayName}
             </span>
-            {!isPending && (
+            {!isPending && !isCancelled && (
               <div className="flex items-center gap-0.5 ml-auto opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                 <span
                   role="button"
@@ -159,9 +165,29 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
               </div>
             )}
             {isPending && (
-              <span className="text-[10px] font-medium text-amber-500 ml-auto">In Progress</span>
+              <div className="flex items-center gap-1 ml-auto flex-shrink-0">
+                <span className="text-[10px] font-medium text-amber-500">In Progress</span>
+                {onCancel && entry.task_id && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      await onCancel(entry.id, entry.task_id!);
+                    }}
+                    onKeyDown={e => { if (e.key === 'Enter') onCancel?.(entry.id, entry.task_id!); }}
+                    className="p-0.5 rounded text-muted-foreground hover:text-destructive cursor-pointer"
+                    title="Cancel task"
+                  >
+                    <X className="w-3 h-3" />
+                  </span>
+                )}
+              </div>
             )}
-            {!isPending && isActive && !isEditing && (
+            {isCancelled && (
+              <span className="text-[10px] font-medium text-muted-foreground/60 ml-auto flex-shrink-0">Cancelled</span>
+            )}
+            {!isPending && !isCancelled && isActive && !isEditing && (
               <span className="text-[10px] font-medium text-saramsa-brand ml-auto group-hover:hidden">Viewing</span>
             )}
           </>

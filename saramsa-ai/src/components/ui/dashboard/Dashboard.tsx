@@ -23,6 +23,8 @@ import {
   removeFromHistory,
   renameAnalysisRun,
   deleteAnalysisRun,
+  cancelAnalysisTask,
+  setTaskIdForEntry,
 } from '../../../store/features/analysis/analysisSlice';
 import type { AnalysisHistoryEntry } from '../../../store/features/analysis/analysisSlice';
 import { fetchProjects } from '../../../store/features/projects/projectsSlice';
@@ -935,6 +937,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           comments_count: 0,
           positive_pct: 0,
           status: 'analyzing',
+          file_name: fileName,
         }));
         dispatch(setSelectedAnalysisId(tempId));
 
@@ -1080,6 +1083,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         comments_count: comments.length,
         positive_pct: 0,
         status: 'analyzing',
+        file_name: fileName,
       }));
       dispatch(setSelectedAnalysisId(tempId));
 
@@ -1131,6 +1135,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
 
     dispatch(setAnalysisData(payload));
+
+    if ((result as any)?.taskId) {
+      dispatch(setTaskIdForEntry({ tempId, taskId: (result as any).taskId }));
+    }
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('usage-updated'));
@@ -1612,6 +1620,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
   ];
 
+  const selectedEntry = analysisHistory.find(e => e.id === selectedAnalysisId);
+
   const handleRunSelect = (id: string) => {
     // Clear current data to prevent stale data showing
     if (selectedAnalysisId !== id) {
@@ -1637,6 +1647,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     } catch (err: any) {
       console.error('Failed to delete analysis:', err);
       alert(typeof err === 'string' ? err : 'Failed to delete analysis.');
+    }
+  };
+
+  const handleCancelTask = async (tempId: string, taskId: string) => {
+    try {
+      await dispatch(cancelAnalysisTask({ taskId, tempId })).unwrap();
+    } catch (err: any) {
+      console.error('Failed to cancel task:', err);
     }
   };
 
@@ -1747,6 +1765,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             onSelect={handleRunSelect}
             onRename={handleRunRename}
             onDelete={handleRunDelete}
+            onCancel={handleCancelTask}
             projectName={selectedProjectName}
           />
 
@@ -1799,6 +1818,22 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
               <div id="analysis-results-section" className="space-y-6">
               {/* Analysis Results Section — only show loader when the selected run is the one being analyzed */}
+              {selectedAnalysisId?.startsWith('analyzing_') && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                      <span className="text-sm font-medium text-foreground">
+                        {selectedEntry?.file_name || 'Analyzing feedback...'}
+                      </span>
+                    </div>
+                    <span className="text-xs text-amber-600 dark:text-amber-400">In Progress</span>
+                  </div>
+                  {selectedEntry && selectedEntry.comments_count > 0 && (
+                    <p className="text-xs text-muted-foreground mb-3">{selectedEntry.comments_count} comments</p>
+                  )}
+                </div>
+              )}
               {analysisProgressUi && (
                 <div className="rounded-xl border border-border/60 bg-card/80 p-3 transition-all duration-300">
                   <div className="mb-2 flex items-center justify-between text-xs">
