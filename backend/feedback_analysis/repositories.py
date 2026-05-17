@@ -174,7 +174,7 @@ class AnalysisRepository:
         return _doc_from_analysis(obj) if obj else None
 
     def get_latest_by_project(self, project_id: str) -> Optional[Dict[str, Any]]:
-        obj = Analysis.objects.filter(project_id=str(project_id), type=self.entity_type).order_by("-created_at").first()
+        obj = Analysis.objects.filter(project_id=str(project_id)).order_by("-created_at").first()
         return _doc_from_analysis(obj) if obj else None
 
     def get_latest_personal_by_user(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -182,7 +182,10 @@ class AnalysisRepository:
         return _doc_from_analysis(obj) if obj else None
 
     def get_by_project(self, project_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        qs = Analysis.objects.filter(project_id=str(project_id), type=self.entity_type).order_by("-created_at")[:limit]
+        qs = (
+            Analysis.objects.filter(project_id=str(project_id))
+            .order_by("-created_at")[:limit]
+        )
         return [_doc_from_analysis(row) for row in qs]
 
     def get_recent_by_project(self, project_id: str, limit: int = 20) -> List[Dict[str, Any]]:
