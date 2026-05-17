@@ -239,8 +239,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   }, [activeAnalysisData?.analysisData]);
 
   const analysisProgressUi = useMemo(() => {
-    // Only show progress bar when actively analyzing or generating work items
-    const isCurrentlyAnalyzing = isAnalyzing || analysisStatus === 'pending' || analysisStatus === 'processing';
+    // Only show progress bar when the currently selected task is the one being analyzed
+    // i.e. the user is watching a live run, not viewing a historical entry
+    const isViewingActiveRun = selectedAnalysisId?.startsWith('analyzing_');
+    const isCurrentlyAnalyzing = isViewingActiveRun && (isAnalyzing || analysisStatus === 'pending' || analysisStatus === 'processing');
     const isGeneratingItems = isGeneratingUserStories;
 
     // Don't show progress bar for old completed analyses that are just being viewed
@@ -258,7 +260,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           return { label: 'Generating Work Items', width: 'w-3/4', tone: 'bg-orange-600/80', text: 'text-orange-600 dark:text-orange-400' };
         }
         // Only show completion status briefly after analysis finishes, not for historical views
-        if (isCurrentlyAnalyzing) {
+        if (isViewingActiveRun) {
           return { label: 'Completed', width: 'w-full', tone: 'bg-saramsa-brand/80', text: 'text-saramsa-brand' };
         }
         return null;
@@ -276,6 +278,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       { label: 'Synthesis', status: 'idle' as 'idle' | 'running' | 'success' | 'error' },
       { label: 'Work Items', status: 'idle' as 'idle' | 'running' | 'success' | 'error' },
     ];
+
+    const isViewingActiveRun = selectedAnalysisId?.startsWith('analyzing_');
+    if (!isViewingActiveRun && !isGeneratingUserStories) return base;
 
     if (analysisStatus === 'pending') {
       base[0].status = 'running';
