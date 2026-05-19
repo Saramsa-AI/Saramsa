@@ -11,11 +11,12 @@ interface AnalysisRunListProps {
   onSelect: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete?: (id: string) => Promise<void>;
+  onCancel?: (id: string, taskId: string) => Promise<void>;
   projectName?: string;
 }
 
 export function AnalysisRunList({
-  entries, selectedId, isLoading, onSelect, onRename, onDelete, projectName,
+  entries, selectedId, isLoading, onSelect, onRename, onDelete, onCancel, projectName,
 }: AnalysisRunListProps) {
   return (
     <aside className="w-[280px] flex-shrink-0 h-full flex flex-col bg-card/60 border border-border/60 rounded-none overflow-hidden">
@@ -52,6 +53,7 @@ export function AnalysisRunList({
               onClick={() => onSelect(entry.id)}
               onRename={onRename}
               onDelete={onDelete}
+              onCancel={onCancel}
               index={i}
               totalCount={entries.length}
             />

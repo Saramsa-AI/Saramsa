@@ -23,6 +23,8 @@ import {
   removeFromHistory,
   renameAnalysisRun,
   deleteAnalysisRun,
+  cancelAnalysisTask,
+  setTaskIdForEntry,
 } from '../../../store/features/analysis/analysisSlice';
 import type { AnalysisHistoryEntry } from '../../../store/features/analysis/analysisSlice';
 import { fetchProjects } from '../../../store/features/projects/projectsSlice';
@@ -241,9 +243,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const analysisProgressUi = useMemo(() => {
     // Only show progress bar when the currently selected task is the one being analyzed
     // i.e. the user is watching a live run, not viewing a historical entry
-    const isViewingActiveRun = selectedAnalysisId?.startsWith('analyzing_');
+    const isViewingActiveRun = !!selectedAnalysisId?.startsWith('analyzing_');
     const isCurrentlyAnalyzing = isViewingActiveRun && (isAnalyzing || analysisStatus === 'pending' || analysisStatus === 'processing');
-    const isGeneratingItems = isGeneratingUserStories;
+    const isGeneratingItems = isViewingActiveRun && isGeneratingUserStories;
 
     // Don't show progress bar for old completed analyses that are just being viewed
     if (!isCurrentlyAnalyzing && !isGeneratingItems) {
@@ -256,20 +258,22 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       case 'processing':
         return { label: 'Processing', width: 'w-2/3', tone: 'bg-orange-500/80', text: 'text-orange-600 dark:text-orange-400' };
       case 'success':
-        if (isGeneratingUserStories) {
+        if (isGeneratingItems) {
           return { label: 'Generating Work Items', width: 'w-3/4', tone: 'bg-orange-600/80', text: 'text-orange-600 dark:text-orange-400' };
         }
-        // Only show completion status briefly after analysis finishes, not for historical views
         if (isViewingActiveRun) {
           return { label: 'Completed', width: 'w-full', tone: 'bg-saramsa-brand/80', text: 'text-saramsa-brand' };
         }
         return null;
       case 'failure':
-        return { label: 'Failed', width: 'w-full', tone: 'bg-red-700/80', text: 'text-red-700 dark:text-red-400' };
+        if (isViewingActiveRun) {
+          return { label: 'Failed', width: 'w-full', tone: 'bg-red-700/80', text: 'text-red-700 dark:text-red-400' };
+        }
+        return null;
       default:
         return null;
     }
-  }, [analysisStatus, isGeneratingUserStories, isAnalyzing]);
+  }, [analysisStatus, isGeneratingUserStories, isAnalyzing, selectedAnalysisId]);
 
   const analysisProgressSteps = useMemo(() => {
     const base = [
@@ -309,7 +313,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
 
     return base;
-  }, [analysisStatus, hasGeneratedWorkItems, isGeneratingUserStories, isAnalyzing]);
+  }, [analysisStatus, hasGeneratedWorkItems, isGeneratingUserStories, isAnalyzing, selectedAnalysisId]);
 
 
   // Handle regeneration of analysis
@@ -933,6 +937,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           comments_count: 0,
           positive_pct: 0,
           status: 'analyzing',
+          file_name: fileName,
         }));
         dispatch(setSelectedAnalysisId(tempId));
 
@@ -1078,6 +1083,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         comments_count: comments.length,
         positive_pct: 0,
         status: 'analyzing',
+        file_name: fileName,
       }));
       dispatch(setSelectedAnalysisId(tempId));
 
@@ -1129,6 +1135,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
 
     dispatch(setAnalysisData(payload));
+
+    if ((result as any)?.taskId) {
+      dispatch(setTaskIdForEntry({ tempId, taskId: (result as any).taskId }));
+    }
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('usage-updated'));
@@ -1610,6 +1620,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
   ];
 
+  const selectedEntry = analysisHistory.find(e => e.id === selectedAnalysisId);
+
   const handleRunSelect = (id: string) => {
     // Clear current data to prevent stale data showing
     if (selectedAnalysisId !== id) {
@@ -1635,6 +1647,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     } catch (err: any) {
       console.error('Failed to delete analysis:', err);
       alert(typeof err === 'string' ? err : 'Failed to delete analysis.');
+    }
+  };
+
+  const handleCancelTask = async (tempId: string, taskId: string) => {
+    try {
+      await dispatch(cancelAnalysisTask({ taskId, tempId })).unwrap();
+    } catch (err: any) {
+      console.error('Failed to cancel task:', err);
     }
   };
 
@@ -1745,6 +1765,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             onSelect={handleRunSelect}
             onRename={handleRunRename}
             onDelete={handleRunDelete}
+            onCancel={handleCancelTask}
             projectName={selectedProjectName}
           />
 
@@ -1797,6 +1818,22 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
               <div id="analysis-results-section" className="space-y-6">
               {/* Analysis Results Section — only show loader when the selected run is the one being analyzed */}
+              {selectedAnalysisId?.startsWith('analyzing_') && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                      <span className="text-sm font-medium text-foreground">
+                        {selectedEntry?.file_name || 'Analyzing feedback...'}
+                      </span>
+                    </div>
+                    <span className="text-xs text-amber-600 dark:text-amber-400">In Progress</span>
+                  </div>
+                  {selectedEntry && selectedEntry.comments_count > 0 && (
+                    <p className="text-xs text-muted-foreground mb-3">{selectedEntry.comments_count} comments</p>
+                  )}
+                </div>
+              )}
               {analysisProgressUi && (
                 <div className="rounded-xl border border-border/60 bg-card/80 p-3 transition-all duration-300">
                   <div className="mb-2 flex items-center justify-between text-xs">

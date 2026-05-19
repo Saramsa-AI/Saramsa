@@ -3,6 +3,7 @@ from feedback_analysis.views import (
     AnalyzeCommentsView,
     TaskStatusView,
     TaskListView,
+    TaskCancelView,
     GetUserCommentsView,
     FeedbackFileUploadView,
     FeedbackFileIngestView,
@@ -28,6 +29,7 @@ from work_items.views import (
 urlpatterns = [
     path('analyze/', AnalyzeCommentsView.as_view(), name='insights_analyze'),
     path('task-status/<str:task_id>/', TaskStatusView.as_view(), name='insights_task_status'),
+    path('task-cancel/<str:task_id>/', TaskCancelView.as_view(), name='insights_task_cancel'),
     path('tasks/', TaskListView.as_view(), name='insights_tasks'),
     path('comments/', GetUserCommentsView.as_view(), name='insights_comments'),
     path('upload/', FeedbackFileUploadView.as_view(), name='insights_upload'),

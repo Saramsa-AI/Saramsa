@@ -14,8 +14,10 @@ export interface AnalysisHistoryEntry {
   analysis_date: string;
   comments_count: number;
   positive_pct: number;
-  status: string;
+  status: string;  // 'analyzing' | 'completed' | 'cancelled'
   name?: string;
+  task_id?: string;
+  file_name?: string;
 }
 
 interface AnalysisState {
@@ -91,7 +93,7 @@ export const pollTaskStatus = createAsyncThunk<
   }
 });
 
-async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id: string; analysisData: any }> {
+async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id: string; analysisData: any; taskId: string }> {
   const resolveAnalysis = async (statusResult: any) => {
     const taskResult = statusResult.result;
     if (taskResult?.insight_id) {
@@ -155,7 +157,7 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
                 const s = statusResult.status;
                 if (s === 'SUCCESS' || s === 'PARTIAL') {
                   clearTimeout(timeout);
-                  resolve(await resolveAnalysis(statusResult));
+                  resolve({ ...(await resolveAnalysis(statusResult)), taskId });
                   return;
                 }
                 if (s === 'FAILURE' || s === 'FAILED') {
@@ -181,7 +183,7 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
           const s = statusResult.status;
           if (s === 'SUCCESS' || s === 'PARTIAL') {
             clearInterval(pollInterval);
-            resolve(await resolveAnalysis(statusResult));
+            resolve({ ...(await resolveAnalysis(statusResult)), taskId });
           } else if (s === 'FAILURE' || s === 'FAILED') {
             clearInterval(pollInterval);
             reject(statusResult.error || 'Analysis failed');
@@ -512,6 +514,20 @@ export const deleteAnalysisRun = createAsyncThunk<
   }
 });
 
+// Async thunk for cancelling a running Celery task
+export const cancelAnalysisTask = createAsyncThunk<
+  { taskId: string; tempId: string },
+  { taskId: string; tempId: string },
+  { rejectValue: string }
+>('analysis/cancelAnalysisTask', async ({ taskId, tempId }, { rejectWithValue }) => {
+  try {
+    await apiRequest('post', `/insights/task-cancel/${taskId}/`, undefined, true);
+    return { taskId, tempId };
+  } catch (err: any) {
+    return rejectWithValue(err?.message || 'Failed to cancel task.');
+  }
+});
+
 // Async thunk for renaming an analysis run
 export const renameAnalysisRun = createAsyncThunk<
   { id: string; name: string | null },
@@ -559,9 +575,17 @@ const analysisSlice = createSlice({
       state.historyError = null;
       state.selectedAnalysisId = null;
       state.fetchingAnalysisById = false;
+      state.analysisStatus = 'idle';
+      state.isAnalyzing = false;
+      state.taskId = null;
     },
     setSelectedAnalysisId: (state, action: PayloadAction<string | null>) => {
       state.selectedAnalysisId = action.payload;
+      // Reset analysis status when switching to a historical (non-live) task
+      if (!action.payload || !action.payload.startsWith('analyzing_')) {
+        state.analysisStatus = 'idle';
+        state.isAnalyzing = false;
+      }
     },
     prependToHistory: (state, action: PayloadAction<AnalysisHistoryEntry>) => {
       const entry = action.payload;
@@ -591,6 +615,12 @@ const analysisSlice = createSlice({
       const entry = state.analysisHistory.find(e => e.id === action.payload.id);
       if (entry) {
         entry.name = action.payload.name;
+      }
+    },
+    setTaskIdForEntry: (state, action: PayloadAction<{ tempId: string; taskId: string }>) => {
+      const entry = state.analysisHistory.find(e => e.id === action.payload.tempId);
+      if (entry) {
+        entry.task_id = action.payload.taskId;
       }
     },
     clearError: (state) => {
@@ -804,6 +834,18 @@ const analysisSlice = createSlice({
         if (entry) {
           entry.name = action.payload.name || undefined;
         }
+      })
+      // Cancel analysis task
+      .addCase(cancelAnalysisTask.fulfilled, (state, action) => {
+        const { tempId } = action.payload;
+        const entry = state.analysisHistory.find(e => e.id === tempId);
+        if (entry) {
+          entry.status = 'cancelled';
+        }
+        if (state.selectedAnalysisId === tempId) {
+          state.analysisStatus = 'idle';
+          state.isAnalyzing = false;
+        }
       });
   },
 });
@@ -821,6 +863,7 @@ export const {
   replaceInHistory,
   removeFromHistory,
   renameHistoryEntry,
+  setTaskIdForEntry,
 } = analysisSlice.actions;
 
 export default analysisSlice.reducer; 
