@@ -5,6 +5,7 @@ import { CheckCircle2, RefreshCw, AlertCircle, ChevronRight, MessageSquareQuote 
 import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
 import { CompactSentimentBar } from './CompactSentimentBar';
+import { DimensionBreakdown } from '../DimensionBreakdown';
 
 interface FeatureSentiment {
   name: string;
@@ -31,6 +32,8 @@ interface FeatureSentimentsTableProps {
   onRegenerateAnalysis?: () => void;
   hasEditedFeaturesProp?: boolean;
   hasComments?: boolean;
+  projectId?: string;
+  analysisId?: string;
 }
 
 export const FeatureSentimentsTable = ({
@@ -39,7 +42,9 @@ export const FeatureSentimentsTable = ({
   onFeatureToggle,
   onRegenerateAnalysis,
   hasEditedFeaturesProp,
-  hasComments
+  hasComments,
+  projectId,
+  analysisId
 }: FeatureSentimentsTableProps) => {
   const [expandedFeatures, setExpandedFeatures] = useState<Set<string>>(new Set());
 
@@ -195,6 +200,16 @@ export const FeatureSentimentsTable = ({
                         </span>
                       ))}
                     </div>
+                  )}
+
+                  {/* Dimension Breakdown */}
+                  {projectId && analysisId && (
+                    <DimensionBreakdown
+                      projectId={projectId}
+                      analysisId={analysisId}
+                      featureName={feature.name}
+                      className="mt-3"
+                    />
                   )}
 
                   {/* Evidence Comments — two columns */}
