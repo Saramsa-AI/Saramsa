@@ -74,7 +74,7 @@ class TaskService:
             else:
                 health.start_stage("llm_chunking")
                 result = self._process_with_llm_chunking(
-                    comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects
+                    comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects, dimensions
                 )
                 health.end_stage("llm_chunking")
 
@@ -313,7 +313,7 @@ class TaskService:
 
         return _is_cancelled
 
-    def _process_with_llm_chunking(self, comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects=None):
+    def _process_with_llm_chunking(self, comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects=None, dimensions=None):
         """
         Process feedback using the existing LLM-based chunking approach.
         
