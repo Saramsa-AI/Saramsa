@@ -46,19 +46,17 @@ import {
 
 import type { AnalysisData } from '@/types/analysis';
 import { apiRequest } from '@/lib/apiRequest';
-import { Check, Loader2, Sparkles, AlertCircle, CheckCircle } from 'lucide-react';
+import { Check, Loader2, Sparkles, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { UploadPanel } from './UploadPanel';
 import { SlackChannelPanel } from './SlackChannelPanel';
-import { MetricsCards } from './MetricsCards';
-import { FeatureSentimentsTable } from '../../dashboard/analysisDashboard/FeatureSentimentsTable';
-import { SentimentCharts } from '../../dashboard/analysisDashboard/SentimentCharts';
-import { KeywordCloud } from './KeywordCloud';
-import { AdvancedWordCloud } from './AdvancedWordCloud';
+// MetricsCards, FeatureSentimentsTable, SentimentCharts, KeywordCloud,
+// AdvancedWordCloud, and AlertCircle moved to InsightsPanel.tsx (Phase 3).
 // import { NavigationTabs } from './NavigationTabs'; // Inlined below
 import { UserStoryList } from '../userStoryList';
 
 import { AnalysisRunList } from './AnalysisRunList';
+import { InsightsPanel } from './InsightsPanel';
 // import { DynamicFilterBar } from '../../dashboard/DynamicFilterBar'; // TODO: Re-enable when filters are fully implemented
 
 // Local interface for the component
@@ -262,7 +260,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   // the original behavior since this read was synchronous.
   const projectId = useMemo(
     () => (typeof window !== 'undefined' ? localStorage.getItem('project_id') : null),
-    [projectContext]
+    [projectContext, currentProjectId]
   );
   const selectedProjectName = useMemo(
     () => projects?.find((p: any) => p.id === (currentProjectId || projectId))?.name,
@@ -2049,184 +2047,28 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               </div>
 
               {resultsTab === 'insights' && (
-              <div
-                id="panel-insights"
-                role="tabpanel"
-                aria-labelledby="tab-insights"
-                className={`space-y-6 transition-opacity duration-300 ${isSwitchingAnalysis ? 'opacity-50' : 'opacity-100'}`}
-              >
-              {isTaskViewLoading ? (
-                <div className="bg-card/80 rounded-2xl border border-border/60 p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">
-                        {isSwitchingAnalysis ? 'Loading analysis...' : 'Preparing fresh analysis'}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {isSwitchingAnalysis
-                          ? 'Fetching selected analysis data and rebuilding visualizations.'
-                          : 'Fetching latest run data and rebuilding charts.'}
-                      </p>
-                    </div>
-                    <span className="inline-flex items-center rounded-full border border-orange-400/30 bg-orange-500/10 px-3 py-1 text-xs font-medium text-orange-600 dark:text-orange-400">
-                      {analysisProgressUi?.label || (isSwitchingAnalysis ? 'Loading' : 'Processing')}
-                    </span>
-                  </div>
-                  <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <div className="h-20 rounded-xl border border-border/60 bg-secondary/40 animate-pulse" />
-                    <div className="h-20 rounded-xl border border-border/60 bg-secondary/40 animate-pulse" />
-                    <div className="h-20 rounded-xl border border-border/60 bg-secondary/40 animate-pulse" />
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    <div className="h-4 w-40 rounded bg-secondary/50 animate-pulse" />
-                    <div className="h-36 rounded-xl border border-border/60 bg-secondary/30 animate-pulse" />
-                  </div>
-                </div>
-              ) : !hasAnalysisResults && !isAnalyzing && selectedAnalysisId ? (
-                /* Empty state when no analysis data is available for the selected analysis */
-                <div className="bg-card/80 rounded-2xl border border-border/60 p-8 text-center">
-                  <AlertCircle className="w-12 h-12 text-muted-foreground/50 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-foreground mb-2">
-                    No Analysis Data Available
-                  </h3>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    The selected analysis could not be loaded or contains no data.
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Try selecting a different analysis or upload new feedback data.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {/* Dynamic Dimension Filters */}
-                  {/* TODO: Re-enable when filters are fully implemented */}
-                  {/* {hasAnalysisResults && currentProjectId && (
-                    <DynamicFilterBar
-                      projectId={currentProjectId}
-                      onFiltersChange={setDimensionFilters}
-                      className="mb-4"
-                    />
-                  )} */}
-
-                  {/* Filtered Stats Banner */}
-                  {/* {filteredStats && dimensionFilters.length > 0 && (
-                    <div className="mb-4 p-4 bg-saramsa-brand/10 border border-saramsa-brand/20 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="text-sm font-medium text-saramsa-brand">
-                            Showing {filteredStats.filtered_comments} of {filteredStats.total_comments} comments ({filteredStats.filtered_percentage}%)
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {dimensionFilters.length} filter{dimensionFilters.length === 1 ? '' : 's'} applied
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => setDimensionFilters([])}
-                          className="text-xs text-saramsa-brand hover:underline"
-                        >
-                          Clear filters
-                        </button>
-                      </div>
-                      {filteredStats.note && (
-                        <div className="mt-2 text-xs text-muted-foreground italic">
-                          {filteredStats.note}
-                        </div>
-                      )}
-                    </div>
-                  )} */}
-
-                  {/* Metrics Cards */}
-                  {hasAnalysisResults && <MetricsCards metrics={metrics} />}
-
-                  {/* Feature Sentiments Table */}
-                  {hasAnalysisResults && (
-                    <div className="bg-card/80 rounded-2xl border border-border/60 p-6">
-                        <FeatureSentimentsTable
-                          features={transformedFeatures}
-                          selectedFeatures={selectedFeatures}
-                          onFeatureToggle={(featureName) => {
-                            setSelectedFeatures(prev =>
-                              prev.includes(featureName)
-                                ? prev.filter(name => name !== featureName)
-                                : [...prev, featureName]
-                            );
-                          }}
-                          onRegenerateAnalysis={handleRegenerateAnalysis}
-                          hasEditedFeaturesProp={Object.keys(editedKeywords).length > 0}
-                          hasComments={!!loadedComments && loadedComments.length > 0}
-                          projectId={currentProjectId}
-                          analysisId={latestAnalysis?.analysis_id}
-                        />
-                    </div>
-                  )}
-                </>
+                <InsightsPanel
+                  isSwitchingAnalysis={isSwitchingAnalysis}
+                  isTaskViewLoading={isTaskViewLoading}
+                  analysisProgressUi={analysisProgressUi}
+                  hasAnalysisResults={hasAnalysisResults}
+                  isAnalyzing={isAnalyzing}
+                  selectedAnalysisId={selectedAnalysisId}
+                  metrics={metrics}
+                  transformedFeatures={transformedFeatures}
+                  selectedFeatures={selectedFeatures}
+                  setSelectedFeatures={setSelectedFeatures}
+                  handleRegenerateAnalysis={handleRegenerateAnalysis}
+                  editedKeywords={editedKeywords}
+                  loadedComments={loadedComments}
+                  currentProjectId={currentProjectId}
+                  latestAnalysis={latestAnalysis}
+                  featureSentimentData={featureSentimentData}
+                  sentimentData={sentimentData}
+                  wordCloudView={wordCloudView}
+                  activeAnalysisData={activeAnalysisData}
+                />
               )}
-
-              {hasAnalysisResults && !isTaskViewLoading && (
-              <SentimentCharts
-                featureSentimentData={featureSentimentData}
-                sentimentData={sentimentData}
-                selectedFeatures={selectedFeatures}
-              />
-              )}
-
-              {hasAnalysisResults && !isTaskViewLoading && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-foreground">
-                    Word Cloud Analysis
-                  </h3>
-                </div>
-
-                {wordCloudView === 'split' ? (
-                  <KeywordCloud
-                    positiveKeywords={
-                      activeAnalysisData?.analysisData?.positive_keywords?.map((word: any) =>
-                        typeof word === 'string' ? word : word.keyword || word.text || String(word)
-                      ) || []
-                    }
-                    negativeKeywords={
-                      activeAnalysisData?.analysisData?.negative_keywords?.map((word: any) =>
-                        typeof word === 'string' ? word : word.keyword || word.text || String(word)
-                      ) || []
-                    }
-                  />
-                ) : (
-                  <AdvancedWordCloud
-                    positiveKeywords={
-                      activeAnalysisData?.analysisData?.positive_keywords?.map((word: any) =>
-                        typeof word === 'string' ? word : word.keyword || word.text || String(word)
-                      ) || []
-                    }
-                    negativeKeywords={
-                      activeAnalysisData?.analysisData?.negative_keywords?.map((word: any) =>
-                        typeof word === 'string' ? word : word.keyword || word.text || String(word)
-                      ) || []
-                    }
-                  />
-                )}
-              </div>
-              )}
-
-              {hasAnalysisResults && !isTaskViewLoading && (
-              <div className="text-xs text-muted-foreground/70 text-right">
-                Analysis from {(() => {
-                  const analysisDate = activeAnalysisData?.createdAt;
-                  const deepAnalysisDate = activeAnalysisData?.deepAnalysis?.generated_at;
-                  const timestamp = deepAnalysisDate || analysisDate;
-                  if (timestamp) {
-                    return new Date(timestamp).toLocaleDateString('en-US', {
-                      year: 'numeric', month: 'long', day: 'numeric',
-                      hour: '2-digit', minute: '2-digit'
-                    });
-                  }
-                  return new Date().toLocaleDateString();
-                })()}
-              </div>
-              )}
-              </div>
-              )}
-
               {resultsTab === 'workitems' && (
               <div
                 id="panel-workitems"
