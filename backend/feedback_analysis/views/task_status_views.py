@@ -44,6 +44,15 @@ class TaskStatusView(APIView):
         cache = get_cache_service()
         max_runtime = int(os.getenv("ANALYSIS_TASK_MAX_RUNTIME_SECONDS", "1800"))
         started_at = cache.get(f"task_start:{task_id}")
+
+        # Check if task was manually cancelled
+        cancelled = cache.get(f"task_cancelled:{task_id}") if cache else None
+        if cancelled:
+            return {
+                "task_id": task_id,
+                "status": "CANCELLED",
+                "ready": True,
+            }, True
         pipeline_health = cache.get(f"pipeline_health:{task_id}") if cache else None
         elapsed = None
         if started_at:
@@ -165,6 +174,8 @@ class TaskListView(APIView):
                     return "PARTIAL"
                 if health_status in ("FAILED", "FAILURE"):
                     return "FAILED"
+            if raw == "CANCELLED":
+                return "CANCELLED"
             if raw in ("PENDING", "STARTED"):
                 return "RUNNING"
             if raw == "SUCCESS":
@@ -179,6 +190,21 @@ class TaskListView(APIView):
             if not task_id:
                 continue
             res = AsyncResult(task_id)
+            cancelled = cache.get(f"task_cancelled:{task_id}") if cache else None
+            if cancelled:
+                enriched.append({
+                    "task_id": task_id,
+                    "analysis_id": item.get("analysis_id"),
+                    "project_id": item.get("project_id"),
+                    "file_name": item.get("file_name"),
+                    "started_at": item.get("started_at"),
+                    "status": "CANCELLED",
+                    "ready": True,
+                    "comment_count": item.get("comment_count"),
+                    "duration_seconds": None,
+                    "pipeline_health": None,
+                })
+                continue
             pipeline_health = cache.get(f"pipeline_health:{task_id}") if cache else None
             duration_seconds = None
             if pipeline_health:
@@ -205,3 +231,78 @@ class TaskListView(APIView):
             })
 
         return StandardResponse.success(data={"tasks": enriched})
+
+
+class TaskCancelView(APIView):
+    """Revoke a running Celery task and mark it as cancelled in cache."""
+    permission_classes = [IsAdminOrUser]
+
+    def post(self, request, task_id):
+        """Cancel a running Celery task owned by the requesting user."""
+        user_id = getattr(request.user, "id", None)
+        if not user_id:
+            return StandardResponse.unauthorized(
+                detail="User authentication required.",
+                instance=request.path,
+            )
+
+        cache = get_cache_service()
+        tasks_key = f"tasks:{user_id}"
+        tasks = cache.get(tasks_key, default=[])
+        if not isinstance(tasks, list):
+            tasks = []
+
+        # Verify user owns this task
+        owned = any(t.get("task_id") == task_id for t in tasks)
+        if not owned:
+            return StandardResponse.error(
+                title="Forbidden",
+                detail="You do not have access to this task.",
+                status_code=403,
+                error_type="forbidden",
+                instance=request.path,
+            )
+
+        # Revoke the Celery task
+        try:
+            from apis.infrastructure.celery import celery_app
+            celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+        except Exception as e:
+            logger.warning(f"Failed to revoke Celery task {task_id}: {e}")
+
+        # Mark as cancelled in cache task list
+        updated = []
+        for t in tasks:
+            if t.get("task_id") == task_id:
+                t = dict(t)
+                t["status"] = "CANCELLED"
+                t["cancelled_at"] = datetime.now().isoformat()
+            updated.append(t)
+        cache.set(tasks_key, updated, ttl=86400)
+
+        # Also store a cancel marker so task-status polling returns CANCELLED
+        cache.set(f"task_cancelled:{task_id}", True, ttl=86400)
+
+        # Persist a cancelled stub to the DB so history survives cache expiry
+        task_meta = next((t for t in tasks if t.get("task_id") == task_id), {})
+        analysis_id = task_meta.get("analysis_id")
+        project_id = task_meta.get("project_id")
+        if analysis_id and project_id:
+            try:
+                from apis.infrastructure.storage_service import storage_service
+                storage_service.save_analysis_data({
+                    "id": analysis_id,
+                    "projectId": project_id,
+                    "userId": str(user_id),
+                    "type": "analysis",
+                    "status": "cancelled",
+                    "file_name": task_meta.get("file_name"),
+                    "comment_count": task_meta.get("comment_count"),
+                    "started_at": task_meta.get("started_at"),
+                    "cancelled_at": datetime.now().isoformat(),
+                    "result": {},
+                })
+            except Exception as e:
+                logger.warning(f"Failed to persist cancelled analysis {analysis_id} to DB: {e}")
+
+        return StandardResponse.success(data={"task_id": task_id, "status": "CANCELLED"})

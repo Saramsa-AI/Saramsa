@@ -32,7 +32,7 @@ def _extract_validation_errors(detail: Any) -> list[dict]:
         errors.append({"message": str(detail)})
     return errors
 
-
+# Added verbose logs
 def handle_service_errors(func: Callable) -> Callable:
     """
     Decorator to handle service layer errors and return standardized responses.
@@ -116,18 +116,36 @@ def handle_service_errors(func: Callable) -> Callable:
             except ImportError:
                 pass
 
+            import traceback
             func_name = getattr(func, '__name__', 'unknown_function')
-            logger.error(f"Unexpected error in {func_name}: {e}", exc_info=True)
-            
-            if settings.DEBUG:
-                error_detail = f"{e.__class__.__name__}: {str(e)}"
-            else:
-                error_detail = "An unexpected error occurred. Please try again later."
-            
+
+            # Capture full structured trace for prod debugging
+            tb_str = traceback.format_exc()
+            request = next((a for a in args if hasattr(a, 'method') and hasattr(a, 'path')), None)
+            request_info = {}
+            if request:
+                request_info = {
+                    "method": getattr(request, 'method', None),
+                    "path": getattr(request, 'path', None),
+                    "query_params": dict(getattr(request, 'query_params', {}) or {}),
+                    "user": str(getattr(request, 'user', 'anonymous')),
+                }
+
+            logger.error(
+                "UNHANDLED EXCEPTION in %s | %s: %s | request=%s\n%s",
+                func_name,
+                e.__class__.__name__,
+                str(e),
+                request_info,
+                tb_str,
+            )
+
+            error_detail = f"{e.__class__.__name__}: {str(e)}" if settings.DEBUG else "An unexpected error occurred. Please try again later."
+
             return StandardResponse.internal_server_error(
                 detail=error_detail
             )
-    
+
     return wrapper
 
 
@@ -213,18 +231,35 @@ def handle_async_service_errors(func: Callable) -> Callable:
             except ImportError:
                 pass
 
+            import traceback
             func_name = getattr(func, '__name__', 'unknown_function')
-            logger.error(f"Unexpected error in {func_name}: {e}", exc_info=True)
-            
-            if settings.DEBUG:
-                error_detail = f"{e.__class__.__name__}: {str(e)}"
-            else:
-                error_detail = "An unexpected error occurred. Please try again later."
-            
+
+            tb_str = traceback.format_exc()
+            request = next((a for a in args if hasattr(a, 'method') and hasattr(a, 'path')), None)
+            request_info = {}
+            if request:
+                request_info = {
+                    "method": getattr(request, 'method', None),
+                    "path": getattr(request, 'path', None),
+                    "query_params": dict(getattr(request, 'query_params', {}) or {}),
+                    "user": str(getattr(request, 'user', 'anonymous')),
+                }
+
+            logger.error(
+                "UNHANDLED EXCEPTION in %s | %s: %s | request=%s\n%s",
+                func_name,
+                e.__class__.__name__,
+                str(e),
+                request_info,
+                tb_str,
+            )
+
+            error_detail = f"{e.__class__.__name__}: {str(e)}" if settings.DEBUG else "An unexpected error occurred. Please try again later."
+
             return StandardResponse.internal_server_error(
                 detail=error_detail
             )
-    
+
     return wrapper
 
 

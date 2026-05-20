@@ -409,22 +409,16 @@ class AspectTaxonomyService:
         logger.info(f"Taxonomy '{taxonomy_id}' {action}")
         
         return taxonomy
-        """
-        Validate aspects list for processing pipeline.
-        
-        Args:
-            aspects: List of aspect names to validate
-            
-        Returns:
-            Validation result with status and details
-        """
+
+    def validate_aspects_for_processing(self, aspects):
+        """Validate aspects list for processing pipeline."""
         if not aspects:
             return {
                 "valid": False,
                 "error": "Aspects list cannot be empty",
                 "suggestions": ["Use get_taxonomy_by_domain() to get default aspects"]
             }
-        
+
         if len(aspects) != len(set(aspects)):
             duplicates = [aspect for aspect in aspects if aspects.count(aspect) > 1]
             return {
@@ -432,8 +426,7 @@ class AspectTaxonomyService:
                 "error": f"Duplicate aspects found: {duplicates}",
                 "suggestions": ["Remove duplicate aspects from the list"]
             }
-        
-        # Check for empty or invalid aspect names
+
         invalid_aspects = [aspect for aspect in aspects if not isinstance(aspect, str) or not aspect.strip()]
         if invalid_aspects:
             return {
@@ -441,22 +434,21 @@ class AspectTaxonomyService:
                 "error": f"Invalid aspect names: {invalid_aspects}",
                 "suggestions": ["Ensure all aspects are non-empty strings"]
             }
-        
-        # Check aspect count (reasonable limits)
+
         if len(aspects) > 15:
             return {
                 "valid": False,
                 "error": f"Too many aspects ({len(aspects)}). Maximum recommended: 15",
                 "suggestions": ["Consider grouping related aspects or using broader categories"]
             }
-        
+
         if len(aspects) < 3:
             return {
                 "valid": False,
                 "error": f"Too few aspects ({len(aspects)}). Minimum recommended: 3",
                 "suggestions": ["Add more aspects for better classification granularity"]
             }
-        
+
         return {
             "valid": True,
             "aspect_count": len(aspects),
