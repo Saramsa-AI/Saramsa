@@ -151,3 +151,11 @@ wrapt==1.17.2
 zipp==3.23.0
 bcrypt==4.2.1
 concurrent-log-handler==0.9.25
+# Required by feedback_analysis/views/file_ingest_views.py for CSV / JSON /
+# Excel column classification (structured-dimensions feature). Was previously
+# missing from requirements.txt — present in local venvs but absent from the
+# prod Docker image, breaking every CSV/JSON upload after the structured-
+# dimensions code shipped. openpyxl is the engine for .xlsx; .xls support
+# (xlrd) is left optional since the code already handles ImportError there.
+pandas==2.3.3
+openpyxl==3.1.5
