@@ -227,10 +227,10 @@ class FeedbackFileUploadView(APIView):
 
             # LLM-based column classification: figure out which column is the
             # feedback text vs. which are dimensions (Persona, Plan, Platform,
-            # Feature, Rating, user-labeled sentiment). Each comment then gets
-            # a "[dim: val | dim: val]" prefix so the downstream pipeline can
-            # see the context for free. Feature-area-like column values are
-            # returned separately for taxonomy seeding.
+            # Feature, Rating, user-labeled sentiment). Each comment is structured
+            # as {text, dimensions, enriched_text} so dimensions are preserved
+            # for downstream querying while enriched_text provides context to LLM.
+            # Feature-area-like column values are returned separately for taxonomy seeding.
             headers = list(csv_data[0].keys())
             classification = await sync_to_async(classify_columns, thread_sensitive=True)(headers, csv_data)
             if not classification.get("primary_text"):
@@ -247,7 +247,15 @@ class FeedbackFileUploadView(APIView):
                     instance=request.path,
                 )
 
-            original_comments, seed_values = build_enriched_comments(csv_data, classification)
+            from ..services.column_classifier_service import build_structured_comments
+            structured_comments, seed_values = await sync_to_async(
+                build_structured_comments, thread_sensitive=True
+            )(csv_data, classification)
+
+            # Extract enriched_text for LLM processing (backward compat with existing pipeline)
+            original_comments = [c["enriched_text"] for c in structured_comments]
+            # Extract dimensions for storage
+            comment_dimensions = [c["dimensions"] for c in structured_comments]
             logger.info(
                 f"📊 CSV Upload: classifier={classification.get('source')} "
                 f"primary={classification.get('primary_text')!r} "
@@ -288,6 +296,7 @@ class FeedbackFileUploadView(APIView):
                 original_comments=original_comments,
                 frozen_aspects=frozen_aspects,
                 aspect_suggestions=aspect_suggestions,
+                dimensions=comment_dimensions,
             )
 
         except Exception as e:
@@ -301,7 +310,7 @@ class FeedbackFileUploadView(APIView):
     
     async def _dispatch_to_celery(self, user_id, project_id, project_context,
                                   file_name, file_type, original_comments,
-                                  frozen_aspects, aspect_suggestions):
+                                  frozen_aspects, aspect_suggestions, dimensions=None):
         """Queue the long-running analysis on Celery and return HTTP 202.
 
         Mirrors the contract of POST /api/insights/analyze/. The synchronous
@@ -330,6 +339,7 @@ class FeedbackFileUploadView(APIView):
                 project_id,
                 analysis_id,
                 frozen_aspects,
+                dimensions,
             )
             task_id = result.id
 

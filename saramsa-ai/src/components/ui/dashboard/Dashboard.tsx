@@ -1454,11 +1454,17 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           negative_keywords: input.analysisData.negative_keywords || [],
         },
         deepAnalysis: input.deepAnalysis,
+        // Cache-priming fields for the user-story-creation endpoint. Without
+        // these, devops_service re-runs the GPT narration even though celery
+        // already produced it. Tolerate either nesting (top-level vs inner).
+        narration: input.narration ?? input.analysisData.narration ?? null,
+        work_item_candidates:
+          input.work_item_candidates ?? input.analysisData.work_item_candidates ?? null,
       } as AnalysisData;
-      
+
       return normalized;
     }
-    
+
     // If data is in the old format (has overall, counts, features at top level)
     if (input.overall && input.counts && input.features !== undefined) {
       const toNum = (v: any) => (typeof v === 'number' ? v : Number(v ?? 0));
@@ -1498,8 +1504,11 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           negative_keywords: input.negative_keywords || [],
         },
         deepAnalysis: input.deepAnalysis,
+        // Cache-priming fields for the user-story-creation endpoint (see other branch).
+        narration: input.narration ?? null,
+        work_item_candidates: input.work_item_candidates ?? null,
       } as AnalysisData;
-      
+
       return normalized;
     }
     

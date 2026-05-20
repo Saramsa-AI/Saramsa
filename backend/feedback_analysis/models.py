@@ -19,6 +19,7 @@ class Analysis(TimestampedModel):
     quarter = models.CharField(max_length=32, blank=True, default="", db_index=True)
     result = models.JSONField(default=dict, blank=True)
     comments = models.JSONField(default=list, blank=True)
+    dimensions = models.JSONField(default=list, blank=True)
     payload = models.JSONField(default=dict, blank=True)
 
     class Meta:

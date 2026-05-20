@@ -115,6 +115,10 @@ axiosInstance.interceptors.response.use(
 );
 
 function buildUrl(pathOrUrl: string): string {
+  if (!pathOrUrl) {
+    console.error('buildUrl called with undefined path');
+    return API_BASE;
+  }
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
   const path = pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
   // If caller passed a path beginning with /api/, avoid duplicating /api

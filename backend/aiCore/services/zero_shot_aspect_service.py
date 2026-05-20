@@ -299,6 +299,9 @@ class ZeroShotAspectService:
         aspects: List[str],
         run_id: Optional[str] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
+        company_name: Optional[str] = None,
+        task: Optional[Any] = None,
+        on_progress: Optional[Any] = None,
     ) -> List[Dict[str, Any]]:
         """
         Classify comments against aspects using zero-shot NLI.

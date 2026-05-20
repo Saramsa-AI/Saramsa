@@ -218,11 +218,83 @@ def classify_columns(headers: List[str], rows: List[Dict[str, Any]]) -> Dict[str
     return parsed
 
 
+def build_structured_comments(
+    rows: List[Dict[str, Any]],
+    classification: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Compose structured comments with dimensions and taxonomy-seed values.
+
+    Returns:
+      (structured_comments, seed_values)
+
+      ``structured_comments`` is a list of dicts shaped like::
+
+          {
+            "text": "The 200+ filter screener is genuinely one of the best...",
+            "dimensions": {"persona": "P1-Fundamental Analyst", "plan": "Pro", "platform": "Android"},
+            "enriched_text": "[Persona: P1-Fundamental Analyst | Plan: Pro | ...]\nThe 200+ filter..."
+          }
+
+      ``seed_values`` is the deduplicated list of values from the
+      ``taxonomy_seed_column``, intended for taxonomy bootstrap seeding.
+    """
+    primary = classification.get("primary_text")
+    if not primary:
+        return [], []
+
+    context_cols = classification.get("context") or []
+    seed_col = classification.get("taxonomy_seed_column")
+
+    structured_comments: List[Dict[str, Any]] = []
+    seen_seeds: Dict[str, None] = {}
+
+    for row in rows:
+        text = str(row.get(primary, "") or "").strip()
+        if not text:
+            continue
+
+        # Build dimensions dict from context columns
+        dimensions: Dict[str, Any] = {}
+        enriched_parts: List[str] = []
+
+        if context_cols:
+            for col in context_cols:
+                val = row.get(col)
+                if val is None or str(val).strip() == "":
+                    continue
+                label = _normalize_label(col)
+                # Store in dimensions with normalized key (lowercase, underscored)
+                dim_key = col.lower().replace(" ", "_").replace("-", "_")
+                dimensions[dim_key] = val
+                enriched_parts.append(f"{label}: {val}")
+
+        # Build enriched text with bracket prefix for LLM
+        enriched_text = text
+        if enriched_parts:
+            bracket = "[" + " | ".join(enriched_parts) + "]\n"
+            enriched_text = bracket + text
+
+        structured_comments.append({
+            "text": text,
+            "dimensions": dimensions,
+            "enriched_text": enriched_text
+        })
+
+        if seed_col:
+            sv = row.get(seed_col)
+            if sv is not None:
+                sv_str = str(sv).strip()
+                if sv_str and sv_str not in seen_seeds:
+                    seen_seeds[sv_str] = None
+
+    return structured_comments, list(seen_seeds.keys())
+
+
 def build_enriched_comments(
     rows: List[Dict[str, Any]],
     classification: Dict[str, Any],
 ) -> Tuple[List[str], List[str]]:
-    """Compose the list of comments and the taxonomy-seed values.
+    """Legacy wrapper for backward compatibility. Use build_structured_comments instead.
 
     Returns:
       (comments, seed_values)
@@ -235,40 +307,7 @@ def build_enriched_comments(
       ``seed_values`` is the deduplicated list of values from the
       ``taxonomy_seed_column``, intended for taxonomy bootstrap seeding.
     """
-    primary = classification.get("primary_text")
-    if not primary:
-        return [], []
-
-    context_cols = classification.get("context") or []
-    seed_col = classification.get("taxonomy_seed_column")
-
-    comments: List[str] = []
-    seen_seeds: Dict[str, None] = {}
-
-    for row in rows:
-        text = str(row.get(primary, "") or "").strip()
-        if not text:
-            continue
-
-        if context_cols:
-            parts: List[str] = []
-            for col in context_cols:
-                val = row.get(col)
-                if val is None or str(val).strip() == "":
-                    continue
-                label = _normalize_label(col)
-                parts.append(f"{label}: {val}")
-            if parts:
-                bracket = "[" + " | ".join(parts) + "]\n"
-                text = bracket + text
-
-        comments.append(text)
-
-        if seed_col:
-            sv = row.get(seed_col)
-            if sv is not None:
-                sv_str = str(sv).strip()
-                if sv_str and sv_str not in seen_seeds:
-                    seen_seeds[sv_str] = None
-
-    return comments, list(seen_seeds.keys())
+    structured, seeds = build_structured_comments(rows, classification)
+    # Extract just the enriched_text for legacy callers
+    enriched_texts = [c["enriched_text"] for c in structured]
+    return enriched_texts, seeds

@@ -19,20 +19,15 @@ if (-not (Test-Path $ProfileDir)) {
 $FunctionCode = @"
 
 # Saramsa Service Manager Function
+# No param() block: lets dash-prefixed args (e.g. '-f' for 'saramsa log backend -f')
+# pass through to saramsa.ps1 instead of being intercepted by PowerShell's
+# parameter binder. @args splats all positional args to the script.
 function saramsa {
-    param(
-        [Parameter(Position=0)]
-        [string]`$Command = "",
-
-        [Parameter(Position=1)]
-        [string]`$Arg1 = ""
-    )
-
     `$ScriptPath = '$ScriptPath'
     `$ScriptFile = Join-Path `$ScriptPath "saramsa.ps1"
 
     if (Test-Path `$ScriptFile) {
-        & `$ScriptFile `$Command `$Arg1
+        & `$ScriptFile @args
     } else {
         Write-Host "[ERROR] saramsa.ps1 not found at: `$ScriptFile" -ForegroundColor Red
     }
@@ -48,7 +43,11 @@ if (Test-Path $ProfilePath) {
 if ($ProfileContent -match "function saramsa") {
     Write-Host "[WARNING] 'saramsa' function already exists in profile." -ForegroundColor Yellow
     Write-Host "   Updating to latest version..." -ForegroundColor Yellow
-    $NewContent = $ProfileContent -replace "(?s)# Saramsa Service Manager Function.*?^}", ""
+    # (?ms): single-line so '.' crosses newlines, multi-line so '^}' anchors
+    # the closing brace at the start of a line. Without (?m), the old regex
+    # only matched a '}' at start-of-string and silently failed, causing
+    # repeated reinstalls to stack duplicate functions in the profile.
+    $NewContent = $ProfileContent -replace "(?ms)# Saramsa Service Manager Function.*?^\}", ""
     $NewContent = $NewContent.TrimEnd() + "`n$FunctionCode"
     Set-Content -Path $ProfilePath -Value $NewContent -Encoding UTF8
     Write-Host "[OK] Function updated! Restart PowerShell or run: . `$PROFILE.CurrentUserAllHosts" -ForegroundColor Green
