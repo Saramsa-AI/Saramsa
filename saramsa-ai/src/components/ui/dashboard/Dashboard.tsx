@@ -25,8 +25,16 @@ import {
   deleteAnalysisRun,
   cancelAnalysisTask,
   setTaskIdForEntry,
+  resolveAnalyzingTask,
 } from '../../../store/features/analysis/analysisSlice';
 import type { AnalysisHistoryEntry } from '../../../store/features/analysis/analysisSlice';
+import {
+  ANALYZING_PREFIX,
+  HISTORY_STATUS,
+  isAnalyzingPlaceholder,
+  makeAnalyzingId,
+  extractTaskIdFromPlaceholder,
+} from '@/lib/analysisConstants';
 import { fetchProjects } from '../../../store/features/projects/projectsSlice';
 import { fetchIntegrationAccounts } from '../../../store/features/integrations/integrationsSlice';
 import { 
@@ -140,6 +148,78 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const lastProcessedAnalysisIdRef = useRef<string | null>(null);
   const lastHistoryProjectRef = useRef<string | null>(null);
   const initialSelectionAppliedRef = useRef<string | null>(null);
+  // Track pending setTimeout ids and the in-flight AbortController for the
+  // analysis-switch fetch so we can cancel them on unmount or when the user
+  // switches analyses faster than the network. Without this, react throws
+  // "Can't perform state update on unmounted component" warnings and the
+  // result of an abandoned fetch can overwrite the new selection's data.
+  const pendingTimeoutsRef = useRef<number[]>([]);
+  const analysisFetchAbortRef = useRef<AbortController | null>(null);
+  // Helper: schedule a setTimeout and track its id so the unmount-cleanup
+  // effect can clear it. Mirrors setTimeout's signature so call sites stay
+  // small.
+  const scheduleTimeout = (fn: () => void, ms: number): number => {
+    const id = window.setTimeout(() => {
+      pendingTimeoutsRef.current = pendingTimeoutsRef.current.filter(t => t !== id);
+      fn();
+    }, ms);
+    pendingTimeoutsRef.current.push(id);
+    return id;
+  };
+  // Unmount cleanup: clear any pending timeouts and abort any in-flight
+  // analysis-by-id fetch. Runs once when the component unmounts.
+  useEffect(() => {
+    return () => {
+      for (const id of pendingTimeoutsRef.current) window.clearTimeout(id);
+      pendingTimeoutsRef.current = [];
+      analysisFetchAbortRef.current?.abort();
+      analysisFetchAbortRef.current = null;
+    };
+  }, []);
+
+  // Hydration sweeper: if Redux comes back with a stale `analyzing_*`
+  // placeholder from a previous session (e.g., the user closed the tab
+  // before the task completed and their persistor restored it), reconcile
+  // it against the live task list. If the corresponding task is now in a
+  // terminal state — or doesn't exist at all — dispatch resolveAnalyzingTask
+  // so the loading skeletons release immediately instead of requiring a hard
+  // refresh. Runs once on mount.
+  const hydrationSweptRef = useRef(false);
+  useEffect(() => {
+    if (hydrationSweptRef.current) return;
+    if (!isAnalyzingPlaceholder(selectedAnalysisId)) {
+      hydrationSweptRef.current = true;
+      return;
+    }
+    const taskId = extractTaskIdFromPlaceholder(selectedAnalysisId);
+    if (!taskId) return;
+    hydrationSweptRef.current = true;
+    (async () => {
+      try {
+        const resp = await apiRequest('get', '/insights/tasks/', undefined, true);
+        const list: any[] = resp?.data?.data?.tasks ?? [];
+        const match = list.find(t => t?.task_id === taskId);
+        if (!match || ['SUCCESS', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(match?.status)) {
+          dispatch(resolveAnalyzingTask({
+            taskId,
+            placeholderId: selectedAnalysisId as string,
+            historyStatus: match?.status === 'CANCELLED'
+              ? HISTORY_STATUS.CANCELLED
+              : match?.analysis_id && match?.status !== 'FAILED'
+              ? HISTORY_STATUS.COMPLETED
+              : HISTORY_STATUS.FAILED,
+            insightId: match?.analysis_id ? `insight_${match.analysis_id}` : null,
+            nextTaskStatus: match?.analysis_id && match?.status !== 'FAILED' ? 'success' : 'failure',
+          }));
+        }
+      } catch {
+        // If the task-list endpoint is unreachable, leave state alone — the
+        // user will see the loader briefly and the next normal poll will
+        // reconcile. Better than wrongly clearing on a transient network
+        // hiccup.
+      }
+    })();
+  }, [selectedAnalysisId, dispatch]);
   useEffect(() => {
     const contextProjectId = projectContext?.project_id;
     if (!contextProjectId) return;
@@ -195,7 +275,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       isSwitchingAnalysis ||
       // Only show loading if we're viewing the "analyzing" entry itself
       // Don't block viewing old analyses just because a new one is running in background
-      !!selectedAnalysisId?.startsWith('analyzing_'),
+      isAnalyzingPlaceholder(selectedAnalysisId),
     [fetchingAnalysisById, isSwitchingAnalysis, selectedAnalysisId]
   );
 
@@ -243,7 +323,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const analysisProgressUi = useMemo(() => {
     // Only show progress bar when the currently selected task is the one being analyzed
     // i.e. the user is watching a live run, not viewing a historical entry
-    const isViewingActiveRun = !!selectedAnalysisId?.startsWith('analyzing_');
+    const isViewingActiveRun = isAnalyzingPlaceholder(selectedAnalysisId);
     const isCurrentlyAnalyzing = isViewingActiveRun && (isAnalyzing || analysisStatus === 'pending' || analysisStatus === 'processing');
     const isGeneratingItems = isViewingActiveRun && isGeneratingUserStories;
 
@@ -262,7 +342,15 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           return { label: 'Generating Work Items', width: 'w-3/4', tone: 'bg-orange-600/80', text: 'text-orange-600 dark:text-orange-400' };
         }
         if (isViewingActiveRun) {
-          return { label: 'Completed', width: 'w-full', tone: 'bg-saramsa-brand/80', text: 'text-saramsa-brand' };
+          // Only mark the run "Completed" once the work-items pass has also
+          // finished. The stepper's stage 4 checkmark uses hasGeneratedWorkItems
+          // (per analysisProgressSteps below); without this guard, the right-
+          // side badge can read "Completed" while stage 4 still shows as idle
+          // — exactly the desync screenshot users have reported.
+          if (hasGeneratedWorkItems) {
+            return { label: 'Completed', width: 'w-full', tone: 'bg-saramsa-brand/80', text: 'text-saramsa-brand' };
+          }
+          return { label: 'Synthesizing work items', width: 'w-5/6', tone: 'bg-orange-500/80', text: 'text-orange-600 dark:text-orange-400' };
         }
         return null;
       case 'failure':
@@ -273,7 +361,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       default:
         return null;
     }
-  }, [analysisStatus, isGeneratingUserStories, isAnalyzing, selectedAnalysisId]);
+  }, [analysisStatus, isGeneratingUserStories, isAnalyzing, selectedAnalysisId, hasGeneratedWorkItems]);
 
   const analysisProgressSteps = useMemo(() => {
     const base = [
@@ -283,7 +371,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       { label: 'Work Items', status: 'idle' as 'idle' | 'running' | 'success' | 'error' },
     ];
 
-    const isViewingActiveRun = selectedAnalysisId?.startsWith('analyzing_');
+    const isViewingActiveRun = isAnalyzingPlaceholder(selectedAnalysisId);
     if (!isViewingActiveRun && !isGeneratingUserStories) return base;
 
     if (analysisStatus === 'pending') {
@@ -437,10 +525,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     dispatch(setCurrentProjectUserStories([userStoryFromDeepAnalysis]));
   }, [dispatch, userStoryFromDeepAnalysis, currentProjectUserStories]);
   
-  // Log when analysis data changes
-  useEffect(() => {
-  }, [analysisData, deepAnalysis, loading, error, isAnalyzing, loadedComments]);
-
   // Process latestAnalysis from getConsolidatedDashboardData and set analysisData
   useEffect(() => {
     if (!latestAnalysis) {
@@ -451,7 +535,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
     // CRITICAL: If user is viewing a historical analysis and a new analysis completes,
     // show notification but don't overwrite their current view
-    if (selectedAnalysisId && !selectedAnalysisId.startsWith('analyzing_')) {
+    if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
       // Check if this is a newly completed analysis we haven't notified about
       if (analysisId && lastProcessedAnalysisIdRef.current !== analysisId && latestAnalysis.exists) {
         // Update the sidebar with the new completed analysis
@@ -566,7 +650,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   useEffect(() => {
     // CRITICAL: Don't process latestAnalysis work items if user has selected a specific historical analysis
     // This prevents overwriting the selected analysis's work items with the latest analysis
-    if (selectedAnalysisId && !selectedAnalysisId.startsWith('analyzing_')) {
+    if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
       return;
     }
 
@@ -636,7 +720,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       return;
     }
     // Skip fetch for temporary "analyzing" entries
-    if (selectedAnalysisId.startsWith('analyzing_')) {
+    if (isAnalyzingPlaceholder(selectedAnalysisId)) {
       setIsSwitchingAnalysis(false);
       return;
     }
@@ -653,9 +737,17 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     dispatch(clearCurrentProjectUserStories());
     dispatch(setDeepAnalysis(null));
 
+    // Abort any previous in-flight fetch so a slow earlier selection can't
+    // overwrite the new one. Critical when users click history entries fast.
+    analysisFetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    analysisFetchAbortRef.current = controller;
+
     (async () => {
       try {
         const result = await dispatch(fetchAnalysisById(selectedAnalysisId)).unwrap();
+        // If the user switched again before this resolved, drop the result.
+        if (controller.signal.aborted) return;
         if (result?.exists !== false && result?.analysis) {
           const a = result.analysis;
           if (a.analysisData) {
@@ -671,14 +763,23 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           dispatch(setDeepAnalysis(result.userStories ?? null));
         }
       } catch (error) {
+        if (controller.signal.aborted) return;
         console.error('Failed to load analysis:', error);
         // Clear data on error
         dispatch(setAnalysisData(null));
         dispatch(setDeepAnalysis(null));
       } finally {
-        setIsSwitchingAnalysis(false);
+        if (!controller.signal.aborted) {
+          setIsSwitchingAnalysis(false);
+        }
       }
     })();
+    // Cleanup: if this effect re-runs (user picks a new analysis) abort
+    // the previous fetch's resolve path. The unmount-cleanup effect at the
+    // top does the same for component teardown.
+    return () => {
+      controller.abort();
+    };
   }, [selectedAnalysisId, dispatch]);
 
   // Handle page refresh - fetch consolidated dashboard data for the current project
@@ -738,11 +839,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       dispatch(setDeepAnalysis(analysisData.deepAnalysis));
     }
   }, [analysisData, deepAnalysis, dispatch]);
-
-  // Debug: Monitor deepAnalysis state changes
-  useEffect(() => {
-  }, [deepAnalysis]);
-
 
   // Avoids calling this endpoint for brand new projects without uploads
   useEffect(() => {
@@ -917,7 +1013,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       setTopError(validation.error ?? null);
       return;
     }
-    const tempId = `analyzing_${Date.now()}`;
+    const tempId = makeAnalyzingId(String(Date.now()));
     const fileToSubmit = topFile;
     const fileName = fileToSubmit.name;
     const lowerName = fileName.toLowerCase();
@@ -968,7 +1064,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
       // CRITICAL FIX: Clear any selected historical analysis before starting new one
       // This prevents the new analysis from replacing the old one you were viewing
-      if (selectedAnalysisId && !selectedAnalysisId.startsWith('analyzing_')) {
+      if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
         // User was viewing a historical analysis, clear it before starting new one
         dispatch(clearAnalysisData());
         dispatch(setDeepAnalysis(null));
@@ -1258,8 +1354,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             const formattedProjectId = effectiveProjectId.startsWith('project_') ? effectiveProjectId.replace('project_', '') : effectiveProjectId;
             
             // Add a small delay to ensure the backend has saved the data
-            setTimeout(() => {
-              dispatch(fetchUserStoriesByProject({ 
+            scheduleTimeout(() => {
+              dispatch(fetchUserStoriesByProject({
                 projectId: formattedProjectId,
                 userId: user.id || user.user_id
               }));
@@ -1344,8 +1440,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               const formattedProjectId = effectiveProjectId.startsWith('project_') ? effectiveProjectId.replace('project_', '') : effectiveProjectId;
               
               // Add a small delay to ensure the backend has saved the data
-              setTimeout(() => {
-                dispatch(fetchUserStoriesByProject({ 
+              scheduleTimeout(() => {
+                dispatch(fetchUserStoriesByProject({
                   projectId: formattedProjectId,
                   userId: user.id || user.user_id
                 }));
@@ -1386,8 +1482,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               const formattedProjectId = effectiveProjectId.startsWith('project_') ? effectiveProjectId.replace('project_', '') : effectiveProjectId;
               
               // Add a small delay to ensure the backend has saved the data
-              setTimeout(() => {
-                dispatch(fetchUserStoriesByProject({ 
+              scheduleTimeout(() => {
+                dispatch(fetchUserStoriesByProject({
                   projectId: formattedProjectId,
                   userId: user.id || user.user_id
                 }));
@@ -1415,8 +1511,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         const formattedProjectId = effectiveProjectId.startsWith('project_') ? effectiveProjectId.replace('project_', '') : effectiveProjectId;
         
         // Add a small delay to ensure the backend has saved the data
-        setTimeout(() => {
-          dispatch(fetchUserStoriesByProject({ 
+        scheduleTimeout(() => {
+          dispatch(fetchUserStoriesByProject({
             projectId: formattedProjectId,
             userId: user.id || user.user_id
           }));
@@ -1827,7 +1923,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
               <div id="analysis-results-section" className="space-y-6">
               {/* Analysis Results Section — only show loader when the selected run is the one being analyzed */}
-              {selectedAnalysisId?.startsWith('analyzing_') && (
+              {isAnalyzingPlaceholder(selectedAnalysisId) && (
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
