@@ -119,11 +119,10 @@ class AnalyzeCommentsView(APIView):
             )
 
         project_org_id = (project_doc or {}).get("organizationId") or (project_doc or {}).get("organization_id")
-        # Quota check disabled for local testing
-        # try:
-        #     check_quota(user_id_str, "analysis", organization_id=project_org_id)
-        # except QuotaExceeded as exc:
-        #     return StandardResponse.error(title="Quota exceeded", detail=str(exc), status_code=429, instance=request.path)
+        try:
+            check_quota(user_id_str, "analysis", organization_id=project_org_id)
+        except QuotaExceeded as exc:
+            return StandardResponse.error(title="Quota exceeded", detail=str(exc), status_code=429, instance=request.path)
 
         # Generate idempotency key for analysis
         analysis_id = str(uuid.uuid4())
@@ -228,18 +227,17 @@ class UpdateKeywordsView(APIView):
         }
         project_org_id = (project_doc or {}).get("organizationId") or (project_doc or {}).get("organization_id")
 
-        # Quota check disabled for local testing
-        # try:
-        #     await sync_to_async(check_quota, thread_sensitive=True)(
-        #         user_id_str, "analysis", organization_id=project_org_id
-        #     )
-        # except QuotaExceeded as exc:
-        #     return StandardResponse.error(
-        #         title="Quota exceeded",
-        #         detail=str(exc),
-        #         status_code=429,
-        #         instance=request.path,
-        #     )
+        try:
+            await sync_to_async(check_quota, thread_sensitive=True)(
+                user_id_str, "analysis", organization_id=project_org_id
+            )
+        except QuotaExceeded as exc:
+            return StandardResponse.error(
+                title="Quota exceeded",
+                detail=str(exc),
+                status_code=429,
+                instance=request.path,
+            )
 
         # Get company name from user profile for company-specific prompts
         company_name = None
