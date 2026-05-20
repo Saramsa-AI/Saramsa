@@ -249,8 +249,25 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   // const [dimensionFilters, setDimensionFilters] = useState<any[]>([]); // TODO: Re-enable when filters are fully implemented
   // const [filteredStats, setFilteredStats] = useState<any>(null);
 
-  const projectId = typeof window !== 'undefined' ? localStorage.getItem('project_id') : null;
-  const selectedProjectName = projects?.find((p: any) => p.id === (currentProjectId || projectId))?.name;
+  // Memoize the localStorage-derived projectId and the projects-array lookup
+  // for selectedProjectName. Without memoization, both ran on every render —
+  // the localStorage read is cheap (~1µs) but the projects.find() is a linear
+  // scan that ran on every keystroke / hover / state change. Per the Phase 1
+  // agent audit (CRITICAL #7), this was a measurable hot path.
+  //
+  // Same-tab writes to localStorage 'project_id' originate from this file's
+  // own effect (line 236, triggered by projectContext change), so re-reading
+  // when projectContext changes covers every meaningful update. Cross-tab
+  // writes won't be observed (no 'storage' event subscription) — that matches
+  // the original behavior since this read was synchronous.
+  const projectId = useMemo(
+    () => (typeof window !== 'undefined' ? localStorage.getItem('project_id') : null),
+    [projectContext]
+  );
+  const selectedProjectName = useMemo(
+    () => projects?.find((p: any) => p.id === (currentProjectId || projectId))?.name,
+    [projects, currentProjectId, projectId]
+  );
   const slackAccount = useMemo(() => {
     return integrationAccounts.find((account: any) => account.provider === 'slack' && account.status === 'active');
   }, [integrationAccounts]);
