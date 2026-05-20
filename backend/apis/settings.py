@@ -75,7 +75,14 @@ LOGGING = {
         },
         'api_file': {
             'level': 'DEBUG' if DEBUG else 'INFO',
-            'class': 'logging.handlers.RotatingFileHandler',
+            # ConcurrentRotatingFileHandler uses cross-process file locks so
+            # backend + celery + celery_ops can share the same log files without
+            # racing on rotate (RotatingFileHandler crashes on Windows with
+            # PermissionError [WinError 32] when multiple processes write to it
+            # and one tries to rename during rotation — log records get dropped
+            # silently, causing the "worker went silent for 14 minutes" debugging
+            # nightmare).
+            'class': 'concurrent_log_handler.ConcurrentRotatingFileHandler',
             'filename': BASE_DIR / 'logs' / 'api.log',
             'maxBytes': 10 * 1024 * 1024,  # 10 MB
             'backupCount': 3,
@@ -83,7 +90,14 @@ LOGGING = {
         },
         'celery_file': {
             'level': 'DEBUG' if DEBUG else 'INFO',
-            'class': 'logging.handlers.RotatingFileHandler',
+            # ConcurrentRotatingFileHandler uses cross-process file locks so
+            # backend + celery + celery_ops can share the same log files without
+            # racing on rotate (RotatingFileHandler crashes on Windows with
+            # PermissionError [WinError 32] when multiple processes write to it
+            # and one tries to rename during rotation — log records get dropped
+            # silently, causing the "worker went silent for 14 minutes" debugging
+            # nightmare).
+            'class': 'concurrent_log_handler.ConcurrentRotatingFileHandler',
             'filename': BASE_DIR / 'logs' / 'celery.log',
             'maxBytes': 10 * 1024 * 1024,  # 10 MB
             'backupCount': 3,
@@ -114,6 +128,14 @@ LOGGING = {
         },
         'apis.prompts': {
             'handlers': ['console', 'api_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # Pipeline phase/heartbeat logger — used by both backend (work-item
+        # generation) and celery worker (analysis). Routes to BOTH log files
+        # so timings are visible regardless of which process emits them.
+        'apis.pipeline': {
+            'handlers': ['console', 'api_file', 'celery_file'],
             'level': 'INFO',
             'propagate': False,
         },

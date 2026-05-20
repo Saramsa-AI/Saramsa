@@ -106,9 +106,31 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
       const analysisData = analysisRes.data?.data;
       if (analysisData?.exists && analysisData?.analysis) {
         const analysis = analysisData.analysis;
+        // Default to the inner analysisData (counts/features/etc) so existing
+        // consumers like `activeAnalysisData.analysisData.counts` keep working.
+        const inner = analysis.analysisData ?? analysis.result ?? analysis;
+        // Merge in the top-level cache-priming fields that the
+        // user-story-creation endpoint needs. Without these, devops_service
+        // re-runs the GPT narration on every "generate user stories" click
+        // even though celery already did it.
+        const merged = (typeof inner === 'object' && inner !== null)
+          ? {
+              ...inner,
+              narration: (inner as any).narration ?? analysis.narration,
+              work_item_candidates: (inner as any).work_item_candidates ?? analysis.work_item_candidates,
+            }
+          : inner;
+        // Also expose narration/work_item_candidates at the TOP LEVEL of the
+        // returned object. applyAnalysisResult in Dashboard.tsx dispatches this
+        // verbatim as Redux `state.analysisData`, which is what generateUserStories
+        // POSTs as `analysis_data`. devops_service checks `analysis_data.narration`
+        // at top level — keeping the fields nested inside `analysisData` only
+        // (which is what `merged` does) means the cache check never sees them.
         return {
           id: analysis.id || taskResult.insight_id,
-          analysisData: analysis.analysisData ?? analysis.result ?? analysis
+          analysisData: merged,
+          narration: (analysis as any).narration ?? (inner as any)?.narration ?? null,
+          work_item_candidates: (analysis as any).work_item_candidates ?? (inner as any)?.work_item_candidates ?? null,
         };
       }
       throw new Error('Analysis saved but not found by ID.');
@@ -140,7 +162,7 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
         if (!reader) throw new Error('No stream reader');
         const decoder = new TextDecoder();
         let buffer = '';
-        const timeout = setTimeout(() => { reader.cancel(); reject('Analysis timeout'); }, 900000);
+        const timeout = setTimeout(() => { reader.cancel(); reject('Analysis timeout'); }, 1800000);
 
         const processStream = async () => {
           while (true) {
@@ -193,7 +215,7 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
           reject(error);
         }
       }, 2000);
-      setTimeout(() => { clearInterval(pollInterval); reject('Analysis timeout'); }, 900000);
+      setTimeout(() => { clearInterval(pollInterval); reject('Analysis timeout'); }, 1800000);
     }
   });
 }

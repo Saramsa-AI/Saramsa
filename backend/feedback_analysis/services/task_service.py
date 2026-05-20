@@ -257,7 +257,11 @@ class TaskService:
             'processing_time': pipeline_result.processing_time,
             'dimensions': dimensions if dimensions else [],  # Structured dimensions from CSV
             'insights': pipeline_result.insights,
-            'pipeline_work_items': pipeline_result.work_items
+            'pipeline_work_items': pipeline_result.work_items,
+            # Persist the raw narration + the candidates so the user-story-creation
+            # endpoint can reuse them instead of paying for a second GPT call.
+            'narration': pipeline_result.narration,
+            'work_item_candidates': pipeline_result.work_item_candidates,
         }
         
         # Save using analysis service

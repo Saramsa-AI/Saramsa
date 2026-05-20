@@ -15,6 +15,7 @@ from datetime import datetime
 import os
 from aiCore.services.completion_service import generate_completions
 from apis.infrastructure.cache_service import get_cache_service
+from apis.infrastructure.phase_logger import Heartbeat
 from .usage_service import get_usage_service
 from apis.prompts.narration_prompt import create_narration_prompt
 from .narration_schema_validator import validate_narration_output
@@ -70,7 +71,11 @@ class NarrationService:
         logger.info(f"Narration: expected candidate_ids: {expected_ids}")
         logger.info(f"Narration: prompt length = {len(prompt)} chars, ~{len(prompt)//4} tokens (approx)")
 
-        raw, actual_usage = self._call_generate_completions(prompt, user_id=user_id, project_id=project_id)
+        # Wrap the GPT call in a heartbeat so the 60-90s reasoning wait isn't
+        # invisible. Without this, the log shows "calling GPT" and then nothing
+        # for a minute+, which is indistinguishable from a hang.
+        with Heartbeat("narration_gpt", interval_s=10):
+            raw, actual_usage = self._call_generate_completions(prompt, user_id=user_id, project_id=project_id)
         logger.info(f"Narration: GPT returned {len(raw)} chars. Checking for work_items in response...")
 
         # Debug: check if GPT returned work_items

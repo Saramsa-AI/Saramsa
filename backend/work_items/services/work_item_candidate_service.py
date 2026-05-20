@@ -405,12 +405,26 @@ class WorkItemCandidateService:
         aspect_key = self._normalize_aspect_key(name) if name else None
 
         sentiment = feature.get("sentiment") or {}
-        neg_pct = self._to_ratio(sentiment.get("negative"))
         comment_count = feature.get("comment_count") or feature.get("commentcount") or feature.get("total_mentions") or 0
         try:
             comment_count = int(comment_count)
         except Exception:
             comment_count = 0
+
+        # Calculate negative percentage from sentiment counts
+        # sentiment can be either counts (e.g., {"positive": 12, "negative": 3, "neutral": 5})
+        # or ratios (e.g., {"positive": 0.6, "negative": 0.15, "neutral": 0.25})
+        neg_value = sentiment.get("negative", 0)
+        pos_value = sentiment.get("positive", 0)
+        neu_value = sentiment.get("neutral", 0)
+
+        # If values are counts (sum >> 1), calculate ratio
+        total_sentiment = neg_value + pos_value + neu_value
+        if total_sentiment > 1.5:  # Likely counts, not ratios
+            neg_pct = neg_value / total_sentiment if total_sentiment > 0 else 0.0
+        else:
+            # Already a ratio
+            neg_pct = self._to_ratio(neg_value)
 
         return aspect_key, {
             "neg_pct": neg_pct,

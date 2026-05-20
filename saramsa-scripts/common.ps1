@@ -26,6 +26,87 @@ $CeleryOpsErrLog = Join-Path $RuntimeLogDir ".saramsa-celery-ops.err.log"
 $CeleryOpsBuildLog = Join-Path $RuntimeLogDir ".saramsa-celery-ops.build.log"
 $CeleryOpsBuildErrLog = Join-Path $RuntimeLogDir ".saramsa-celery-ops.build.err.log"
 
+# Django writes its own RotatingFileHandler logs independently of honcho's
+# stdout-pipe capture. The honcho pipe occasionally goes silent on Windows
+# (child stays alive but its stdout stops draining), leaving the .saramsa-*.log
+# stale. These direct files are the reliable source of truth for backend
+# / celery activity, so the log subcommand follows them by default.
+$BackendDjangoLog = Join-Path $BackendDir "logs\api.log"
+$CeleryDjangoLog  = Join-Path $BackendDir "logs\celery.log"
+
+function Watch-MultiLogs {
+    # Live-tail multiple files at once, prefixing each line with its source name.
+    # Sources is an ordered hashtable name -> path (use [ordered]@{} when calling).
+    # Use this to synthesize a combined view that doesn't depend on honcho's
+    # stdout pipe staying alive.
+    param(
+        [Parameter(Mandatory=$true)]$Sources,
+        [int]$InitialTailLines = 20,
+        [int]$PollMs = 250,
+        [switch]$Follow
+    )
+
+    $offsets = @{}
+    $maxNameLen = ($Sources.Keys | Measure-Object -Maximum -Property Length).Maximum
+    if (-not $maxNameLen) { $maxNameLen = 8 }
+
+    foreach ($name in $Sources.Keys) {
+        $path = $Sources[$name]
+        if (Test-Path $path) {
+            # UTF-8 explicit so Next.js's ✓/○ characters and other non-ASCII
+            # don't render as mojibake under the Windows default (cp1252).
+            $tail = Get-Content -Path $path -Tail $InitialTailLines -Encoding UTF8 -ErrorAction SilentlyContinue
+            foreach ($line in $tail) {
+                $tag = ("[{0}]" -f $name).PadRight($maxNameLen + 2)
+                Write-Host ("{0} {1}" -f $tag, $line)
+            }
+            $offsets[$name] = (Get-Item $path).Length
+        } else {
+            $offsets[$name] = 0
+        }
+    }
+
+    if (-not $Follow) { return }
+
+    while ($true) {
+        foreach ($name in $Sources.Keys) {
+            $path = $Sources[$name]
+            if (-not (Test-Path $path)) { continue }
+            $size = (Get-Item $path).Length
+            $offset = [int64]$offsets[$name]
+            if ($size -lt $offset) {
+                # File rotated (RotatingFileHandler) or truncated. Reset.
+                $offset = 0
+            }
+            if ($size -le $offset) { continue }
+
+            $fs = $null
+            $sr = $null
+            $newText = ""
+            try {
+                $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                [void]$fs.Seek($offset, [System.IO.SeekOrigin]::Begin)
+                $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+                $newText = $sr.ReadToEnd()
+                $offsets[$name] = $fs.Position
+            } catch {
+                # Skip this cycle on transient read errors; try again on the next poll.
+                continue
+            } finally {
+                if ($sr) { $sr.Dispose() }
+                if ($fs) { $fs.Dispose() }
+            }
+
+            if ([string]::IsNullOrEmpty($newText)) { continue }
+            $tag = ("[{0}]" -f $name).PadRight($maxNameLen + 2)
+            foreach ($line in ($newText -split "`r?`n")) {
+                if ($line -ne "") { Write-Host ("{0} {1}" -f $tag, $line) }
+            }
+        }
+        Start-Sleep -Milliseconds $PollMs
+    }
+}
+
 $VenvPath = Join-Path $BackendDir "venv"
 $VenvActivate = Join-Path $VenvPath "Scripts\Activate.ps1"
 $UseVenv = (Test-Path $VenvActivate)
@@ -113,10 +194,45 @@ function Get-PortConflictSummary {
     return $conflicts
 }
 
+function Stop-SaramsaCeleryWorkers {
+    # Celery workers don't bind a port, so port-based detection misses them.
+    # Without this, every saramsa kill/start cycle leaves the previous worker
+    # alive — orphan workers keep consuming tasks from Redis on stale code
+    # and (until the OTel connection string is disabled) keep emitting
+    # 'Non-retryable server side error' lines from Azure Monitor.
+    $patterns = @("celery -a apis worker", "celery -a apis beat")
+    $workers = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            if (-not $_.CommandLine) { return $false }
+            $cmd = $_.CommandLine.ToLowerInvariant()
+            foreach ($p in $patterns) { if ($cmd.Contains($p)) { return $true } }
+            return $false
+        } |
+        # Sort children-first so /T tree walks don't fight with deletions
+        Sort-Object @{ Expression = "ParentProcessId"; Descending = $true }, ProcessId
+
+    if (-not $workers -or $workers.Count -eq 0) { return }
+
+    $killed = @{}
+    foreach ($w in $workers) {
+        if ($killed.ContainsKey($w.ProcessId)) { continue }
+        try {
+            $null = & taskkill /T /F /PID $w.ProcessId 2>$null
+            $killed[$w.ProcessId] = $true
+            Write-Host ("[OK] Stopped Celery worker PID " + $w.ProcessId + ".") -ForegroundColor Green
+        } catch {
+            Write-Host ("[ERROR] Failed to stop Celery worker PID " + $w.ProcessId + ": " + $_) -ForegroundColor Red
+        }
+    }
+}
+
 function Stop-SaramsaServices {
     $conflicts = Get-PortConflictSummary
-    if (-not $conflicts -or $conflicts.Count -eq 0) {
-        Write-Host "[OK] No Saramsa services found on ports 8000, 3001, or 9800." -ForegroundColor Green
+    $celery = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains("celery -a apis worker") }
+    if ((-not $conflicts -or $conflicts.Count -eq 0) -and (-not $celery -or $celery.Count -eq 0)) {
+        Write-Host "[OK] No Saramsa services found on ports 8000, 3001, or 9800 (and no Celery workers)." -ForegroundColor Green
+        Stop-SaramsaCeleryWorkers
         return
     }
 
@@ -146,6 +262,7 @@ function Stop-SaramsaServices {
         }
     }
 
+    Stop-SaramsaCeleryWorkers
     Stop-StaleSaramsaHoncho
 }
 

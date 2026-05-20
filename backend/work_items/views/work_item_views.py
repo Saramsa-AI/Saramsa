@@ -47,6 +47,16 @@ class WorkItemGenerationView(APIView):
         from billing.quota import check_quota, record_usage, QuotaExceeded
 
         analysis_data = request.data.get("analysis_data")
+        if isinstance(analysis_data, dict):
+            top_keys = sorted(analysis_data.keys())
+            has_narration = bool(analysis_data.get("narration"))
+            cached_cands = analysis_data.get("work_item_candidates")
+            cached_cands_len = len(cached_cands) if isinstance(cached_cands, list) else 0
+            logger.info(
+                "WorkItemGenerationView: analysis_data has %s top-level keys; narration=%s; work_item_candidates=%s",
+                len(top_keys), has_narration, cached_cands_len,
+            )
+            logger.info("WorkItemGenerationView: analysis_data keys: %s", top_keys)
         process_template = request.data.get("process_template", "Agile")
         incoming_project_id = request.data.get("project_id")
         platform = request.data.get("platform", "azure")

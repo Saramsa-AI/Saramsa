@@ -21,6 +21,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from aiCore.services.aspect_service_factory import get_aspect_service
 from aiCore.services.embedding_service import EmbeddingService
 from aiCore.services.local_sentiment_service import LocalSentimentService, SentimentResult
+from apis.infrastructure.phase_logger import phase, reset_pipeline_summary, emit_pipeline_summary
 from .narration_service import get_narration_service
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,11 @@ class ProcessingResult:
     insights: List[str]
     features: List[Dict[str, Any]]
     work_items: List[Dict[str, Any]]
+    # Persisted so the downstream user-story-creation endpoint can reuse this
+    # GPT output instead of making a second redundant LLM call. Candidates are
+    # kept alongside so candidate_id mapping in _apply_llm_phrasing still matches.
+    narration: Optional[Dict[str, Any]] = None
+    work_item_candidates: Optional[List[Dict[str, Any]]] = None
 
 
 class LocalProcessingService:
@@ -157,15 +163,17 @@ class LocalProcessingService:
             run_id = f"run_{int(time.time())}"
 
         logger.info(f"Processing {len(comments)} comments with {len(aspects)} aspects (run: {run_id})")
+        reset_pipeline_summary()
 
         # Strip bracket metadata before ML processing (20-30% token reduction for NLI + sentiment)
         # The enriched metadata is only useful for LLM narration, not local ML models.
         stripped_comments = [self._strip_bracket_metadata(c) for c in comments]
 
         # Step 1: Aspect classification (NLI or similarity, via factory)
-        similarity_results = self.aspect_service.classify_aspects(
-            stripped_comments, aspects, run_id, is_cancelled=is_cancelled
-        )
+        with phase("aspect_classify_pass1", n_items=len(stripped_comments), n_aspects=len(aspects)):
+            similarity_results = self.aspect_service.classify_aspects(
+                stripped_comments, aspects, run_id, is_cancelled=is_cancelled
+            )
 
         # Step 1b: Check mapping rate and adaptive taxonomy update
         # Phase 1+3: Locked taxonomies skip regen; partial matches use additive growth
@@ -181,7 +189,8 @@ class LocalProcessingService:
                     f"Attempting adaptive taxonomy update..."
                 )
                 try:
-                    new_aspects = regenerate_callback(comments, mapping_rate)
+                    with phase("taxonomy_regen", mapped_pct=f"{mapping_rate:.1%}"):
+                        new_aspects = regenerate_callback(comments, mapping_rate)
                     if new_aspects is None:
                         # Phase 1: Locked taxonomy - don't re-run, just continue
                         logger.info("🔒 Taxonomy locked; keeping original aspects (will produce limited features).")
@@ -189,9 +198,10 @@ class LocalProcessingService:
                         logger.info(f"✅ Got {len(new_aspects)} aspects from callback: {new_aspects[:5]}...")
                         aspects = new_aspects
                         # Re-run NLI with updated aspects
-                        similarity_results = self.aspect_service.classify_aspects(
-                            stripped_comments, aspects, f"{run_id}_regen", is_cancelled=is_cancelled
-                        )
+                        with phase("aspect_classify_pass2", n_items=len(stripped_comments), n_aspects=len(aspects)):
+                            similarity_results = self.aspect_service.classify_aspects(
+                                stripped_comments, aspects, f"{run_id}_regen", is_cancelled=is_cancelled
+                            )
                         new_unmapped = sum(1 for r in similarity_results if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])
                         new_rate = new_unmapped / max(len(similarity_results), 1)
                         logger.info(f"📈 After taxonomy update: {(1-new_rate):.1%} mapped (was {mapping_rate:.1%})")
@@ -206,15 +216,18 @@ class LocalProcessingService:
 
         # Step 2: Aspect-relative sentiment
         # 2a. Get comment-level sentiment for overall counts
-        comment_sentiments = self.sentiment_service.classify_batch(stripped_comments)
+        with phase("sentiment_comment_level", n_items=len(stripped_comments)):
+            comment_sentiments = self.sentiment_service.classify_batch(stripped_comments)
 
         # 2b. Compute aspect-relative sentiment (sentence-level, uses stripped text internally)
-        combined_matches = self._compute_aspect_relative_sentiment(
-            similarity_results, comment_sentiments, aspects, stripped_comments
-        )
+        with phase("sentiment_aspect_relative", n_items=len(similarity_results)):
+            combined_matches = self._compute_aspect_relative_sentiment(
+                similarity_results, comment_sentiments, aspects, stripped_comments
+            )
 
         # Step 3: aggregate + keywords (now uses per-aspect sentiment)
-        aggregated_stats = self._aggregate_results(combined_matches, aspects)
+        with phase("aggregate_stats", n_aspects=len(aspects)):
+            aggregated_stats = self._aggregate_results(combined_matches, aspects)
 
         if aggregated_stats.unmapped_percentage > self.UNMAPPED_WARNING_THRESHOLD:
             logger.warning(
@@ -224,12 +237,14 @@ class LocalProcessingService:
             )
 
         # Step 4: Unified narration (single GPT entrypoint)
-        insights, features, work_items = self._narrate_with_service(
-            combined_matches, aggregated_stats, aspects, company_name, user_id=user_id
-        )
+        with phase("narrate", n_aspects=len(aspects)):
+            insights, features, work_items, narratives, candidates = self._narrate_with_service(
+                combined_matches, aggregated_stats, aspects, company_name, user_id=user_id
+            )
 
         processing_time = time.time() - start_time
         logger.info(f"Pipeline completed in {processing_time:.2f}s")
+        emit_pipeline_summary(label=f"run={run_id} n_comments={len(comments)}")
 
         return ProcessingResult(
             matches=combined_matches,
@@ -243,6 +258,8 @@ class LocalProcessingService:
             insights=insights,
             features=features,
             work_items=work_items,
+            narration=narratives,
+            work_item_candidates=candidates,
         )
 
     # ------------------------------------------------------------------
@@ -673,7 +690,13 @@ class LocalProcessingService:
                 }),
             })
 
-        return narratives.get("insights", []), features_out, narratives.get("work_items", [])
+        return (
+            narratives.get("insights", []),
+            features_out,
+            narratives.get("work_items", []),
+            narratives,
+            candidates,
+        )
 
     @staticmethod
     def _sample_comments_for_narration(

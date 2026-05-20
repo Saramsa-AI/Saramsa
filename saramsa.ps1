@@ -2,11 +2,11 @@
 # Usage: saramsa start | saramsa kill | saramsa help
 # Delegates to saramsa-scripts/start-procfile.ps1, kill.ps1, help.ps1
 
-param(
-    [Parameter(Position=0)][string]$Command = "",
-    [Parameter(Position=1)][string]$Arg1 = "",
-    [Parameter(Position=2)][string]$Arg2 = ""
-)
+# Read args via $args (not param()) so dash-prefixed tokens like '-f' don't
+# get intercepted by PowerShell's parameter binder before reaching subcommands.
+$Command = if ($args.Count -gt 0) { [string]$args[0] } else { "" }
+$Arg1    = if ($args.Count -gt 1) { [string]$args[1] } else { "" }
+$Arg2    = if ($args.Count -gt 2) { [string]$args[2] } else { "" }
 
 $ErrorActionPreference = "Stop"
 
