@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch, RootState } from '@/store/store';
-import { encryptProjectId } from '@/lib/encryption';
+// encryptProjectId moved to WorkItemsPanel.tsx (Phase 2).
 import {
   analyzeComments,
   ingestFile,
@@ -25,8 +25,16 @@ import {
   deleteAnalysisRun,
   cancelAnalysisTask,
   setTaskIdForEntry,
+  resolveAnalyzingTask,
 } from '../../../store/features/analysis/analysisSlice';
 import type { AnalysisHistoryEntry } from '../../../store/features/analysis/analysisSlice';
+import {
+  ANALYZING_PREFIX,
+  HISTORY_STATUS,
+  isAnalyzingPlaceholder,
+  makeAnalyzingId,
+  extractTaskIdFromPlaceholder,
+} from '@/lib/analysisConstants';
 import { fetchProjects } from '../../../store/features/projects/projectsSlice';
 import { fetchIntegrationAccounts } from '../../../store/features/integrations/integrationsSlice';
 import { 
@@ -38,19 +46,18 @@ import {
 
 import type { AnalysisData } from '@/types/analysis';
 import { apiRequest } from '@/lib/apiRequest';
-import { Check, Loader2, Sparkles, AlertCircle, CheckCircle } from 'lucide-react';
+import { Check, Loader2, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { UploadPanel } from './UploadPanel';
 import { SlackChannelPanel } from './SlackChannelPanel';
-import { MetricsCards } from './MetricsCards';
-import { FeatureSentimentsTable } from '../../dashboard/analysisDashboard/FeatureSentimentsTable';
-import { SentimentCharts } from '../../dashboard/analysisDashboard/SentimentCharts';
-import { KeywordCloud } from './KeywordCloud';
-import { AdvancedWordCloud } from './AdvancedWordCloud';
+// MetricsCards, FeatureSentimentsTable, SentimentCharts, KeywordCloud,
+// AdvancedWordCloud, AlertCircle moved to InsightsPanel.tsx (Phase 3).
+// UserStoryList, encryptProjectId, Sparkles moved to WorkItemsPanel.tsx (Phase 2).
 // import { NavigationTabs } from './NavigationTabs'; // Inlined below
-import { UserStoryList } from '../userStoryList';
 
 import { AnalysisRunList } from './AnalysisRunList';
+import { InsightsPanel } from './InsightsPanel';
+import { WorkItemsPanel } from './WorkItemsPanel';
 // import { DynamicFilterBar } from '../../dashboard/DynamicFilterBar'; // TODO: Re-enable when filters are fully implemented
 
 // Local interface for the component
@@ -140,6 +147,78 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const lastProcessedAnalysisIdRef = useRef<string | null>(null);
   const lastHistoryProjectRef = useRef<string | null>(null);
   const initialSelectionAppliedRef = useRef<string | null>(null);
+  // Track pending setTimeout ids and the in-flight AbortController for the
+  // analysis-switch fetch so we can cancel them on unmount or when the user
+  // switches analyses faster than the network. Without this, react throws
+  // "Can't perform state update on unmounted component" warnings and the
+  // result of an abandoned fetch can overwrite the new selection's data.
+  const pendingTimeoutsRef = useRef<number[]>([]);
+  const analysisFetchAbortRef = useRef<AbortController | null>(null);
+  // Helper: schedule a setTimeout and track its id so the unmount-cleanup
+  // effect can clear it. Mirrors setTimeout's signature so call sites stay
+  // small.
+  const scheduleTimeout = (fn: () => void, ms: number): number => {
+    const id = window.setTimeout(() => {
+      pendingTimeoutsRef.current = pendingTimeoutsRef.current.filter(t => t !== id);
+      fn();
+    }, ms);
+    pendingTimeoutsRef.current.push(id);
+    return id;
+  };
+  // Unmount cleanup: clear any pending timeouts and abort any in-flight
+  // analysis-by-id fetch. Runs once when the component unmounts.
+  useEffect(() => {
+    return () => {
+      for (const id of pendingTimeoutsRef.current) window.clearTimeout(id);
+      pendingTimeoutsRef.current = [];
+      analysisFetchAbortRef.current?.abort();
+      analysisFetchAbortRef.current = null;
+    };
+  }, []);
+
+  // Hydration sweeper: if Redux comes back with a stale `analyzing_*`
+  // placeholder from a previous session (e.g., the user closed the tab
+  // before the task completed and their persistor restored it), reconcile
+  // it against the live task list. If the corresponding task is now in a
+  // terminal state — or doesn't exist at all — dispatch resolveAnalyzingTask
+  // so the loading skeletons release immediately instead of requiring a hard
+  // refresh. Runs once on mount.
+  const hydrationSweptRef = useRef(false);
+  useEffect(() => {
+    if (hydrationSweptRef.current) return;
+    if (!isAnalyzingPlaceholder(selectedAnalysisId)) {
+      hydrationSweptRef.current = true;
+      return;
+    }
+    const taskId = extractTaskIdFromPlaceholder(selectedAnalysisId);
+    if (!taskId) return;
+    hydrationSweptRef.current = true;
+    (async () => {
+      try {
+        const resp = await apiRequest('get', '/insights/tasks/', undefined, true);
+        const list: any[] = resp?.data?.data?.tasks ?? [];
+        const match = list.find(t => t?.task_id === taskId);
+        if (!match || ['SUCCESS', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(match?.status)) {
+          dispatch(resolveAnalyzingTask({
+            taskId,
+            placeholderId: selectedAnalysisId as string,
+            historyStatus: match?.status === 'CANCELLED'
+              ? HISTORY_STATUS.CANCELLED
+              : match?.analysis_id && match?.status !== 'FAILED'
+              ? HISTORY_STATUS.COMPLETED
+              : HISTORY_STATUS.FAILED,
+            insightId: match?.analysis_id ? `insight_${match.analysis_id}` : null,
+            nextTaskStatus: match?.analysis_id && match?.status !== 'FAILED' ? 'success' : 'failure',
+          }));
+        }
+      } catch {
+        // If the task-list endpoint is unreachable, leave state alone — the
+        // user will see the loader briefly and the next normal poll will
+        // reconcile. Better than wrongly clearing on a transient network
+        // hiccup.
+      }
+    })();
+  }, [selectedAnalysisId, dispatch]);
   useEffect(() => {
     const contextProjectId = projectContext?.project_id;
     if (!contextProjectId) return;
@@ -169,8 +248,25 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   // const [dimensionFilters, setDimensionFilters] = useState<any[]>([]); // TODO: Re-enable when filters are fully implemented
   // const [filteredStats, setFilteredStats] = useState<any>(null);
 
-  const projectId = typeof window !== 'undefined' ? localStorage.getItem('project_id') : null;
-  const selectedProjectName = projects?.find((p: any) => p.id === (currentProjectId || projectId))?.name;
+  // Memoize the localStorage-derived projectId and the projects-array lookup
+  // for selectedProjectName. Without memoization, both ran on every render —
+  // the localStorage read is cheap (~1µs) but the projects.find() is a linear
+  // scan that ran on every keystroke / hover / state change. Per the Phase 1
+  // agent audit (CRITICAL #7), this was a measurable hot path.
+  //
+  // Same-tab writes to localStorage 'project_id' originate from this file's
+  // own effect (line 236, triggered by projectContext change), so re-reading
+  // when projectContext changes covers every meaningful update. Cross-tab
+  // writes won't be observed (no 'storage' event subscription) — that matches
+  // the original behavior since this read was synchronous.
+  const projectId = useMemo(
+    () => (typeof window !== 'undefined' ? localStorage.getItem('project_id') : null),
+    [projectContext, currentProjectId]
+  );
+  const selectedProjectName = useMemo(
+    () => projects?.find((p: any) => p.id === (currentProjectId || projectId))?.name,
+    [projects, currentProjectId, projectId]
+  );
   const slackAccount = useMemo(() => {
     return integrationAccounts.find((account: any) => account.provider === 'slack' && account.status === 'active');
   }, [integrationAccounts]);
@@ -195,7 +291,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       isSwitchingAnalysis ||
       // Only show loading if we're viewing the "analyzing" entry itself
       // Don't block viewing old analyses just because a new one is running in background
-      !!selectedAnalysisId?.startsWith('analyzing_'),
+      isAnalyzingPlaceholder(selectedAnalysisId),
     [fetchingAnalysisById, isSwitchingAnalysis, selectedAnalysisId]
   );
 
@@ -243,7 +339,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const analysisProgressUi = useMemo(() => {
     // Only show progress bar when the currently selected task is the one being analyzed
     // i.e. the user is watching a live run, not viewing a historical entry
-    const isViewingActiveRun = !!selectedAnalysisId?.startsWith('analyzing_');
+    const isViewingActiveRun = isAnalyzingPlaceholder(selectedAnalysisId);
     const isCurrentlyAnalyzing = isViewingActiveRun && (isAnalyzing || analysisStatus === 'pending' || analysisStatus === 'processing');
     const isGeneratingItems = isViewingActiveRun && isGeneratingUserStories;
 
@@ -262,7 +358,15 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           return { label: 'Generating Work Items', width: 'w-3/4', tone: 'bg-orange-600/80', text: 'text-orange-600 dark:text-orange-400' };
         }
         if (isViewingActiveRun) {
-          return { label: 'Completed', width: 'w-full', tone: 'bg-saramsa-brand/80', text: 'text-saramsa-brand' };
+          // Only mark the run "Completed" once the work-items pass has also
+          // finished. The stepper's stage 4 checkmark uses hasGeneratedWorkItems
+          // (per analysisProgressSteps below); without this guard, the right-
+          // side badge can read "Completed" while stage 4 still shows as idle
+          // — exactly the desync screenshot users have reported.
+          if (hasGeneratedWorkItems) {
+            return { label: 'Completed', width: 'w-full', tone: 'bg-saramsa-brand/80', text: 'text-saramsa-brand' };
+          }
+          return { label: 'Synthesizing work items', width: 'w-5/6', tone: 'bg-orange-500/80', text: 'text-orange-600 dark:text-orange-400' };
         }
         return null;
       case 'failure':
@@ -273,7 +377,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       default:
         return null;
     }
-  }, [analysisStatus, isGeneratingUserStories, isAnalyzing, selectedAnalysisId]);
+  }, [analysisStatus, isGeneratingUserStories, isAnalyzing, selectedAnalysisId, hasGeneratedWorkItems]);
 
   const analysisProgressSteps = useMemo(() => {
     const base = [
@@ -283,7 +387,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       { label: 'Work Items', status: 'idle' as 'idle' | 'running' | 'success' | 'error' },
     ];
 
-    const isViewingActiveRun = selectedAnalysisId?.startsWith('analyzing_');
+    const isViewingActiveRun = isAnalyzingPlaceholder(selectedAnalysisId);
     if (!isViewingActiveRun && !isGeneratingUserStories) return base;
 
     if (analysisStatus === 'pending') {
@@ -437,10 +541,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     dispatch(setCurrentProjectUserStories([userStoryFromDeepAnalysis]));
   }, [dispatch, userStoryFromDeepAnalysis, currentProjectUserStories]);
   
-  // Log when analysis data changes
-  useEffect(() => {
-  }, [analysisData, deepAnalysis, loading, error, isAnalyzing, loadedComments]);
-
   // Process latestAnalysis from getConsolidatedDashboardData and set analysisData
   useEffect(() => {
     if (!latestAnalysis) {
@@ -451,7 +551,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
     // CRITICAL: If user is viewing a historical analysis and a new analysis completes,
     // show notification but don't overwrite their current view
-    if (selectedAnalysisId && !selectedAnalysisId.startsWith('analyzing_')) {
+    if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
       // Check if this is a newly completed analysis we haven't notified about
       if (analysisId && lastProcessedAnalysisIdRef.current !== analysisId && latestAnalysis.exists) {
         // Update the sidebar with the new completed analysis
@@ -566,7 +666,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   useEffect(() => {
     // CRITICAL: Don't process latestAnalysis work items if user has selected a specific historical analysis
     // This prevents overwriting the selected analysis's work items with the latest analysis
-    if (selectedAnalysisId && !selectedAnalysisId.startsWith('analyzing_')) {
+    if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
       return;
     }
 
@@ -636,7 +736,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       return;
     }
     // Skip fetch for temporary "analyzing" entries
-    if (selectedAnalysisId.startsWith('analyzing_')) {
+    if (isAnalyzingPlaceholder(selectedAnalysisId)) {
       setIsSwitchingAnalysis(false);
       return;
     }
@@ -653,9 +753,17 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     dispatch(clearCurrentProjectUserStories());
     dispatch(setDeepAnalysis(null));
 
+    // Abort any previous in-flight fetch so a slow earlier selection can't
+    // overwrite the new one. Critical when users click history entries fast.
+    analysisFetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    analysisFetchAbortRef.current = controller;
+
     (async () => {
       try {
         const result = await dispatch(fetchAnalysisById(selectedAnalysisId)).unwrap();
+        // If the user switched again before this resolved, drop the result.
+        if (controller.signal.aborted) return;
         if (result?.exists !== false && result?.analysis) {
           const a = result.analysis;
           if (a.analysisData) {
@@ -671,14 +779,23 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           dispatch(setDeepAnalysis(result.userStories ?? null));
         }
       } catch (error) {
+        if (controller.signal.aborted) return;
         console.error('Failed to load analysis:', error);
         // Clear data on error
         dispatch(setAnalysisData(null));
         dispatch(setDeepAnalysis(null));
       } finally {
-        setIsSwitchingAnalysis(false);
+        if (!controller.signal.aborted) {
+          setIsSwitchingAnalysis(false);
+        }
       }
     })();
+    // Cleanup: if this effect re-runs (user picks a new analysis) abort
+    // the previous fetch's resolve path. The unmount-cleanup effect at the
+    // top does the same for component teardown.
+    return () => {
+      controller.abort();
+    };
   }, [selectedAnalysisId, dispatch]);
 
   // Handle page refresh - fetch consolidated dashboard data for the current project
@@ -738,11 +855,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       dispatch(setDeepAnalysis(analysisData.deepAnalysis));
     }
   }, [analysisData, deepAnalysis, dispatch]);
-
-  // Debug: Monitor deepAnalysis state changes
-  useEffect(() => {
-  }, [deepAnalysis]);
-
 
   // Avoids calling this endpoint for brand new projects without uploads
   useEffect(() => {
@@ -917,7 +1029,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       setTopError(validation.error ?? null);
       return;
     }
-    const tempId = `analyzing_${Date.now()}`;
+    const tempId = makeAnalyzingId(String(Date.now()));
     const fileToSubmit = topFile;
     const fileName = fileToSubmit.name;
     const lowerName = fileName.toLowerCase();
@@ -968,7 +1080,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
       // CRITICAL FIX: Clear any selected historical analysis before starting new one
       // This prevents the new analysis from replacing the old one you were viewing
-      if (selectedAnalysisId && !selectedAnalysisId.startsWith('analyzing_')) {
+      if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
         // User was viewing a historical analysis, clear it before starting new one
         dispatch(clearAnalysisData());
         dispatch(setDeepAnalysis(null));
@@ -1258,8 +1370,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             const formattedProjectId = effectiveProjectId.startsWith('project_') ? effectiveProjectId.replace('project_', '') : effectiveProjectId;
             
             // Add a small delay to ensure the backend has saved the data
-            setTimeout(() => {
-              dispatch(fetchUserStoriesByProject({ 
+            scheduleTimeout(() => {
+              dispatch(fetchUserStoriesByProject({
                 projectId: formattedProjectId,
                 userId: user.id || user.user_id
               }));
@@ -1344,8 +1456,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               const formattedProjectId = effectiveProjectId.startsWith('project_') ? effectiveProjectId.replace('project_', '') : effectiveProjectId;
               
               // Add a small delay to ensure the backend has saved the data
-              setTimeout(() => {
-                dispatch(fetchUserStoriesByProject({ 
+              scheduleTimeout(() => {
+                dispatch(fetchUserStoriesByProject({
                   projectId: formattedProjectId,
                   userId: user.id || user.user_id
                 }));
@@ -1386,8 +1498,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               const formattedProjectId = effectiveProjectId.startsWith('project_') ? effectiveProjectId.replace('project_', '') : effectiveProjectId;
               
               // Add a small delay to ensure the backend has saved the data
-              setTimeout(() => {
-                dispatch(fetchUserStoriesByProject({ 
+              scheduleTimeout(() => {
+                dispatch(fetchUserStoriesByProject({
                   projectId: formattedProjectId,
                   userId: user.id || user.user_id
                 }));
@@ -1415,8 +1527,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         const formattedProjectId = effectiveProjectId.startsWith('project_') ? effectiveProjectId.replace('project_', '') : effectiveProjectId;
         
         // Add a small delay to ensure the backend has saved the data
-        setTimeout(() => {
-          dispatch(fetchUserStoriesByProject({ 
+        scheduleTimeout(() => {
+          dispatch(fetchUserStoriesByProject({
             projectId: formattedProjectId,
             userId: user.id || user.user_id
           }));
@@ -1827,7 +1939,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
               <div id="analysis-results-section" className="space-y-6">
               {/* Analysis Results Section — only show loader when the selected run is the one being analyzed */}
-              {selectedAnalysisId?.startsWith('analyzing_') && (
+              {isAnalyzingPlaceholder(selectedAnalysisId) && (
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
@@ -1936,437 +2048,46 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               </div>
 
               {resultsTab === 'insights' && (
-              <div
-                id="panel-insights"
-                role="tabpanel"
-                aria-labelledby="tab-insights"
-                className={`space-y-6 transition-opacity duration-300 ${isSwitchingAnalysis ? 'opacity-50' : 'opacity-100'}`}
-              >
-              {isTaskViewLoading ? (
-                <div className="bg-card/80 rounded-2xl border border-border/60 p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">
-                        {isSwitchingAnalysis ? 'Loading analysis...' : 'Preparing fresh analysis'}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {isSwitchingAnalysis
-                          ? 'Fetching selected analysis data and rebuilding visualizations.'
-                          : 'Fetching latest run data and rebuilding charts.'}
-                      </p>
-                    </div>
-                    <span className="inline-flex items-center rounded-full border border-orange-400/30 bg-orange-500/10 px-3 py-1 text-xs font-medium text-orange-600 dark:text-orange-400">
-                      {analysisProgressUi?.label || (isSwitchingAnalysis ? 'Loading' : 'Processing')}
-                    </span>
-                  </div>
-                  <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <div className="h-20 rounded-xl border border-border/60 bg-secondary/40 animate-pulse" />
-                    <div className="h-20 rounded-xl border border-border/60 bg-secondary/40 animate-pulse" />
-                    <div className="h-20 rounded-xl border border-border/60 bg-secondary/40 animate-pulse" />
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    <div className="h-4 w-40 rounded bg-secondary/50 animate-pulse" />
-                    <div className="h-36 rounded-xl border border-border/60 bg-secondary/30 animate-pulse" />
-                  </div>
-                </div>
-              ) : !hasAnalysisResults && !isAnalyzing && selectedAnalysisId ? (
-                /* Empty state when no analysis data is available for the selected analysis */
-                <div className="bg-card/80 rounded-2xl border border-border/60 p-8 text-center">
-                  <AlertCircle className="w-12 h-12 text-muted-foreground/50 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-foreground mb-2">
-                    No Analysis Data Available
-                  </h3>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    The selected analysis could not be loaded or contains no data.
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Try selecting a different analysis or upload new feedback data.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {/* Dynamic Dimension Filters */}
-                  {/* TODO: Re-enable when filters are fully implemented */}
-                  {/* {hasAnalysisResults && currentProjectId && (
-                    <DynamicFilterBar
-                      projectId={currentProjectId}
-                      onFiltersChange={setDimensionFilters}
-                      className="mb-4"
-                    />
-                  )} */}
-
-                  {/* Filtered Stats Banner */}
-                  {/* {filteredStats && dimensionFilters.length > 0 && (
-                    <div className="mb-4 p-4 bg-saramsa-brand/10 border border-saramsa-brand/20 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="text-sm font-medium text-saramsa-brand">
-                            Showing {filteredStats.filtered_comments} of {filteredStats.total_comments} comments ({filteredStats.filtered_percentage}%)
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {dimensionFilters.length} filter{dimensionFilters.length === 1 ? '' : 's'} applied
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => setDimensionFilters([])}
-                          className="text-xs text-saramsa-brand hover:underline"
-                        >
-                          Clear filters
-                        </button>
-                      </div>
-                      {filteredStats.note && (
-                        <div className="mt-2 text-xs text-muted-foreground italic">
-                          {filteredStats.note}
-                        </div>
-                      )}
-                    </div>
-                  )} */}
-
-                  {/* Metrics Cards */}
-                  {hasAnalysisResults && <MetricsCards metrics={metrics} />}
-
-                  {/* Feature Sentiments Table */}
-                  {hasAnalysisResults && (
-                    <div className="bg-card/80 rounded-2xl border border-border/60 p-6">
-                        <FeatureSentimentsTable
-                          features={transformedFeatures}
-                          selectedFeatures={selectedFeatures}
-                          onFeatureToggle={(featureName) => {
-                            setSelectedFeatures(prev =>
-                              prev.includes(featureName)
-                                ? prev.filter(name => name !== featureName)
-                                : [...prev, featureName]
-                            );
-                          }}
-                          onRegenerateAnalysis={handleRegenerateAnalysis}
-                          hasEditedFeaturesProp={Object.keys(editedKeywords).length > 0}
-                          hasComments={!!loadedComments && loadedComments.length > 0}
-                          projectId={currentProjectId}
-                          analysisId={latestAnalysis?.analysis_id}
-                        />
-                    </div>
-                  )}
-                </>
+                <InsightsPanel
+                  isSwitchingAnalysis={isSwitchingAnalysis}
+                  isTaskViewLoading={isTaskViewLoading}
+                  analysisProgressUi={analysisProgressUi}
+                  hasAnalysisResults={hasAnalysisResults}
+                  isAnalyzing={isAnalyzing}
+                  selectedAnalysisId={selectedAnalysisId}
+                  metrics={metrics}
+                  transformedFeatures={transformedFeatures}
+                  selectedFeatures={selectedFeatures}
+                  setSelectedFeatures={setSelectedFeatures}
+                  handleRegenerateAnalysis={handleRegenerateAnalysis}
+                  editedKeywords={editedKeywords}
+                  loadedComments={loadedComments}
+                  currentProjectId={currentProjectId}
+                  latestAnalysis={latestAnalysis}
+                  featureSentimentData={featureSentimentData}
+                  sentimentData={sentimentData}
+                  wordCloudView={wordCloudView}
+                  activeAnalysisData={activeAnalysisData}
+                />
               )}
-
-              {hasAnalysisResults && !isTaskViewLoading && (
-              <SentimentCharts
-                featureSentimentData={featureSentimentData}
-                sentimentData={sentimentData}
-                selectedFeatures={selectedFeatures}
-              />
-              )}
-
-              {hasAnalysisResults && !isTaskViewLoading && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-foreground">
-                    Word Cloud Analysis
-                  </h3>
-                </div>
-
-                {wordCloudView === 'split' ? (
-                  <KeywordCloud
-                    positiveKeywords={
-                      activeAnalysisData?.analysisData?.positive_keywords?.map((word: any) =>
-                        typeof word === 'string' ? word : word.keyword || word.text || String(word)
-                      ) || []
-                    }
-                    negativeKeywords={
-                      activeAnalysisData?.analysisData?.negative_keywords?.map((word: any) =>
-                        typeof word === 'string' ? word : word.keyword || word.text || String(word)
-                      ) || []
-                    }
-                  />
-                ) : (
-                  <AdvancedWordCloud
-                    positiveKeywords={
-                      activeAnalysisData?.analysisData?.positive_keywords?.map((word: any) =>
-                        typeof word === 'string' ? word : word.keyword || word.text || String(word)
-                      ) || []
-                    }
-                    negativeKeywords={
-                      activeAnalysisData?.analysisData?.negative_keywords?.map((word: any) =>
-                        typeof word === 'string' ? word : word.keyword || word.text || String(word)
-                      ) || []
-                    }
-                  />
-                )}
-              </div>
-              )}
-
-              {hasAnalysisResults && !isTaskViewLoading && (
-              <div className="text-xs text-muted-foreground/70 text-right">
-                Analysis from {(() => {
-                  const analysisDate = activeAnalysisData?.createdAt;
-                  const deepAnalysisDate = activeAnalysisData?.deepAnalysis?.generated_at;
-                  const timestamp = deepAnalysisDate || analysisDate;
-                  if (timestamp) {
-                    return new Date(timestamp).toLocaleDateString('en-US', {
-                      year: 'numeric', month: 'long', day: 'numeric',
-                      hour: '2-digit', minute: '2-digit'
-                    });
-                  }
-                  return new Date().toLocaleDateString();
-                })()}
-              </div>
-              )}
-              </div>
-              )}
-
               {resultsTab === 'workitems' && (
-              <div
-                id="panel-workitems"
-                role="tabpanel"
-                aria-labelledby="tab-workitems"
-                className={`space-y-6 transition-opacity duration-300 ${workItemsPanelLoading ? 'opacity-50' : 'opacity-100'}`}
-              >
-            {workItemsPanelLoading ? (
-            <div className="bg-card/80 rounded-2xl border border-border/60 p-6">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <Loader2 className="h-5 w-5 shrink-0 animate-spin text-saramsa-brand" aria-hidden />
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Loading work items</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {isGeneratingUserStories
-                        ? 'Generating stories from your analysis…'
-                        : userStoriesLoading
-                          ? 'Fetching work items for this project…'
-                          : 'Refreshing analysis and backlog…'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-5 space-y-3">
-                {[1, 2, 3, 4].map((i) => (
-                  <div
-                    key={i}
-                    className="h-14 rounded-xl border border-border/60 bg-secondary/40 animate-pulse"
-                  />
-                ))}
-              </div>
-            </div>
-            ) : (
-            <div className="bg-card/80 rounded-2xl border border-border/60 p-6">
-              {selectedPlatform === 'jira' ? (
-                /* Jira User Stories View */
-                (() => {
-                  return loadedComments && loadedComments.length > 0;
-                })() ? (
-                  (() => {
-                    // Check if we have work items in deepAnalysis OR in currentProjectUserStories
-                    const hasDeepAnalysisWorkItems = deepAnalysis?.work_items && deepAnalysis.work_items.length > 0;
-                    const hasCurrentUserStories = currentProjectUserStories && currentProjectUserStories.length > 0;
-                    const hasAnyUserStories = hasDeepAnalysisWorkItems || hasCurrentUserStories;
-                    return hasAnyUserStories ? (
-                      (() => {
-                        // Prepare user stories data for display
-                        let userStoriesToDisplay = currentProjectUserStories;
-                        
-                        if (hasDeepAnalysisWorkItems) {
-                          // Store Jira user stories in Redux state like Azure does
-                          const jiraUserStory = {
-                            id: deepAnalysis.id,
-                            type: deepAnalysis.type || 'user_story',
-                            userId: deepAnalysis.userId,
-                            projectId: deepAnalysis.projectId,
-                            process_template: deepAnalysis.process_template || 'Agile',
-                            platform: deepAnalysis.platform,
-                            work_items: deepAnalysis.work_items,
-                            summary: deepAnalysis.summary,
-                            generated_at: deepAnalysis.generated_at,
-                            comments_count: deepAnalysis.comments_count || 0
-                          };
-                          
-                          // Check if we need to store this in Redux (similar to Azure logic)
-                          if (!hasCurrentUserStories) {
-                            dispatch(setCurrentProjectUserStories([jiraUserStory]));
-                          }
-                          
-                          userStoriesToDisplay = [jiraUserStory];
-                        }
-                        
-                        
-                        return (
-                          <UserStoryList 
-                            userStories={userStoriesToDisplay}
-                            platform="jira"
-                            projectId={currentProjectId}
-                            onRegenerateAnalysis={async () => {
-                              if (loadedComments && loadedComments.length > 0) {
-                                try {
-                                  // Use existing analysis data instead of calling analyzeComments again
-                                  const analysisResult = analysisData;
-                                  
-                                  if (!analysisResult) {
-                                    console.error('No analysis data available for Jira work item generation');
-                                    return;
-                                  }
-                                  
-                                  // Step 1: Get Jira project metadata
-                                  let jiraProjectMetadata = null;
-                                  const selectedJiraProjectId = typeof window !== 'undefined' ? localStorage.getItem('jira_selected_project') : null;
-                                  
-                                  if (selectedJiraProjectId) {
-                                    try {
-                                      jiraProjectMetadata = null;
-                                    } catch (e) {
-                                      console.warn('Failed to fetch Jira project metadata:', e);
-                                    }
-                                  }
-                                  
-                                  // Step 3: Generate work items
-                                  const workItemsResult = await dispatch(generateUserStories({
-                                    analysisData: analysisResult,
-                                    comments: loadedComments, // Add the original comments
-                                    platform: selectedPlatform === 'jira' ? 'jira' : 'azure',
-                                    processTemplate: 'Agile',
-                                    projectId: projectId || undefined,
-                                    projectMetadata: jiraProjectMetadata
-                                  })).unwrap();
-
-                                  // Trigger usage badge refresh after work items generation
-                                  if (typeof window !== 'undefined') {
-                                    window.dispatchEvent(new Event('usage-updated'));
-                                  }
-
-                                  // Structure the data properly for the UserStories component
-                                  const structuredData = {
-                                    ...workItemsResult,
-                                    work_items: workItemsResult.work_items,
-                                    work_items_by_feature: workItemsResult.work_items_by_feature,
-                                    summary: workItemsResult.summary
-                                  };
-                                  dispatch(setDeepAnalysis(structuredData));
-                                } catch (error) {
-                                  console.error('Failed to regenerate Jira analysis:', error);
-                                }
-                              }
-                            }}
-                            isAnalyzing={loading}
-                          />
-                        );
-                      })()
-                    ) : (
-                      <div className="text-center py-8">
-                        <div className="w-16 h-16 mx-auto mb-4 bg-secondary/60 rounded-full flex items-center justify-center">
-                          <Sparkles className="w-8 h-8 text-muted-foreground" />
-                        </div>
-                        <h3 className="text-lg font-medium text-foreground mb-2">
-                          No User Stories Generated
-                        </h3>
-                        <p className="text-muted-foreground mb-4">
-                          User stories will be automatically generated after you analyze feedback data.
-                        </p>
-                        <p className="text-sm text-muted-foreground/70">
-                          Go to the Dashboard tab, upload feedback data, and click "Analyze" to generate user stories.
-                        </p>
-                      </div>
-                    );
-                  })()
-                ) : currentProjectUserStories && currentProjectUserStories.length > 0 ? (
-                  /* Show user stories even without loaded comments if they exist in Redux */
-                  <UserStoryList 
-                    userStories={currentProjectUserStories}
-                    platform="jira"
-                    projectId={currentProjectId}
-                    isAnalyzing={loading}
-                  />
-                ) : (
-                  <div className="text-center py-8">
-                    <div className="w-16 h-16 mx-auto mb-4 bg-secondary/60 rounded-full flex items-center justify-center">
-                      <Sparkles className="w-8 h-8 text-muted-foreground" />
-                    </div>
-                    <h3 className="text-lg font-medium text-foreground mb-2">
-                      No User Stories Found
-                    </h3>
-                    <p className="text-muted-foreground mb-4">
-                      {loadedComments && loadedComments.length > 0 
-                        ? "User stories should have been generated. Try refreshing or check the console for errors."
-                        : "No comments available. Please upload feedback data to use Jira integration."
-                      }
-                    </p>
-                    {process.env.NODE_ENV === 'development' && (
-                      <button
-                        onClick={() => {
-                          const effectiveProjectId = currentProjectId || personalProjectId;
-                          if (effectiveProjectId && user?.id) {
-                            const formattedProjectId = effectiveProjectId.startsWith('project_') ? effectiveProjectId.replace('project_', '') : effectiveProjectId;
-                            const userId = user.id || user.user_id;
-                            dispatch(fetchUserStoriesByProject({
-                              projectId: formattedProjectId,
-                              userId
-                            }));
-                          }
-                        }}
-                        className="mt-4 px-4 py-2 bg-saramsa-brand text-white rounded-lg hover:bg-saramsa-brand-hover transition-colors text-sm"
-                      >
-                        Refresh user stories
-                      </button>
-                    )}
-                  </div>
-                )
-              ) : (
-                /* Azure User Stories View */
-                (() => {
-                  // Check if we have work items in the response
-                  const hasWorkItems = deepAnalysis?.work_items && deepAnalysis.work_items.length > 0;
-                  const hasValidDeepAnalysis = deepAnalysis && (deepAnalysis.work_items || deepAnalysis.work_items_by_feature);
-                  const hasUserStories = currentProjectUserStories && currentProjectUserStories.length > 0;
-                  
-                  // Simplified condition - show if we have ANY work items from either source
-                  const shouldShowUserStories = (hasValidDeepAnalysis && hasWorkItems) || hasUserStories;
-                  
-                  return shouldShowUserStories ? (
-                    <UserStoryList 
-                      key={`user-stories-${deepAnalysis?.id || currentProjectUserStories?.[0]?.id || 'default'}`} 
-                      userStories={hasWorkItems ? [{
-                        id: deepAnalysis.id,
-                        type: deepAnalysis.type || 'user_story',
-                        userId: deepAnalysis.userId,
-                        projectId: deepAnalysis.projectId,
-                        process_template: deepAnalysis.process_template || 'Agile',
-                        platform: deepAnalysis.platform,
-                        work_items: deepAnalysis.work_items,
-                        summary: deepAnalysis.summary,
-                        generated_at: deepAnalysis.generated_at,
-                        comments_count: deepAnalysis.comments_count || 0
-                      }] : currentProjectUserStories}
-                      platform="azure"
-                      projectId={currentProjectId}
-                    />
-                  ) : (
-                    <div className="text-center py-8">
-                      <p className="text-muted-foreground">
-                        No deep analysis data available. Please upload feedback data to generate user stories.
-                      </p>
-                    </div>
-                  );
-                })()
-              )}
-            </div>
-            )}
-
-            {!isTaskViewLoading && currentProjectId && (
-              <div className="bg-card/80 rounded-2xl border border-border/60 p-6">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <h3 className="text-lg font-semibold text-foreground">Review Queue</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Review generated work items before pushing them.
-                    </p>
-                  </div>
-                  <a
-                    href={`/projects/${encryptProjectId(currentProjectId)}/review/`}
-                    className="inline-flex items-center rounded-lg bg-saramsa-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-saramsa-brand-hover"
-                  >
-                    Open Review Queue
-                  </a>
-                </div>
-              </div>
-            )}
-              </div>
+                <WorkItemsPanel
+                  workItemsPanelLoading={workItemsPanelLoading}
+                  isGeneratingUserStories={isGeneratingUserStories}
+                  userStoriesLoading={userStoriesLoading}
+                  isTaskViewLoading={isTaskViewLoading}
+                  loading={loading}
+                  selectedPlatform={selectedPlatform}
+                  currentProjectId={currentProjectId}
+                  personalProjectId={personalProjectId}
+                  projectId={projectId}
+                  user={user}
+                  loadedComments={loadedComments}
+                  deepAnalysis={deepAnalysis}
+                  currentProjectUserStories={currentProjectUserStories}
+                  analysisData={analysisData}
+                  dispatch={dispatch}
+                />
               )}
               </div>
             </>
