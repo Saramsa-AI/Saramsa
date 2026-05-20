@@ -31,6 +31,11 @@ interface FeatureSentimentsTableProps {
   onRegenerateAnalysis?: () => void;
   hasEditedFeaturesProp?: boolean;
   hasComments?: boolean;
+  // Passed in by Dashboard for downstream context (project-scoped actions
+  // and analysis-linked work-item generation). Accepted here so the build
+  // type-checks; the component can ignore them unless it needs them.
+  projectId?: string | null;
+  analysisId?: string | null;
 }
 
 export const FeatureSentimentsTable = ({
