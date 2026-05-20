@@ -729,11 +729,43 @@ const analysisSlice = createSlice({
         state.analysisStatus = 'processing';
       })
       .addCase(pollTaskStatus.fulfilled, (state, action) => {
-        // Status is updated by analyzeComments thunk based on result
-        if (action.payload.status === 'SUCCESS') {
+        const apiStatus = action.payload?.status;
+        const isTerminal = apiStatus === 'SUCCESS' || apiStatus === 'PARTIAL'
+          || apiStatus === 'FAILURE' || apiStatus === 'FAILED' || apiStatus === 'CANCELLED';
+
+        if (apiStatus === 'SUCCESS' || apiStatus === 'PARTIAL') {
           state.analysisStatus = 'success';
-        } else if (action.payload.status === 'FAILURE') {
+        } else if (apiStatus === 'FAILURE' || apiStatus === 'FAILED') {
           state.analysisStatus = 'failure';
+        } else if (apiStatus === 'CANCELLED') {
+          state.analysisStatus = 'idle';
+        }
+
+        // When a task reaches a terminal state, clear the in-flight placeholders
+        // the UI uses to gate loading skeletons. Without this, an `analyzing_*`
+        // selectedAnalysisId or stuck isAnalyzing flag survives forever if no
+        // other reducer (analyzeComments.fulfilled / ingestFile.fulfilled) fires
+        // after the poll resolves — which happens when the user navigates away,
+        // when SSE drops to fallback polling, or when a worker dies mid-task
+        // and the backend later returns the task as FAILED (stale-sweep).
+        if (isTerminal) {
+          const poll = action.meta?.arg as string | undefined;
+          const sel = state.selectedAnalysisId;
+          if (typeof sel === 'string' && sel.startsWith('analyzing_')) {
+            const placeholderTaskId = sel.slice('analyzing_'.length);
+            if (!poll || placeholderTaskId === poll) {
+              // Replace with the resolved insight_id when available, else clear.
+              const resolvedInsightId = action.payload?.result?.insight_id;
+              state.selectedAnalysisId = resolvedInsightId ?? null;
+            }
+          }
+          // Drop the in-flight project flag for the project this task was tied to.
+          const tid = poll ?? state.taskId ?? null;
+          if (tid && state.taskId === tid) {
+            state.taskId = null;
+          }
+          // Recompute isAnalyzing across remaining in-flight projects.
+          state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
         }
       })
       .addCase(pollTaskStatus.rejected, (state) => {
