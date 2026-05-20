@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 import type { AppDispatch } from '@/store/store';
 import { encryptProjectId } from '@/lib/encryption';
@@ -76,6 +77,34 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
     dispatch,
   } = props;
 
+  // Side-effect: prime Redux's currentProjectUserStories from a fresh
+  // deepAnalysis on Jira branch. Previously this dispatch was inlined inside
+  // an IIFE that ran during render — a React anti-pattern that triggers a
+  // StrictMode warning and will become an error in a future React major.
+  // Moving it to a useEffect preserves the same end state (Redux holds the
+  // jira_user_story so navigation away preserves it) while firing after
+  // render commit. UI behavior is unchanged because the displayed list is
+  // computed locally from deepAnalysis regardless of Redux state.
+  useEffect(() => {
+    if (selectedPlatform !== 'jira') return;
+    const hasDeepAnalysisWorkItems = deepAnalysis?.work_items && deepAnalysis.work_items.length > 0;
+    const hasCurrentUserStories = currentProjectUserStories && currentProjectUserStories.length > 0;
+    if (!hasDeepAnalysisWorkItems || hasCurrentUserStories) return;
+    const jiraUserStory = {
+      id: deepAnalysis.id,
+      type: deepAnalysis.type || 'user_story',
+      userId: deepAnalysis.userId,
+      projectId: deepAnalysis.projectId,
+      process_template: deepAnalysis.process_template || 'Agile',
+      platform: deepAnalysis.platform,
+      work_items: deepAnalysis.work_items,
+      summary: deepAnalysis.summary,
+      generated_at: deepAnalysis.generated_at,
+      comments_count: deepAnalysis.comments_count || 0,
+    };
+    dispatch(setCurrentProjectUserStories([jiraUserStory]));
+  }, [selectedPlatform, deepAnalysis, currentProjectUserStories, dispatch]);
+
   return (
     <div
       id="panel-workitems"
@@ -127,7 +156,11 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
                     let userStoriesToDisplay = currentProjectUserStories;
 
                     if (hasDeepAnalysisWorkItems) {
-                      // Store Jira user stories in Redux state like Azure does
+                      // Build the local list for display. The Redux priming
+                      // (dispatch(setCurrentProjectUserStories(...))) used to
+                      // live here as a side effect during render; it's now
+                      // moved to the useEffect at the top of this component
+                      // with the same firing condition.
                       const jiraUserStory = {
                         id: deepAnalysis.id,
                         type: deepAnalysis.type || 'user_story',
@@ -140,12 +173,6 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
                         generated_at: deepAnalysis.generated_at,
                         comments_count: deepAnalysis.comments_count || 0,
                       };
-
-                      // Check if we need to store this in Redux (similar to Azure logic)
-                      if (!hasCurrentUserStories) {
-                        dispatch(setCurrentProjectUserStories([jiraUserStory]));
-                      }
-
                       userStoriesToDisplay = [jiraUserStory];
                     }
 
