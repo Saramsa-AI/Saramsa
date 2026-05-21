@@ -4,7 +4,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loginUser, registerUser, setUser, logout as sliceLogout } from '@/store/features/auth/authSlice';
-import { getStoredUser, getTokens, getCurrentUser, setStoredUser, logout as clientLogout, switchActiveOrganization, type User } from '@/lib/auth';
+import {
+  ACCESS_TOKEN_KEY,
+  getStoredUser,
+  getTokens,
+  getCurrentUser,
+  isTokenExpiringSoon,
+  setStoredUser,
+  logout as clientLogout,
+  switchActiveOrganization,
+  type User,
+} from '@/lib/auth';
 import { authService } from './authService';
 
 type LoginArgs = { email: string; password: string };
@@ -101,6 +111,60 @@ export function useAuth(): HookResult {
     };
   }, [dispatch]);
 
+  // ─── Cross-tab logout sync ─────────────────────────────────────────
+  // When another tab clears the access token from localStorage (because
+  // the user logged out there, or hit a 401-refresh-failure that fired
+  // logoutAndRedirect), this tab should follow suit. Without this listener
+  // Tab B keeps using the dashboard as if logged in until its next API
+  // call returns 401 — confusing UX.
+  //
+  // The `storage` event fires only in OTHER tabs (browsers suppress it
+  // in the originating tab), so we only ever see it when something
+  // external happened. Event filter: only act when our access-token key
+  // was cleared (newValue === null) — ignore unrelated keys and writes.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== ACCESS_TOKEN_KEY) return;
+      if (e.newValue !== null) return;
+      // Another tab logged out. Drop our Redux user immediately so the
+      // current page stops rendering authenticated content, then run
+      // the canonical local cleanup + redirect.
+      dispatch(sliceLogout());
+      clientLogout();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [dispatch]);
+
+  // ─── Proactive token refresh ───────────────────────────────────────
+  // Reactively refreshing after a 401 means EVERY active user sees one
+  // failed request per access-token lifetime. We avoid that by checking
+  // every ~60 s whether the access token is within 5 min of expiry, and
+  // preemptively refreshing if so.
+  //
+  // The actual refresh logic lives in authService.refreshTokenIfNeeded
+  // (which already serializes concurrent refreshes via an internal
+  // singleton promise), so we just delegate. On failure we don't react —
+  // the next 401 will trigger the reactive flow + handleAuthFailure as
+  // before.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const tick = () => {
+      const tokens = getTokens();
+      if (!tokens?.access) return;
+      if (!isTokenExpiringSoon(tokens.access, 5 * 60)) return;
+      authService.refreshTokenIfNeeded().catch(() => {
+        // Swallow — see comment block above.
+      });
+    };
+    // Fire once on mount to handle the case where we hydrated with a
+    // token that's already inside the 5-min window.
+    tick();
+    const id = window.setInterval(tick, 60 * 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const login = useCallback<HookResult['login']>(async (args) => {
     try {
       await dispatch(loginUser(args)).unwrap();
@@ -124,22 +188,18 @@ export function useAuth(): HookResult {
   }, [dispatch]);
 
   const logout = useCallback(async () => {
+    // Local + cookie cleanup AND redirect both live in clientLogout
+    // (auth.ts:logout) — the canonical implementation. We only add the
+    // Redux dispatch here because auth.ts has no Redux access.
+    // The try/catch is belt-and-suspenders: dispatch shouldn't throw,
+    // but if it does we still want clientLogout to fire so the user
+    // doesn't get stuck on a page they should no longer see.
     try {
-      // Clear client-side auth state
-      clientLogout();
-      // Clear Redux state
       dispatch(sliceLogout());
-      // Force redirect to login page
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
     } catch (error) {
-      console.error('Logout error:', error);
-      // Force redirect even if logout fails
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
+      console.error('Logout dispatch error:', error);
     }
+    clientLogout();
   }, [dispatch]);
 
   const switchOrganization = useCallback<HookResult['switchOrganization']>(async (organizationId) => {

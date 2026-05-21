@@ -49,39 +49,93 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:8000';
 const AUTH_BASE = `${API_BASE_URL}/api/auth`;
 
-// Standardized token storage keys
-const ACCESS_TOKEN_KEY = 'sa_access_token';
-const REFRESH_TOKEN_KEY = 'sa_refresh_token';
-const USER_STORAGE_KEY = 'sa_user';
+// Standardized token storage keys. Exported so callers (e.g. the axios
+// interceptor in apiRequest.ts) can remove or read them via the canonical
+// names rather than re-inlining the literal string.
+export const ACCESS_TOKEN_KEY = 'sa_access_token';
+export const REFRESH_TOKEN_KEY = 'sa_refresh_token';
+export const USER_STORAGE_KEY = 'sa_user';
 
 // Cookie names expected by middleware
 const ACCESS_TOKEN_COOKIE = 'saramsa_access_token';
 const REFRESH_TOKEN_COOKIE = 'saramsa_refresh_token';
 
+// Single source of truth for the login route. 7+ places previously
+// inlined the literal '/login' — pull them into this constant so a
+// future route rename is a one-line change.
+export const LOGIN_PATH = '/login';
+
+// localStorage keys that are auth-adjacent and should be cleared on
+// logout. Centralizing the list means new integration writes only need
+// to add their key here (instead of in 3 different cleanup handlers).
+// Tokens (`sa_access_token`, `sa_refresh_token`) are handled separately
+// by clearTokens(); `sa_user` by setStoredUser(null).
+const AUTH_ADJACENT_LOCALSTORAGE_KEYS = [
+  'project_id',
+  'selected_platform',
+  'selected_project_name',
+  'azure_organization',
+  'azure_pat_token',
+  'azure_process_template',
+  'azure_selected_project',
+  'azure_project_name',
+  'jira_email',
+  'jira_api_token',
+  'jira_domain',
+  'jira_project_key',
+  'jira_project_id',
+  'jira_project_name',
+] as const;
+
 function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
 }
 
-// Check if token is expired
+// Check if token is expired.
+// Decodes the JWT payload (without verifying the signature — backend is the
+// authoritative check) and compares `exp` to now. Returns true on any of:
+//   - token can't be split / base64-decoded / JSON-parsed (malformed)
+//   - payload has no `exp` claim or it isn't a number (malformed)
+//   - exp <= now (expired or expiring this instant)
+//
+// We deliberately use <= for the time comparison: if the claim is "expires
+// at exactly 12:00:00.000" and clock is 12:00:00.000, the token is dead.
 function isTokenExpired(token: string): boolean {
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
+    const exp = payload?.exp;
+    if (typeof exp !== 'number') {
+      // Missing or non-numeric exp = treat as expired. A JWT without exp
+      // is a malformed token from our backend's perspective.
+      return true;
+    }
     const currentTime = Date.now() / 1000;
-    return payload.exp < currentTime;
+    return exp <= currentTime;
   } catch {
     return true;
   }
 }
 
-// Check if token will expire soon (within 5 minutes)
-function isTokenExpiringSoon(token: string): boolean {
+/**
+ * Will this token expire within `withinSeconds` from now?
+ *
+ * Used by the proactive-refresh background tick in useAuth: rather than
+ * reactively refreshing AFTER a 401 (which surfaces a failed request in
+ * the user's session), we check every minute and refresh ~5 minutes
+ * before expiry so the user never sees a 401.
+ *
+ * Returns true for any unparseable/malformed token (safer to assume the
+ * token is about to die than to keep using something we can't validate).
+ */
+export function isTokenExpiringSoon(token: string, withinSeconds: number = 5 * 60): boolean {
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
+    const exp = payload?.exp;
+    if (typeof exp !== 'number') return true;
     const currentTime = Date.now() / 1000;
-    const fiveMinutes = 5 * 60;
-    return payload.exp < (currentTime + fiveMinutes);
+    return exp - currentTime <= withinSeconds;
   } catch {
-    return true; // If we can't decode, assume expiring soon
+    return true;
   }
 }
 
@@ -269,15 +323,27 @@ export async function refreshAccessToken(): Promise<string> {
   }
 
   const data = await res.json();
-  const newAccessToken = data.access;
-  
-  // Update stored access token
-  localStorage.setItem(ACCESS_TOKEN_KEY, newAccessToken);
-  
-  // Update cookie
-  const oneHour = 60 * 60;
-  document.cookie = `${ACCESS_TOKEN_COOKIE}=${encodeURIComponent(newAccessToken)}; Path=/; Max-Age=${oneHour}; SameSite=Lax`;
-  
+  const newAccessToken: string = data.access;
+  // Backend's SIMPLE_JWT is configured with ROTATE_REFRESH_TOKENS=True and
+  // BLACKLIST_AFTER_ROTATION=True (apis/settings.py). That means every
+  // successful refresh:
+  //   1. Returns a NEW refresh token in `data.refresh`
+  //   2. Blacklists the refresh token we just used
+  //
+  // Previously we only persisted the new access token and kept reusing the
+  // OLD refresh token. On the next refresh (~1 hour later when access
+  // expires again) the backend would reject the now-blacklisted refresh →
+  // user gets silently logged out. Every active user hit this exactly once
+  // per access-token lifetime (1h), seeing it as a "random session timeout".
+  //
+  // Fix: persist the rotated refresh too. Fall back to the incoming refresh
+  // token if the backend ever stops rotating (e.g., dev environment with
+  // ROTATE_REFRESH_TOKENS=False) — that keeps behavior identical to before.
+  const rotatedRefreshToken: string | undefined = data.refresh;
+  const refreshToPersist = rotatedRefreshToken ?? refreshToken;
+
+  setTokens({ access: newAccessToken, refresh: refreshToPersist });
+
   return newAccessToken;
 }
 
@@ -415,25 +481,61 @@ export async function switchActiveOrganization(organizationId: string): Promise<
   return response.data.user;
 }
 
+/**
+ * Single source of truth for logging out. Three places used to do their
+ * own version of this (auth.ts, useAuth.ts, apiRequest.ts handleAuthFailure)
+ * with different localStorage cleanup lists — that drift produced bugs
+ * like Azure/Jira project keys surviving logout. After Phase 2 cleanup,
+ * every logout path funnels through here.
+ *
+ * Steps:
+ *   1. Clear access + refresh tokens (localStorage + cookies)
+ *   2. Clear stored user (sa_user)
+ *   3. Clear auth-adjacent localStorage keys (single list above)
+ *   4. Redirect to LOGIN_PATH unless we're already there
+ *
+ * Redux cleanup is NOT done here (this module has no Redux import).
+ * Callers with access to dispatch should dispatch sliceLogout() too.
+ */
 export function logout(): void {
+  // Fire-and-forget backend logout to blacklist the refresh token. We do
+  // NOT await it — local cleanup must always proceed even if the network
+  // is dead or the backend rejects. The user clicked logout and they
+  // expect to be logged out; surfacing backend errors here would be a
+  // worse UX than silently best-effort'ing the server-side revoke.
+  //
+  // The endpoint is idempotent (accepts missing/invalid/blacklisted
+  // refresh tokens and still returns 200) so we don't need to check the
+  // response status either.
+  const refreshToken =
+    typeof window !== 'undefined'
+      ? localStorage.getItem(REFRESH_TOKEN_KEY)
+      : null;
+  if (refreshToken) {
+    fetch(`${AUTH_BASE}/logout/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh: refreshToken }),
+      // keepalive lets the request survive page navigation — important
+      // because we call window.location.href below to redirect.
+      keepalive: true,
+    }).catch(() => {
+      // Network/server failure on logout is non-fatal — the local cleanup
+      // already happened. Swallow the rejection so we don't surface a
+      // console.error for an expected non-issue.
+    });
+  }
+
   clearTokens();
   setStoredUser(null);
-  
-  // Clear any other auth-related localStorage items
+
   if (typeof window !== 'undefined') {
-    // Clear project selections and other session data
-    localStorage.removeItem('project_id');
-    localStorage.removeItem('selected_platform');
-    localStorage.removeItem('azure_organization');
-    localStorage.removeItem('azure_pat_token');
-    localStorage.removeItem('azure_process_template');
-    localStorage.removeItem('jira_email');
-    localStorage.removeItem('jira_api_token');
-    localStorage.removeItem('jira_domain');
-    
-    // Redirect to login page
-    if (window.location.pathname !== '/login') {
-      window.location.href = '/login';
+    for (const key of AUTH_ADJACENT_LOCALSTORAGE_KEYS) {
+      localStorage.removeItem(key);
+    }
+
+    if (window.location.pathname !== LOGIN_PATH) {
+      window.location.href = LOGIN_PATH;
     }
   }
 }

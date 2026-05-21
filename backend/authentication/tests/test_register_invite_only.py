@@ -53,12 +53,23 @@ def _make_invite(
     role: str = "member",
     token: str = "tok-abc123",
 ) -> OrganizationInvite:
+    """Bypass-the-service invite factory used by the register flow tests.
+
+    Mirrors the production layout after migration 0006_hash_invite_tokens:
+    DB row has the SHA-256 hash in `token_hash` and the deprecated
+    plaintext `token` column nulled out. The `token` arg is still the
+    PLAINTEXT — callers pass it into the register POST as `invite_token`,
+    and the service hashes it at lookup time to match the stored hash.
+    """
+    import hashlib
+
     return OrganizationInvite.objects.create(
         id=f"inv-{uuid.uuid4().hex[:12]}",
         organization=org,
         email=email.lower(),
         role=role,
-        token=token,
+        token=None,  # post-0006: plaintext is never persisted
+        token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
         status="pending",
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
     )

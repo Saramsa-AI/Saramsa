@@ -1,0 +1,66 @@
+# Coverage.py config for the backend test suite.
+#
+# `coverage run --source=. manage.py test ...` will instrument every
+# Python file under backend/ unless we tell it to skip things. Without
+# this scoping, vendored celery beats, OpenTelemetry shims, and the
+# legacy ML-pipeline code (zero tests) would tank the average and
+# make the report useless.
+#
+# Read: which files DO we measure? Anything not excluded.
+# When a new tested module lands, no config change is needed — coverage
+# starts tracking it automatically.
+
+[run]
+# Include the project code; let omit handle the rest.
+source = .
+
+# Files/directories where we deliberately don't write tests today.
+# This keeps the average score reflective of "how much of the tested
+# code is covered" rather than "how much of every file in the repo".
+omit =
+    # Test files themselves — their lines run because they ARE the tests
+    */tests/*
+    */test_*.py
+    */conftest.py
+
+    # Migrations — generated code, not application logic
+    */migrations/*
+
+    # Vendored / third-party / virtualenv
+    venv/*
+    */venv/*
+    */site-packages/*
+
+    # Settings / infrastructure boilerplate — exercised via integration
+    # tests but coverage on import-time module code is misleading
+    apis/settings*.py
+    apis/wsgi.py
+    apis/asgi.py
+    manage.py
+
+    # ML pipeline / heavy services — no unit tests today (Phase 6+)
+    aiCore/*
+    feedback_analysis/services/*
+
+    # Scripts / one-off tooling
+    scripts/*
+
+[report]
+# Skip files that have NO covered lines — they're noise in the table.
+skip_empty = True
+
+# Show lines that aren't covered for files that ARE in the report
+show_missing = True
+
+# Format the per-file lines for readability (cap line-number lists)
+exclude_lines =
+    # Standard pragma — line-level opt-out
+    pragma: no cover
+
+    # Defensive programming — unreachable in practice but checked anyway
+    raise NotImplementedError
+    if __name__ == .__main__.:
+
+[html]
+directory = htmlcov
+title = Saramsa backend coverage

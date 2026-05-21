@@ -39,19 +39,25 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [NoAuthentication]
     serializer_class = AppUserRegisterSerializer
     logger = logging.getLogger(__name__)
-    
-    def get(self, request):
-        return StandardResponse.success(
-            data={"status": "ok"},
-            message="Registration endpoint is available"
-        )
+
+    # Single generic message for every invite-related failure mode in
+    # this view. Returning distinct messages for "no token", "bad token",
+    # "expired token", "wrong email for this token", "email already
+    # registered" would let an unauthenticated caller enumerate which
+    # emails have pending invites, which emails are already registered,
+    # and which invite tokens are still live. Audit flagged this as info
+    # disclosure. The real reason is logged below for admin debugging.
+    GENERIC_INVITE_ERROR = (
+        "Invalid invitation. Please request a new invite from your workspace admin."
+    )
 
     @handle_service_errors
     def create(self, request, *args, **kwargs):
         invite_token = (request.data.get("invite_token") or "").strip()
         if not invite_token:
+            self.logger.info("register: rejected — missing invite_token")
             return StandardResponse.validation_error(
-                detail="Registration is invite-only. Please use the invitation link sent by your workspace admin.",
+                detail=self.GENERIC_INVITE_ERROR,
                 instance=request.path,
             )
 
@@ -65,10 +71,17 @@ class RegisterView(generics.CreateAPIView):
         try:
             invite_data = get_organization_invite_service().get_by_token(invite_token)
         except ValueError as e:
-            return StandardResponse.validation_error(detail=str(e), instance=request.path)
-        if invite_data["email"] != serializer.validated_data["email"].strip().lower():
+            self.logger.info("register: rejected — invite lookup failed: %s", e)
             return StandardResponse.validation_error(
-                detail="This invite was sent to a different email address.",
+                detail=self.GENERIC_INVITE_ERROR,
+                instance=request.path,
+            )
+        if invite_data["email"] != serializer.validated_data["email"].strip().lower():
+            self.logger.info(
+                "register: rejected — email mismatch (invite was for a different address)"
+            )
+            return StandardResponse.validation_error(
+                detail=self.GENERIC_INVITE_ERROR,
                 instance=request.path,
             )
 
@@ -255,13 +268,19 @@ class UserDetailView(APIView):
 
 class LoginView(APIView):
     permission_classes = [NoAuthentication]
-    
+
+    # Caps to prevent DoS via huge payloads. RFC 5321 caps email at 254
+    # chars total. Password cap is generous enough for passphrases but
+    # blocks the 10MB-password DoS attack flagged in the security audit.
+    MAX_EMAIL_LENGTH = 254
+    MAX_PASSWORD_LENGTH = 256
+
     @handle_service_errors
     def post(self, request):
         """Custom login endpoint using service layer"""
         email = request.data.get('email')
         password = request.data.get('password')
-        
+
         if not email or not password:
             return StandardResponse.validation_error(
                 detail="Email and password are required",
@@ -271,7 +290,38 @@ class LoginView(APIView):
                 ],
                 instance=request.path
             )
-        
+
+        # Length caps — guards against DoS via huge payloads. Apply BEFORE
+        # the expensive bcrypt verification and DB lookup so abusive
+        # requests get rejected cheaply.
+        if not isinstance(email, str) or len(email) > self.MAX_EMAIL_LENGTH:
+            return StandardResponse.validation_error(
+                detail="Invalid email",
+                errors=[{"field": "email", "message": "Email is too long or invalid."}],
+                instance=request.path,
+            )
+        if not isinstance(password, str) or len(password) > self.MAX_PASSWORD_LENGTH:
+            return StandardResponse.validation_error(
+                detail="Invalid password",
+                errors=[{"field": "password", "message": "Password is too long."}],
+                instance=request.path,
+            )
+
+        # Email format validation — frontend uses zod's .email() but a
+        # direct HTTP caller can bypass that. We deliberately return the
+        # SAME "Invalid credentials" 401 as the wrong-password branch
+        # below so the response leaks no information about whether the
+        # email itself is well-formed or registered.
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            validate_email(email)
+        except DjangoValidationError:
+            return StandardResponse.unauthorized(
+                detail="Invalid credentials",
+                instance=request.path,
+            )
+
         # Use service for authentication
         auth_service = get_authentication_service()
         user_data = auth_service.get_user_by_email(email)
@@ -300,6 +350,47 @@ class LoginView(APIView):
         return StandardResponse.success(
             data=token_data,
             message="Login successful"
+        )
+
+
+class LogoutView(APIView):
+    """End the session server-side by blacklisting the refresh token.
+
+    Frontend should POST the user's refresh token (from localStorage) as
+    the FIRST step of logout, before clearing local state. If this call
+    fails for any reason (network down, token already invalid, token
+    malformed), the client still proceeds with local cleanup — logout
+    should NEVER block on backend success, because the user just wants
+    to be logged out.
+
+    Why this endpoint matters: `SIMPLE_JWT.ROTATE_REFRESH_TOKENS = True`
+    plus `BLACKLIST_AFTER_ROTATION = True` already blacklists tokens on
+    every refresh, but a user who logs out without ever refreshing keeps
+    a valid refresh token in their browser cache. If that token leaks
+    later (browser stolen, malware, etc.) the attacker has 7 days of
+    access. Explicit blacklist on logout closes that window.
+
+    Idempotent: returns 200 even if the token is missing, expired, or
+    already blacklisted. Logout should not surface backend-state issues
+    to the user — the client-side cleanup must always proceed.
+    """
+    permission_classes = [NoAuthentication]
+
+    def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if refresh_token:
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except Exception:
+                # Token already invalid, blacklisted, malformed, or
+                # belongs to a deleted user. None of these are failures
+                # from the user's perspective — they're logging out.
+                pass
+
+        return StandardResponse.success(
+            data={'logged_out': True},
+            message='Logged out',
         )
 
 
