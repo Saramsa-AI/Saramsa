@@ -9,6 +9,16 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
     css: true,
+    // Keep vitest out of the Playwright e2e directory. Playwright specs
+    // use `@playwright/test`'s own runner (driven by playwright.config.ts);
+    // running them through vitest crashes with "Playwright Test did not
+    // expect test.describe() to be called here."
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/.next/**',
+      'e2e/**',
+    ],
     coverage: {
       // v8 is the built-in Node coverage provider; no extra dependency
       // beyond @vitest/coverage-v8 (in devDependencies). Faster than the

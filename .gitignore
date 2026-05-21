@@ -118,3 +118,8 @@ saramsa-ai/coverage/
 backend/htmlcov/
 backend/.coverage
 backend/coverage.xml
+
+# Playwright outputs
+saramsa-ai/test-results/
+saramsa-ai/playwright-report/
+saramsa-ai/playwright/.cache/
