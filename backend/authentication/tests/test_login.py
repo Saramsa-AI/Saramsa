@@ -6,16 +6,16 @@ Covers the happy path plus the validation hardening shipped in Phase 1d:
 - "Invalid credentials" returned identically for wrong-password, invalid-
   email-format, and disabled-user paths (no enumeration leak)
 - happy-path 200 + access/refresh issuance
+- per-IP rate limit (LoginRateThrottle, 10/min default)
 
 What's NOT covered here (deferred by design):
-- Rate limiting — Phase 6 will add a login-specific throttle and a test
-  for it. Today there's only the generic DRF AnonRateThrottle.
 - JWT signature verification — that's the responsibility of SimpleJWT's
   test suite, not ours.
 """
 
 from __future__ import annotations
 
+from django.core.cache import cache
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -184,3 +184,98 @@ class LoginViewSecurityTest(TestCase):
         missing = self._login("nobody@example.com", "any-password")
         self.assertEqual(wrong.status_code, missing.status_code)
         self.assertEqual(wrong.status_code, 401)
+
+
+class LoginViewRateLimitTest(TestCase):
+    """The LoginRateThrottle should kick in after N attempts from the same
+    IP and return 429 Too Many Requests.
+
+    Implementation note: drops the throttle rate from prod's 10/min to
+    a test-friendly 5/min by directly mutating the LoginRateThrottle
+    class attribute. We tried @override_settings(REST_FRAMEWORK={...})
+    first — it doesn't work here because DRF's SimpleRateThrottle does
+    `THROTTLE_RATES = api_settings.DEFAULT_THROTTLE_RATES` at class
+    definition time, so the class snapshot is taken before any test
+    override has a chance to apply. Setting `rate` directly on the
+    class side-steps this by short-circuiting `__init__`'s rate lookup.
+    """
+
+    def setUp(self) -> None:
+        from apis.core.throttling import LoginRateThrottle
+        self.client = APIClient()
+        _create_login_user()
+        # Snapshot original so tearDown can restore. The class may not
+        # have `rate` set (it's lazily computed in __init__ otherwise),
+        # so use a sentinel to detect "wasn't set."
+        self._sentinel = object()
+        self._original_rate = LoginRateThrottle.__dict__.get("rate", self._sentinel)
+        LoginRateThrottle.rate = "5/minute"
+        # DRF caches throttle state in the cache keyed by
+        # "throttle_<scope>_<ident>". Clear between tests so each starts
+        # with a fresh budget.
+        cache.clear()
+
+    def tearDown(self) -> None:
+        from apis.core.throttling import LoginRateThrottle
+        if self._original_rate is self._sentinel:
+            # Class didn't have an explicit `rate` before — remove ours
+            # so the next test gets a fresh lazy lookup.
+            try:
+                del LoginRateThrottle.rate
+            except AttributeError:
+                pass
+        else:
+            LoginRateThrottle.rate = self._original_rate
+        cache.clear()
+
+    def test_sixth_attempt_within_window_returns_429(self) -> None:
+        """5 attempts succeed (regardless of credential validity — the
+        throttle counts ALL requests to the endpoint); the 6th gets
+        rate-limited."""
+        # First 5 — any of these can be wrong creds (401) or right
+        # creds (200); the throttle doesn't care, only the count matters.
+        for i in range(5):
+            resp = self.client.post(
+                "/api/auth/login/",
+                {"email": "alice@example.com", "password": f"wrong-{i}"},
+                format="json",
+            )
+            # Confirm the throttle is NOT yet engaged — should be 401
+            # (wrong password), not 429.
+            self.assertEqual(
+                resp.status_code, 401,
+                f"Attempt {i+1} unexpectedly got {resp.status_code} — throttle engaged too early?",
+            )
+
+        # 6th attempt should be throttled.
+        resp = self.client.post(
+            "/api/auth/login/",
+            {"email": "alice@example.com", "password": "anything"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 429)
+        # DRF normally includes a Retry-After header on 429s. Our custom
+        # exception_handler strips it in favor of the StandardResponse
+        # shape, so we don't assert on the header — just on the code.
+
+    def test_valid_credentials_still_counted_against_quota(self) -> None:
+        """Even successful logins consume the quota — otherwise an attacker
+        could bypass the throttle by intermixing one valid attempt every
+        few requests. DRF's throttle counts requests to the endpoint, not
+        failed attempts."""
+        # 5 valid logins — all succeed
+        for i in range(5):
+            resp = self.client.post(
+                "/api/auth/login/",
+                {"email": "alice@example.com", "password": "correctpassword123"},
+                format="json",
+            )
+            self.assertEqual(resp.status_code, 200)
+
+        # 6th, also with valid creds, should still be rate-limited
+        resp = self.client.post(
+            "/api/auth/login/",
+            {"email": "alice@example.com", "password": "correctpassword123"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 429)
