@@ -14,6 +14,7 @@ Pattern modelled on Linear / Vercel / Notion:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import uuid
@@ -31,6 +32,17 @@ def _now_utc() -> datetime:
 
 def _normalise_email(email: str) -> str:
     return (email or "").strip().lower()
+
+
+def _hash_token(token: str) -> str:
+    """SHA-256 hex digest of a plaintext invite token.
+
+    Used for both create-time storage and lookup-time matching. The
+    plaintext token is generated via `secrets.token_urlsafe(32)` which
+    already has 256 bits of entropy, so a simple SHA-256 is sufficient
+    here — no per-row salt needed (the token IS the salt).
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 class OrganizationInviteService:
@@ -84,13 +96,23 @@ class OrganizationInviteService:
             if existing_membership:
                 raise ValueError("That user is already a member of this workspace.")
 
+        # Generate plaintext token + its hash. We persist ONLY the hash;
+        # the plaintext is returned to the caller exactly once below for
+        # delivery to the invitee (via email or shown-once URL in the UI).
+        # See migration 0006_hash_invite_tokens for why.
         token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(token)
         expires_at = _now_utc() + timedelta(days=INVITE_TTL_DAYS)
 
         existing = self._resolve_active_invite(organization_id, normalised_email)
         if existing:
             # Re-invite refreshes token + expiry + role + invited_by.
-            existing.token = token
+            # Note: we overwrite `token_hash`, and explicitly set the
+            # legacy `token` column to None even though it's the same
+            # plaintext-vs-hash story — keeps the DB clean of plaintext
+            # so a future RemoveField is safe.
+            existing.token = None
+            existing.token_hash = token_hash
             existing.role = role
             existing.expires_at = expires_at
             existing.invited_by_id = str(actor_user_id)
@@ -106,12 +128,18 @@ class OrganizationInviteService:
                 organization=organization,
                 email=normalised_email,
                 role=role,
-                token=token,
+                token=None,
+                token_hash=token_hash,
                 invited_by_id=str(actor_user_id),
                 status="pending",
                 expires_at=expires_at,
             )
 
+        # Stash the plaintext token on the invite instance (not the DB row)
+        # so _to_dict can include it in the response. The instance attr
+        # is never persisted — it's just a one-shot carrier from this
+        # method to the caller.
+        invite._plaintext_token_for_response = token
         return self._to_dict(invite, include_token=True, organization=organization)
 
     def list_pending(self, organization_id: str, actor_user_id: str) -> List[Dict[str, Any]]:
@@ -148,10 +176,16 @@ class OrganizationInviteService:
     def get_by_token(self, token: str) -> Dict[str, Any]:
         """Public lookup so the signup/accept page can show what org
         the invitee is being invited into. Returns minimal info; never
-        leaks who else is in the org."""
+        leaks who else is in the org.
+
+        Lookup is by `token_hash` — the plaintext token is hashed first
+        so we never run a query against the deprecated plaintext column.
+        Existing invite URLs in the wild still work because the same
+        plaintext token hashes to the value backfilled by migration 0006.
+        """
         from ..models import Organization, OrganizationInvite
 
-        invite = OrganizationInvite.objects.filter(token=token).first()
+        invite = OrganizationInvite.objects.filter(token_hash=_hash_token(token)).first()
         if not invite:
             raise ValueError("This invite link is invalid.")
         if invite.status == "accepted":
@@ -184,7 +218,11 @@ class OrganizationInviteService:
         normalised_user_email = _normalise_email(user_email)
 
         with transaction.atomic():
-            invite = OrganizationInvite.objects.select_for_update().filter(token=token).first()
+            invite = (
+                OrganizationInvite.objects.select_for_update()
+                .filter(token_hash=_hash_token(token))
+                .first()
+            )
             if not invite:
                 raise ValueError("This invite link is invalid.")
             if invite.status == "accepted":
@@ -243,7 +281,13 @@ class OrganizationInviteService:
             "created_at": invite.created_at.isoformat() if invite.created_at else None,
         }
         if include_token:
-            data["token"] = invite.token
+            # Prefer the one-shot plaintext stashed by create_or_get_invite
+            # — the DB row's `token` column is NULL since migration 0006.
+            # Falls back to invite.token only for backwards-compat with any
+            # legacy code path that still populated the plaintext column
+            # (post-migration this is always None for new rows).
+            plaintext = getattr(invite, "_plaintext_token_for_response", None) or invite.token
+            data["token"] = plaintext
             if organization is None:
                 from ..models import Organization
                 organization = Organization.objects.filter(id=invite.organization_id).first()
