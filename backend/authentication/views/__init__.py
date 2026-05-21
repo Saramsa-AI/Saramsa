@@ -17,6 +17,7 @@ from .authentication_views import (
     UserListView,
     UserDetailView,
     LoginView,
+    LogoutView,
     ForgotPasswordView,
     ResetPasswordView,
 )
@@ -40,6 +41,7 @@ __all__ = [
     'UserListView',
     'UserDetailView',
     'LoginView',
+    'LogoutView',
     'ForgotPasswordView',
     'ResetPasswordView',
     'OrganizationsView',

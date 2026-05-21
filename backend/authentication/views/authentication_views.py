@@ -303,6 +303,47 @@ class LoginView(APIView):
         )
 
 
+class LogoutView(APIView):
+    """End the session server-side by blacklisting the refresh token.
+
+    Frontend should POST the user's refresh token (from localStorage) as
+    the FIRST step of logout, before clearing local state. If this call
+    fails for any reason (network down, token already invalid, token
+    malformed), the client still proceeds with local cleanup — logout
+    should NEVER block on backend success, because the user just wants
+    to be logged out.
+
+    Why this endpoint matters: `SIMPLE_JWT.ROTATE_REFRESH_TOKENS = True`
+    plus `BLACKLIST_AFTER_ROTATION = True` already blacklists tokens on
+    every refresh, but a user who logs out without ever refreshing keeps
+    a valid refresh token in their browser cache. If that token leaks
+    later (browser stolen, malware, etc.) the attacker has 7 days of
+    access. Explicit blacklist on logout closes that window.
+
+    Idempotent: returns 200 even if the token is missing, expired, or
+    already blacklisted. Logout should not surface backend-state issues
+    to the user — the client-side cleanup must always proceed.
+    """
+    permission_classes = [NoAuthentication]
+
+    def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if refresh_token:
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except Exception:
+                # Token already invalid, blacklisted, malformed, or
+                # belongs to a deleted user. None of these are failures
+                # from the user's perspective — they're logging out.
+                pass
+
+        return StandardResponse.success(
+            data={'logged_out': True},
+            message='Logged out',
+        )
+
+
 class ForgotPasswordView(APIView):
     permission_classes = [NoAuthentication]
     logger = logging.getLogger(__name__)
