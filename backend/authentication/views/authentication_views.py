@@ -255,13 +255,19 @@ class UserDetailView(APIView):
 
 class LoginView(APIView):
     permission_classes = [NoAuthentication]
-    
+
+    # Caps to prevent DoS via huge payloads. RFC 5321 caps email at 254
+    # chars total. Password cap is generous enough for passphrases but
+    # blocks the 10MB-password DoS attack flagged in the security audit.
+    MAX_EMAIL_LENGTH = 254
+    MAX_PASSWORD_LENGTH = 256
+
     @handle_service_errors
     def post(self, request):
         """Custom login endpoint using service layer"""
         email = request.data.get('email')
         password = request.data.get('password')
-        
+
         if not email or not password:
             return StandardResponse.validation_error(
                 detail="Email and password are required",
@@ -271,7 +277,38 @@ class LoginView(APIView):
                 ],
                 instance=request.path
             )
-        
+
+        # Length caps — guards against DoS via huge payloads. Apply BEFORE
+        # the expensive bcrypt verification and DB lookup so abusive
+        # requests get rejected cheaply.
+        if not isinstance(email, str) or len(email) > self.MAX_EMAIL_LENGTH:
+            return StandardResponse.validation_error(
+                detail="Invalid email",
+                errors=[{"field": "email", "message": "Email is too long or invalid."}],
+                instance=request.path,
+            )
+        if not isinstance(password, str) or len(password) > self.MAX_PASSWORD_LENGTH:
+            return StandardResponse.validation_error(
+                detail="Invalid password",
+                errors=[{"field": "password", "message": "Password is too long."}],
+                instance=request.path,
+            )
+
+        # Email format validation — frontend uses zod's .email() but a
+        # direct HTTP caller can bypass that. We deliberately return the
+        # SAME "Invalid credentials" 401 as the wrong-password branch
+        # below so the response leaks no information about whether the
+        # email itself is well-formed or registered.
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            validate_email(email)
+        except DjangoValidationError:
+            return StandardResponse.unauthorized(
+                detail="Invalid credentials",
+                instance=request.path,
+            )
+
         # Use service for authentication
         auth_service = get_authentication_service()
         user_data = auth_service.get_user_by_email(email)
