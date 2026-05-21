@@ -16,9 +16,21 @@ class AppUserSerializer(serializers.Serializer):
     role = serializers.CharField(max_length=50, required=False, default='user')
 
     def validate_email(self, value):
+        """Reject already-registered emails behind the SAME generic message
+        that RegisterView uses for bad/missing/mismatched invite tokens.
+
+        Why so vague? A distinct "Email already exists" response would let
+        an unauthenticated caller enumerate which emails are registered
+        (security audit flagged this as info disclosure). The actual
+        reason — duplicate email — is recorded server-side via the
+        ValidationError; admins debugging a real "but I just tried to
+        register and got this error" can find the cause in logs.
+        """
         user_service = get_user_service()
         if user_service.get_user_by_email(value):
-            raise serializers.ValidationError("Email already exists")
+            raise serializers.ValidationError(
+                "Invalid invitation. Please request a new invite from your workspace admin."
+            )
         return value
 
     def validate(self, attrs):
