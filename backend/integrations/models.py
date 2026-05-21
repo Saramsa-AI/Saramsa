@@ -75,7 +75,18 @@ class OrganizationInvite(TimestampedModel):
     )
     email = models.EmailField(db_index=True)
     role = models.CharField(max_length=32, default="member")
-    token = models.CharField(max_length=128, unique=True, db_index=True)
+    # `token` is the deprecated PLAINTEXT field. After migration 0006 all
+    # existing rows have token=NULL and lookups go through `token_hash`.
+    # Kept on the model (nullable) for rollback safety — if the hashing
+    # service change has to revert, old code paths can still read this
+    # column without a schema change. A follow-up PR can RemoveField it.
+    token = models.CharField(max_length=128, null=True, blank=True, unique=True, db_index=True)
+    # SHA-256 hex digest of the plaintext token. We NEVER store the raw
+    # token at rest — invite-token leak via DB compromise would otherwise
+    # let an attacker accept any pending invite. The plaintext is returned
+    # to the caller exactly once (at creation time) for delivery to the
+    # invitee; from that point on, only the hash exists server-side.
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
     invited_by = models.ForeignKey(
         "authentication.UserAccount",
         on_delete=models.SET_NULL,
