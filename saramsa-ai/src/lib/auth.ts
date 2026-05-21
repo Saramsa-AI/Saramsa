@@ -116,6 +116,29 @@ function isTokenExpired(token: string): boolean {
   }
 }
 
+/**
+ * Will this token expire within `withinSeconds` from now?
+ *
+ * Used by the proactive-refresh background tick in useAuth: rather than
+ * reactively refreshing AFTER a 401 (which surfaces a failed request in
+ * the user's session), we check every minute and refresh ~5 minutes
+ * before expiry so the user never sees a 401.
+ *
+ * Returns true for any unparseable/malformed token (safer to assume the
+ * token is about to die than to keep using something we can't validate).
+ */
+export function isTokenExpiringSoon(token: string, withinSeconds: number = 5 * 60): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const exp = payload?.exp;
+    if (typeof exp !== 'number') return true;
+    const currentTime = Date.now() / 1000;
+    return exp - currentTime <= withinSeconds;
+  } catch {
+    return true;
+  }
+}
+
 export function setTokens(tokens: Tokens): void {
   if (!isBrowser()) return;
   

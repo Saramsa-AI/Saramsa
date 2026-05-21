@@ -40,12 +40,24 @@ class RegisterView(generics.CreateAPIView):
     serializer_class = AppUserRegisterSerializer
     logger = logging.getLogger(__name__)
 
+    # Single generic message for every invite-related failure mode in
+    # this view. Returning distinct messages for "no token", "bad token",
+    # "expired token", "wrong email for this token", "email already
+    # registered" would let an unauthenticated caller enumerate which
+    # emails have pending invites, which emails are already registered,
+    # and which invite tokens are still live. Audit flagged this as info
+    # disclosure. The real reason is logged below for admin debugging.
+    GENERIC_INVITE_ERROR = (
+        "Invalid invitation. Please request a new invite from your workspace admin."
+    )
+
     @handle_service_errors
     def create(self, request, *args, **kwargs):
         invite_token = (request.data.get("invite_token") or "").strip()
         if not invite_token:
+            self.logger.info("register: rejected — missing invite_token")
             return StandardResponse.validation_error(
-                detail="Registration is invite-only. Please use the invitation link sent by your workspace admin.",
+                detail=self.GENERIC_INVITE_ERROR,
                 instance=request.path,
             )
 
@@ -59,10 +71,17 @@ class RegisterView(generics.CreateAPIView):
         try:
             invite_data = get_organization_invite_service().get_by_token(invite_token)
         except ValueError as e:
-            return StandardResponse.validation_error(detail=str(e), instance=request.path)
-        if invite_data["email"] != serializer.validated_data["email"].strip().lower():
+            self.logger.info("register: rejected — invite lookup failed: %s", e)
             return StandardResponse.validation_error(
-                detail="This invite was sent to a different email address.",
+                detail=self.GENERIC_INVITE_ERROR,
+                instance=request.path,
+            )
+        if invite_data["email"] != serializer.validated_data["email"].strip().lower():
+            self.logger.info(
+                "register: rejected — email mismatch (invite was for a different address)"
+            )
+            return StandardResponse.validation_error(
+                detail=self.GENERIC_INVITE_ERROR,
                 instance=request.path,
             )
 
