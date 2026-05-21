@@ -133,6 +133,15 @@ app.conf.beat_schedule = {
         "task": "send_weekly_digest",
         "schedule": crontab(minute=0, hour=9, day_of_week=1),  # Every Monday 9 AM UTC
     },
+    "cleanup-expired-invites": {
+        # Mark pending OrganizationInvite rows past their expires_at as
+        # 'expired' so the table doesn't grow unbounded. The service layer
+        # already rejects expired invites at lookup-time, so this is hygiene
+        # rather than a correctness fix. Runs at 02:00 UTC daily — picked a
+        # low-traffic window so the UPDATE doesn't compete with user reqs.
+        "task": "cleanup_expired_invites",
+        "schedule": crontab(minute=0, hour=2),
+    },
 }
 # app.conf.beat_schedule = {
 #     "run-scheduled-ingestions": {
