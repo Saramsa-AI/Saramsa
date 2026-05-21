@@ -498,6 +498,34 @@ export async function switchActiveOrganization(organizationId: string): Promise<
  * Callers with access to dispatch should dispatch sliceLogout() too.
  */
 export function logout(): void {
+  // Fire-and-forget backend logout to blacklist the refresh token. We do
+  // NOT await it — local cleanup must always proceed even if the network
+  // is dead or the backend rejects. The user clicked logout and they
+  // expect to be logged out; surfacing backend errors here would be a
+  // worse UX than silently best-effort'ing the server-side revoke.
+  //
+  // The endpoint is idempotent (accepts missing/invalid/blacklisted
+  // refresh tokens and still returns 200) so we don't need to check the
+  // response status either.
+  const refreshToken =
+    typeof window !== 'undefined'
+      ? localStorage.getItem(REFRESH_TOKEN_KEY)
+      : null;
+  if (refreshToken) {
+    fetch(`${AUTH_BASE}/logout/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh: refreshToken }),
+      // keepalive lets the request survive page navigation — important
+      // because we call window.location.href below to redirect.
+      keepalive: true,
+    }).catch(() => {
+      // Network/server failure on logout is non-fatal — the local cleanup
+      // already happened. Swallow the rejection so we don't surface a
+      // console.error for an expected non-issue.
+    });
+  }
+
   clearTokens();
   setStoredUser(null);
 
