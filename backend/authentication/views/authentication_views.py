@@ -17,6 +17,7 @@ from apis.core.error_handlers import handle_service_errors
 from ..services import get_authentication_service
 
 from ..permissions import NoAuthentication
+from apis.core.throttling import LoginRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 import logging
@@ -268,6 +269,14 @@ class UserDetailView(APIView):
 
 class LoginView(APIView):
     permission_classes = [NoAuthentication]
+
+    # Per-IP login rate limit. 10 attempts/min (configurable via
+    # THROTTLE_RATE_LOGIN env). The global DEFAULT_THROTTLE_CLASSES
+    # already applies AnonRateThrottle at 30/min, but that's shared
+    # across all anon endpoints — a tight, dedicated scope here means
+    # credential stuffing can't steal the budget meant for password
+    # reset, public org-invite lookup, etc.
+    throttle_classes = [LoginRateThrottle]
 
     # Caps to prevent DoS via huge payloads. RFC 5321 caps email at 254
     # chars total. Password cap is generous enough for passphrases but

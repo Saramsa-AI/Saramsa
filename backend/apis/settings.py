@@ -457,6 +457,10 @@ REST_FRAMEWORK = {
         'analysis': os.getenv('THROTTLE_RATE_ANALYSIS', '30/hour'),
         'upload': os.getenv('THROTTLE_RATE_UPLOAD', '60/hour'),
         'work_items': os.getenv('THROTTLE_RATE_WORK_ITEMS', '60/hour'),
+        # Login throttle — tighter than the global anon rate because
+        # credential stuffing brute-force is a real concern. See
+        # apis.core.throttling.LoginRateThrottle.
+        'login': os.getenv('THROTTLE_RATE_LOGIN', '10/minute'),
     },
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'EXCEPTION_HANDLER': 'apis.core.exceptions.custom_exception_handler',
