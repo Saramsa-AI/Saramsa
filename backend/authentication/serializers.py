@@ -95,6 +95,17 @@ class AppTokenRefreshSerializer(serializers.Serializer):
         except TokenError:
             raise serializers.ValidationError("Invalid or expired refresh token")
 
+        # Reject explicitly-blacklisted tokens (set by LogoutView when the
+        # user clicks logout). We check Redis here rather than relying on
+        # SimpleJWT's BlacklistedToken table because the OutstandingToken
+        # FK is incompatible with our UserAccount string pk — see
+        # token_blacklist_service for the full story.
+        jti = old_refresh.get('jti')
+        if jti:
+            from .services.token_blacklist_service import is_blacklisted
+            if is_blacklisted(jti):
+                raise serializers.ValidationError("Token is blacklisted")
+
         user_id = old_refresh.get('user_id')
         if not user_id:
             raise serializers.ValidationError("Invalid refresh token")

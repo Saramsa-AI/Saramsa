@@ -381,11 +381,25 @@ class LogoutView(APIView):
         if refresh_token:
             try:
                 token = RefreshToken(refresh_token)
-                token.blacklist()
+                # Two-pronged revocation:
+                # (1) SimpleJWT's native blacklist — currently a no-op on
+                #     this codebase due to UserAccount-vs-auth-User pk
+                #     mismatch (OutstandingToken FK expects numeric).
+                #     Calling it anyway is forward-compat: once Phase 6
+                #     ships a custom OutstandingToken model with string
+                #     user_id, this call starts succeeding for free.
+                # (2) Redis JTI blacklist (token_blacklist_service) —
+                #     the actual working mechanism today. AppTokenRefresh
+                #     Serializer checks Redis on every refresh.
+                try:
+                    token.blacklist()
+                except Exception:
+                    pass  # See (1) above
+                from ..services.token_blacklist_service import blacklist_jti
+                blacklist_jti(token.get("jti"), exp_timestamp=token.get("exp"))
             except Exception:
-                # Token already invalid, blacklisted, malformed, or
-                # belongs to a deleted user. None of these are failures
-                # from the user's perspective — they're logging out.
+                # Token construction itself failed (malformed / unparseable).
+                # Logout proceeds anyway — see view docstring.
                 pass
 
         return StandardResponse.success(

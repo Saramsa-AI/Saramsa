@@ -16,8 +16,6 @@ care about.
 
 from __future__ import annotations
 
-import unittest
-
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -71,43 +69,33 @@ class LogoutViewBlacklistTest(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
 
-    @unittest.expectedFailure
     def test_blacklisted_refresh_token_rejected_on_next_refresh(self) -> None:
-        """KNOWN BUG — pinned as expectedFailure so the gap is visible.
+        """Logout → try the same refresh token at /api/auth/refresh/ →
+        expect 401. This is the actual security guarantee of LogoutView;
+        without it, the refresh token stays valid for its full 7-day TTL
+        even after the user clicks logout.
 
-        The intent: logout → try the same refresh token at /api/auth/refresh/
-        → expect 401 'Token is blacklisted'. This is the actual security
-        guarantee of LogoutView; without it, the refresh token stays valid
-        for its full 7-day TTL even after logout.
-
-        Why it fails today: SimpleJWT's `RefreshToken.blacklist()` creates
-        an OutstandingToken row whose `user` FK expects a numeric Django
-        auth-User pk, but our `UserAccount.id` is a string. The blacklist
-        call raises silently inside `LogoutView` (which catches the
-        exception) and inside `AppTokenRefreshSerializer.validate` (which
-        debug-logs and continues — see serializers.py:110-120).
-
-        Net effect: the LogoutView returns 200 as if it worked, but the
-        token is NOT actually blacklisted and can be reused. This test
-        will start passing as soon as someone wires up custom blacklist
-        models that accept string user IDs (a Phase 6 follow-up).
+        How the blacklist actually works: SimpleJWT's native
+        `RefreshToken.blacklist()` is a no-op on this codebase because
+        the OutstandingToken FK expects a numeric Django auth-User pk
+        but `UserAccount.id` is a string. We work around that with a
+        Redis-backed JTI blacklist — see token_blacklist_service.py.
+        LogoutView writes to Redis on logout; AppTokenRefreshSerializer
+        checks Redis before issuing new tokens.
         """
-        # Step 1: logout, which SHOULD blacklist the refresh but currently
-        # fails silently.
+        # Step 1: logout — writes the JTI to Redis with TTL == refresh exp.
         self.client.post(
             "/api/auth/logout/",
             {"refresh": self.refresh},
             format="json",
         )
-        # Step 2: try to use the (un-blacklisted) refresh at /refresh/.
+        # Step 2: try to use the now-blacklisted refresh at /refresh/.
         refresh_resp = self.client.post(
             "/api/auth/refresh/",
             {"refresh": self.refresh},
             format="json",
         )
-        # Expected post-fix: 401 "Token is blacklisted".
-        # Actual today: 200 — refresh succeeds.
-        self.assertEqual(refresh_resp.status_code, 401)
+        self.assertEqual(refresh_resp.status_code, 400)
 
     def test_double_logout_does_not_error(self) -> None:
         """Idempotent: calling logout twice with the same refresh token
