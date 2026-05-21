@@ -124,22 +124,18 @@ export function useAuth(): HookResult {
   }, [dispatch]);
 
   const logout = useCallback(async () => {
+    // Local + cookie cleanup AND redirect both live in clientLogout
+    // (auth.ts:logout) — the canonical implementation. We only add the
+    // Redux dispatch here because auth.ts has no Redux access.
+    // The try/catch is belt-and-suspenders: dispatch shouldn't throw,
+    // but if it does we still want clientLogout to fire so the user
+    // doesn't get stuck on a page they should no longer see.
     try {
-      // Clear client-side auth state
-      clientLogout();
-      // Clear Redux state
       dispatch(sliceLogout());
-      // Force redirect to login page
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
     } catch (error) {
-      console.error('Logout error:', error);
-      // Force redirect even if logout fails
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
+      console.error('Logout dispatch error:', error);
     }
+    clientLogout();
   }, [dispatch]);
 
   const switchOrganization = useCallback<HookResult['switchOrganization']>(async (organizationId) => {

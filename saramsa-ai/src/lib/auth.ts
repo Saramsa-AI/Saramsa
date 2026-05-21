@@ -49,39 +49,70 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:8000';
 const AUTH_BASE = `${API_BASE_URL}/api/auth`;
 
-// Standardized token storage keys
-const ACCESS_TOKEN_KEY = 'sa_access_token';
-const REFRESH_TOKEN_KEY = 'sa_refresh_token';
-const USER_STORAGE_KEY = 'sa_user';
+// Standardized token storage keys. Exported so callers (e.g. the axios
+// interceptor in apiRequest.ts) can remove or read them via the canonical
+// names rather than re-inlining the literal string.
+export const ACCESS_TOKEN_KEY = 'sa_access_token';
+export const REFRESH_TOKEN_KEY = 'sa_refresh_token';
+export const USER_STORAGE_KEY = 'sa_user';
 
 // Cookie names expected by middleware
 const ACCESS_TOKEN_COOKIE = 'saramsa_access_token';
 const REFRESH_TOKEN_COOKIE = 'saramsa_refresh_token';
 
+// Single source of truth for the login route. 7+ places previously
+// inlined the literal '/login' — pull them into this constant so a
+// future route rename is a one-line change.
+export const LOGIN_PATH = '/login';
+
+// localStorage keys that are auth-adjacent and should be cleared on
+// logout. Centralizing the list means new integration writes only need
+// to add their key here (instead of in 3 different cleanup handlers).
+// Tokens (`sa_access_token`, `sa_refresh_token`) are handled separately
+// by clearTokens(); `sa_user` by setStoredUser(null).
+const AUTH_ADJACENT_LOCALSTORAGE_KEYS = [
+  'project_id',
+  'selected_platform',
+  'selected_project_name',
+  'azure_organization',
+  'azure_pat_token',
+  'azure_process_template',
+  'azure_selected_project',
+  'azure_project_name',
+  'jira_email',
+  'jira_api_token',
+  'jira_domain',
+  'jira_project_key',
+  'jira_project_id',
+  'jira_project_name',
+] as const;
+
 function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
 }
 
-// Check if token is expired
+// Check if token is expired.
+// Decodes the JWT payload (without verifying the signature — backend is the
+// authoritative check) and compares `exp` to now. Returns true on any of:
+//   - token can't be split / base64-decoded / JSON-parsed (malformed)
+//   - payload has no `exp` claim or it isn't a number (malformed)
+//   - exp <= now (expired or expiring this instant)
+//
+// We deliberately use <= for the time comparison: if the claim is "expires
+// at exactly 12:00:00.000" and clock is 12:00:00.000, the token is dead.
 function isTokenExpired(token: string): boolean {
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
+    const exp = payload?.exp;
+    if (typeof exp !== 'number') {
+      // Missing or non-numeric exp = treat as expired. A JWT without exp
+      // is a malformed token from our backend's perspective.
+      return true;
+    }
     const currentTime = Date.now() / 1000;
-    return payload.exp < currentTime;
+    return exp <= currentTime;
   } catch {
     return true;
-  }
-}
-
-// Check if token will expire soon (within 5 minutes)
-function isTokenExpiringSoon(token: string): boolean {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    const currentTime = Date.now() / 1000;
-    const fiveMinutes = 5 * 60;
-    return payload.exp < (currentTime + fiveMinutes);
-  } catch {
-    return true; // If we can't decode, assume expiring soon
   }
 }
 
@@ -415,25 +446,33 @@ export async function switchActiveOrganization(organizationId: string): Promise<
   return response.data.user;
 }
 
+/**
+ * Single source of truth for logging out. Three places used to do their
+ * own version of this (auth.ts, useAuth.ts, apiRequest.ts handleAuthFailure)
+ * with different localStorage cleanup lists — that drift produced bugs
+ * like Azure/Jira project keys surviving logout. After Phase 2 cleanup,
+ * every logout path funnels through here.
+ *
+ * Steps:
+ *   1. Clear access + refresh tokens (localStorage + cookies)
+ *   2. Clear stored user (sa_user)
+ *   3. Clear auth-adjacent localStorage keys (single list above)
+ *   4. Redirect to LOGIN_PATH unless we're already there
+ *
+ * Redux cleanup is NOT done here (this module has no Redux import).
+ * Callers with access to dispatch should dispatch sliceLogout() too.
+ */
 export function logout(): void {
   clearTokens();
   setStoredUser(null);
-  
-  // Clear any other auth-related localStorage items
+
   if (typeof window !== 'undefined') {
-    // Clear project selections and other session data
-    localStorage.removeItem('project_id');
-    localStorage.removeItem('selected_platform');
-    localStorage.removeItem('azure_organization');
-    localStorage.removeItem('azure_pat_token');
-    localStorage.removeItem('azure_process_template');
-    localStorage.removeItem('jira_email');
-    localStorage.removeItem('jira_api_token');
-    localStorage.removeItem('jira_domain');
-    
-    // Redirect to login page
-    if (window.location.pathname !== '/login') {
-      window.location.href = '/login';
+    for (const key of AUTH_ADJACENT_LOCALSTORAGE_KEYS) {
+      localStorage.removeItem(key);
+    }
+
+    if (window.location.pathname !== LOGIN_PATH) {
+      window.location.href = LOGIN_PATH;
     }
   }
 }

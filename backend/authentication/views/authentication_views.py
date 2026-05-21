@@ -39,12 +39,6 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [NoAuthentication]
     serializer_class = AppUserRegisterSerializer
     logger = logging.getLogger(__name__)
-    
-    def get(self, request):
-        return StandardResponse.success(
-            data={"status": "ok"},
-            message="Registration endpoint is available"
-        )
 
     @handle_service_errors
     def create(self, request, *args, **kwargs):

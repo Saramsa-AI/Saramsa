@@ -158,7 +158,11 @@ class OrganizationInviteService:
             raise ValueError("This invite has already been used.")
         if invite.status == "revoked":
             raise ValueError("This invite has been revoked.")
-        if invite.expires_at < _now_utc():
+        if invite.expires_at <= _now_utc():
+            # `<=` not `<` so an invite that expires exactly at `now` is
+            # treated as expired. The strict-less-than version had a
+            # zero-width window where an invite at exactly its TTL would
+            # still validate — flagged in the auth audit.
             raise ValueError("This invite has expired.")
         organization = Organization.objects.filter(id=invite.organization_id).first()
         return {
@@ -217,19 +221,6 @@ class OrganizationInviteService:
             "organization_id": str(invite.organization_id),
             "role": invite.role,
         }
-
-    def consume_token_during_signup(
-        self,
-        *,
-        token: str,
-        user_id: str,
-        user_email: str,
-    ) -> Optional[Dict[str, Any]]:
-        """Convenience for the signup view: same as accept_invite but
-        returns None if the token is empty (signup with no invite)."""
-        if not token:
-            return None
-        return self.accept_invite(token=token, user_id=user_id, user_email=user_email)
 
     def _to_dict(self, invite, *, include_token: bool = False, organization=None) -> Dict[str, Any]:
         data: Dict[str, Any] = {
