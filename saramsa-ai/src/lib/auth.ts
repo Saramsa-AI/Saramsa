@@ -323,15 +323,27 @@ export async function refreshAccessToken(): Promise<string> {
   }
 
   const data = await res.json();
-  const newAccessToken = data.access;
-  
-  // Update stored access token
-  localStorage.setItem(ACCESS_TOKEN_KEY, newAccessToken);
-  
-  // Update cookie
-  const oneHour = 60 * 60;
-  document.cookie = `${ACCESS_TOKEN_COOKIE}=${encodeURIComponent(newAccessToken)}; Path=/; Max-Age=${oneHour}; SameSite=Lax`;
-  
+  const newAccessToken: string = data.access;
+  // Backend's SIMPLE_JWT is configured with ROTATE_REFRESH_TOKENS=True and
+  // BLACKLIST_AFTER_ROTATION=True (apis/settings.py). That means every
+  // successful refresh:
+  //   1. Returns a NEW refresh token in `data.refresh`
+  //   2. Blacklists the refresh token we just used
+  //
+  // Previously we only persisted the new access token and kept reusing the
+  // OLD refresh token. On the next refresh (~1 hour later when access
+  // expires again) the backend would reject the now-blacklisted refresh →
+  // user gets silently logged out. Every active user hit this exactly once
+  // per access-token lifetime (1h), seeing it as a "random session timeout".
+  //
+  // Fix: persist the rotated refresh too. Fall back to the incoming refresh
+  // token if the backend ever stops rotating (e.g., dev environment with
+  // ROTATE_REFRESH_TOKENS=False) — that keeps behavior identical to before.
+  const rotatedRefreshToken: string | undefined = data.refresh;
+  const refreshToPersist = rotatedRefreshToken ?? refreshToken;
+
+  setTokens({ access: newAccessToken, refresh: refreshToPersist });
+
   return newAccessToken;
 }
 
