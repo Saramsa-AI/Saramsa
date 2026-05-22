@@ -75,24 +75,28 @@ class Migration(migrations.Migration):
             name="token_hash",
             field=models.CharField(max_length=64, null=True, db_index=True),
         ),
-        # Step 2: Hash every existing plaintext token and null out the
-        # plaintext. After this RunPython, every pre-existing row has
-        # token_hash set and token=NULL.
-        migrations.RunPython(_backfill_hashes, reverse_code=_reverse_backfill),
-        # Step 3: Make token_hash NOT NULL and unique. Safe because the
-        # backfill above populated every row.
-        migrations.AlterField(
-            model_name="organizationinvite",
-            name="token_hash",
-            field=models.CharField(max_length=64, unique=True, db_index=True),
-        ),
-        # Step 4: Make the plaintext token column nullable. Going forward,
-        # new rows have token=NULL and only token_hash is populated.
+        # Step 2: Make the plaintext `token` column nullable BEFORE the
+        # backfill RunPython runs. The backfill sets `token = None` on
+        # every row; if the column is still NOT NULL at that point, the
+        # UPDATE crashes with IntegrityError. The original ordering had
+        # this AlterField as step 4 (after backfill), which was the bug
+        # that caused the first migration attempt to roll back.
         migrations.AlterField(
             model_name="organizationinvite",
             name="token",
             field=models.CharField(
                 max_length=128, null=True, blank=True, unique=True, db_index=True
             ),
+        ),
+        # Step 3: Hash every existing plaintext token and null out the
+        # plaintext. After this RunPython, every pre-existing row has
+        # token_hash set and token=NULL.
+        migrations.RunPython(_backfill_hashes, reverse_code=_reverse_backfill),
+        # Step 4: Make token_hash NOT NULL and unique. Safe because the
+        # backfill above populated every row.
+        migrations.AlterField(
+            model_name="organizationinvite",
+            name="token_hash",
+            field=models.CharField(max_length=64, unique=True, db_index=True),
         ),
     ]
