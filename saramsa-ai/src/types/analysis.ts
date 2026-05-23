@@ -32,6 +32,7 @@ export type AnalysisData = {
   analysisType: string;
   rawLlm: any;
   insights?: string[];
+  dimensions?: Array<Record<string, any>>;
   analysisData: {
     overall: SentimentBreakdown;
     counts: { total: number; positive: number; negative: number; neutral: number };
@@ -55,4 +56,10 @@ export type AnalysisData = {
   };
   analysis_date?: string;
   total_comments_analyzed?: number;
+  // Cache-priming fields for the user-story-creation endpoint. Populated by the
+  // celery pipeline so the work-item endpoint can reuse this narration instead
+  // of re-running GPT. Stay typed `any` because the shape mirrors the backend
+  // narration_service response which evolves independently.
+  narration?: any;
+  work_item_candidates?: any[];
 };

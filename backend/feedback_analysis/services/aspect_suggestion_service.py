@@ -130,22 +130,33 @@ class AspectSuggestionService:
 
 Your task is to analyze the following customer comments and do TWO things:
 1) Identify the most appropriate industry or service domain the feedback belongs to.
-2) Generate a concise, actionable list of high-level feedback categories ("aspects") suitable for analyzing feedback in that domain.
+2) Extract the recurring themes, features, and topics that users are actually discussing in their comments.
 
-IMPORTANT RULES:
-- The industry/domain must be a clear, commonly understood category (e.g., Hospitality, SaaS, E-commerce, Fintech, Logistics, Healthcare, Education, etc.).
-- Aspects must represent broad, reusable experience or responsibility areas within that industry.
-- Each aspect should be something a team or function could reasonably own or improve.
-- Use short noun or noun-phrase labels only.
-- Do NOT generate aspects that are:
-  - Too generic (e.g., "experience", "overall", "service quality")
-  - Too specific or issue-level (e.g., "AC not working", "login button broken")
-  - Full sentences or complaints
-- Do NOT exceed 6–10 aspects.
-- You are NOT analyzing sentiment.
-- You are NOT summarizing feedback.
-- You are ONLY identifying the domain and proposing grouping dimensions.
-- These aspects are suggestions and will be reviewed and approved by a user before analysis begins.
+CRITICAL: Extract aspects from the actual comments, don't invent generic categories.
+
+INSTRUCTIONS FOR ASPECT EXTRACTION:
+Step 1: Read through all comments and identify what users are talking about
+Step 2: Look for recurring patterns - what features, areas, or topics appear multiple times?
+Step 3: Extract the EXACT words and phrases users use to describe these features/areas
+Step 4: Group similar phrases (e.g., "the screener", "screener tool", "stock screener" → "Stock Screener")
+Step 5: Create one aspect per distinct feature/area that users discuss
+
+NAMING RULES:
+- Use the terminology that appears IN the comments (not what you think it should be called)
+- Keep names short (2-4 words) and specific
+- Use noun phrases, not sentences
+- If users use different names for the same thing, pick the most common one
+- Each aspect should be something concrete that users can give feedback about
+
+QUALITY CHECKS:
+✓ Is this something users actually mentioned in the comments?
+✓ Would a team member recognize this as matching user feedback?
+✓ Is this specific enough to be actionable?
+✗ Is this too generic ("Experience", "Quality", "Service")?
+✗ Am I inventing categories that don't match user language?
+✗ Am I combining unrelated features to reduce the count?
+
+Generate 8-15 aspects depending on the variety of topics users discuss.
 
 Customer comments:
 {comments}
@@ -239,10 +250,10 @@ Return ONLY valid JSON in the following format:
                     if cleaned.lower() not in generic_terms:
                         cleaned_aspects.append(cleaned)
         
-        # Limit to 6-12 aspects (target 8)
-        if len(cleaned_aspects) > 12:
-            logger.warning(f"Too many aspects ({len(cleaned_aspects)}), limiting to 12")
-            cleaned_aspects = cleaned_aspects[:12]
+        # Allow 6-15 aspects for comprehensive coverage
+        if len(cleaned_aspects) > 15:
+            logger.warning(f"Too many aspects ({len(cleaned_aspects)}), limiting to 15")
+            cleaned_aspects = cleaned_aspects[:15]
         elif len(cleaned_aspects) < 6:
             logger.warning(f"Too few aspects ({len(cleaned_aspects)}), may need review")
         

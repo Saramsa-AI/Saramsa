@@ -50,6 +50,7 @@ def _doc_from_analysis(obj: Analysis) -> Dict[str, Any]:
             "quarter": obj.quarter,
             "result": obj.result or {},
             "comments": obj.comments or [],
+            "dimensions": obj.dimensions or [],
             "createdAt": obj.created_at.isoformat() if obj.created_at else None,
             "updatedAt": obj.updated_at.isoformat() if obj.updated_at else None,
         },
@@ -173,7 +174,7 @@ class AnalysisRepository:
         return _doc_from_analysis(obj) if obj else None
 
     def get_latest_by_project(self, project_id: str) -> Optional[Dict[str, Any]]:
-        obj = Analysis.objects.filter(project_id=str(project_id), type=self.entity_type).order_by("-created_at").first()
+        obj = Analysis.objects.filter(project_id=str(project_id)).order_by("-created_at").first()
         return _doc_from_analysis(obj) if obj else None
 
     def get_latest_personal_by_user(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -181,7 +182,10 @@ class AnalysisRepository:
         return _doc_from_analysis(obj) if obj else None
 
     def get_by_project(self, project_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        qs = Analysis.objects.filter(project_id=str(project_id), type=self.entity_type).order_by("-created_at")[:limit]
+        qs = (
+            Analysis.objects.filter(project_id=str(project_id))
+            .order_by("-created_at")[:limit]
+        )
         return [_doc_from_analysis(row) for row in qs]
 
     def get_recent_by_project(self, project_id: str, limit: int = 20) -> List[Dict[str, Any]]:
@@ -354,6 +358,7 @@ class AnalysisRepository:
                     "quarter": analysis_data.get("quarter", ""),
                     "result": result_dict,
                     "comments": analysis_data.get("comments") or analysis_data.get("original_comments") or analysis_data.get("feedback") or [],
+                    "dimensions": analysis_data.get("dimensions") or [],
                     "payload": analysis_data,
                     "updated_at": timezone.now(),
                 },
@@ -383,6 +388,7 @@ class AnalysisRepository:
                     "quarter": payload.get("quarter", ""),
                     "result": payload.get("result") or payload.get("analysisData") or {},
                     "comments": payload.get("comments") or [],
+                    "dimensions": payload.get("dimensions") or [],
                     "payload": payload,
                     "updated_at": timezone.now(),
                 },

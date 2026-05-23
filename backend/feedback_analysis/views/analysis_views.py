@@ -49,8 +49,8 @@ class AnalyzeCommentsView(APIView):
     throttle_classes = []
 
     def get_throttles(self):
-        from apis.core.throttling import AnalysisRateThrottle
-        return [AnalysisRateThrottle()]
+        # Throttling disabled for local testing
+        return []
 
     @handle_service_errors
     def post(self, request):

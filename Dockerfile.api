@@ -16,7 +16,26 @@ RUN python manage.py collectstatic --noinput || \
 
 EXPOSE 8000
 
-# Mirror the gunicorn invocation from backend/startup.sh.
-CMD ["gunicorn", "--bind=0.0.0.0:8000", "--timeout", "600", "--workers", "2", \
-     "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", \
-     "apis.wsgi:application"]
+# Run Django migrations on container startup, then exec gunicorn.
+#
+# Why this is here:
+#   Before this change, the deploy workflow built + pushed a Docker image
+#   and Azure App Service restarted the container. Django migrations were
+#   NEVER part of the deploy — they had to be applied manually, which was
+#   easy to forget. The auth-flow audit's 0006_hash_invite_tokens migration
+#   shipped with PR #44 but didn't apply for that reason, breaking invite
+#   acceptance in prod until someone manually ran `manage.py migrate`.
+#
+#   Running migrations at container start makes the deploy self-contained:
+#   the image that ships the new code also applies the schema changes it
+#   needs. The container can't accept traffic until migrate finishes
+#   (gunicorn doesn't bind to :8000 until then).
+#
+# Important properties:
+#   - `--noinput` skips the "are you sure?" prompt (no TTY in containers)
+#   - migrate is idempotent — re-running on a healthy DB is a fast no-op
+#   - if migrate fails, gunicorn never starts → Azure healthcheck fails →
+#     deploy is marked failed and the OLD container keeps serving. Safer
+#     than the old behavior where a broken migration silently shipped.
+#   - we use `exec` so gunicorn becomes PID 1, receiving signals properly
+CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn --bind=0.0.0.0:8000 --timeout 600 --workers 2 --access-logfile - --error-logfile - --log-level info apis.wsgi:application"]

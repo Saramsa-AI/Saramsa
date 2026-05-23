@@ -1,3 +1,4 @@
+# Quality improvements: threshold 0.35, 12-15 aspects (2026-05-13)
 amqp==5.3.1
 annotated-doc==0.0.4
 annotated-types==0.7.0
@@ -71,6 +72,7 @@ msrest==0.7.1
 networkx==3.4.2
 numpy==2.2.6
 oauthlib==3.3.1
+onnxruntime==1.22.0
 openai==1.75.0
 opentelemetry-api==1.37.0
 opentelemetry-instrumentation==0.58b0
@@ -148,3 +150,12 @@ websockets==16.0
 wrapt==1.17.2
 zipp==3.23.0
 bcrypt==4.2.1
+concurrent-log-handler==0.9.25
+# Required by feedback_analysis/views/file_ingest_views.py for CSV / JSON /
+# Excel column classification (structured-dimensions feature). Was previously
+# missing from requirements.txt — present in local venvs but absent from the
+# prod Docker image, breaking every CSV/JSON upload after the structured-
+# dimensions code shipped. openpyxl is the engine for .xlsx; .xls support
+# (xlrd) is left optional since the code already handles ImportError there.
+pandas==2.3.3
+openpyxl==3.1.5

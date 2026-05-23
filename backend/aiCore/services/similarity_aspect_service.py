@@ -55,7 +55,10 @@ class SimilarityAspectService:
         
     def classify_aspects(self, comments: List[str], aspects: List[str],
                         run_id: Optional[str] = None,
-                        is_cancelled=None) -> List[Dict[str, Any]]:
+                        is_cancelled=None,
+                        company_name: Optional[str] = None,
+                        task: Optional[Any] = None,
+                        on_progress: Optional[Any] = None) -> List[Dict[str, Any]]:
         """
         Classify comments against aspects using bi-encoder cosine similarity.
         

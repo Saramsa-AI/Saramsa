@@ -2,6 +2,15 @@ import { createSlice, PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
 import { getProviderLabel, type WorkProvider } from '@/lib/providers';
 import type { AnalysisData } from '@/types/analysis';
+import {
+  ANALYZING_PREFIX,
+  HISTORY_STATUS,
+  TASK_STATUS,
+  isAnalyzingPlaceholder,
+  isBackendTerminal,
+  type HistoryStatus,
+  type TaskStatus,
+} from '@/lib/analysisConstants';
 
 interface ProjectContext {
   project_id: string;
@@ -15,8 +24,10 @@ export interface AnalysisHistoryEntry {
   analysis_date: string;
   comments_count: number;
   positive_pct: number;
-  status: string;
+  status: string;  // 'analyzing' | 'completed' | 'cancelled'
   name?: string;
+  task_id?: string;
+  file_name?: string;
 }
 
 interface AnalysisState {
@@ -92,7 +103,7 @@ export const pollTaskStatus = createAsyncThunk<
   }
 });
 
-async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id: string; analysisData: any }> {
+async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id: string; analysisData: any; taskId: string }> {
   const resolveAnalysis = async (statusResult: any) => {
     const taskResult = statusResult.result;
     if (taskResult?.insight_id) {
@@ -105,9 +116,31 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
       const analysisData = analysisRes.data?.data;
       if (analysisData?.exists && analysisData?.analysis) {
         const analysis = analysisData.analysis;
+        // Default to the inner analysisData (counts/features/etc) so existing
+        // consumers like `activeAnalysisData.analysisData.counts` keep working.
+        const inner = analysis.analysisData ?? analysis.result ?? analysis;
+        // Merge in the top-level cache-priming fields that the
+        // user-story-creation endpoint needs. Without these, devops_service
+        // re-runs the GPT narration on every "generate user stories" click
+        // even though celery already did it.
+        const merged = (typeof inner === 'object' && inner !== null)
+          ? {
+              ...inner,
+              narration: (inner as any).narration ?? analysis.narration,
+              work_item_candidates: (inner as any).work_item_candidates ?? analysis.work_item_candidates,
+            }
+          : inner;
+        // Also expose narration/work_item_candidates at the TOP LEVEL of the
+        // returned object. applyAnalysisResult in Dashboard.tsx dispatches this
+        // verbatim as Redux `state.analysisData`, which is what generateUserStories
+        // POSTs as `analysis_data`. devops_service checks `analysis_data.narration`
+        // at top level — keeping the fields nested inside `analysisData` only
+        // (which is what `merged` does) means the cache check never sees them.
         return {
           id: analysis.id || taskResult.insight_id,
-          analysisData: analysis.analysisData ?? analysis.result ?? analysis
+          analysisData: merged,
+          narration: (analysis as any).narration ?? (inner as any)?.narration ?? null,
+          work_item_candidates: (analysis as any).work_item_candidates ?? (inner as any)?.work_item_candidates ?? null,
         };
       }
       throw new Error('Analysis saved but not found by ID.');
@@ -139,7 +172,7 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
         if (!reader) throw new Error('No stream reader');
         const decoder = new TextDecoder();
         let buffer = '';
-        const timeout = setTimeout(() => { reader.cancel(); reject('Analysis timeout'); }, 900000);
+        const timeout = setTimeout(() => { reader.cancel(); reject('Analysis timeout'); }, 1800000);
 
         const processStream = async () => {
           while (true) {
@@ -156,7 +189,7 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
                 const s = statusResult.status;
                 if (s === 'SUCCESS' || s === 'PARTIAL') {
                   clearTimeout(timeout);
-                  resolve(await resolveAnalysis(statusResult));
+                  resolve({ ...(await resolveAnalysis(statusResult)), taskId });
                   return;
                 }
                 if (s === 'FAILURE' || s === 'FAILED') {
@@ -182,7 +215,7 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
           const s = statusResult.status;
           if (s === 'SUCCESS' || s === 'PARTIAL') {
             clearInterval(pollInterval);
-            resolve(await resolveAnalysis(statusResult));
+            resolve({ ...(await resolveAnalysis(statusResult)), taskId });
           } else if (s === 'FAILURE' || s === 'FAILED') {
             clearInterval(pollInterval);
             reject(statusResult.error || 'Analysis failed');
@@ -192,7 +225,7 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
           reject(error);
         }
       }, 2000);
-      setTimeout(() => { clearInterval(pollInterval); reject('Analysis timeout'); }, 900000);
+      setTimeout(() => { clearInterval(pollInterval); reject('Analysis timeout'); }, 1800000);
     }
   });
 }
@@ -513,6 +546,20 @@ export const deleteAnalysisRun = createAsyncThunk<
   }
 });
 
+// Async thunk for cancelling a running Celery task
+export const cancelAnalysisTask = createAsyncThunk<
+  { taskId: string; tempId: string },
+  { taskId: string; tempId: string },
+  { rejectValue: string }
+>('analysis/cancelAnalysisTask', async ({ taskId, tempId }, { rejectWithValue }) => {
+  try {
+    await apiRequest('post', `/insights/task-cancel/${taskId}/`, undefined, true);
+    return { taskId, tempId };
+  } catch (err: any) {
+    return rejectWithValue(err?.message || 'Failed to cancel task.');
+  }
+});
+
 // Async thunk for renaming an analysis run
 export const renameAnalysisRun = createAsyncThunk<
   { id: string; name: string | null },
@@ -546,6 +593,80 @@ export const renameAnalysisRun = createAsyncThunk<
   }
 });
 
+/**
+ * Single coordinator that drives ALL state atoms forward together when an
+ * in-flight analysis reaches a terminal state. Before this existed, four
+ * separate reducers each updated subsets of state and the UI showed
+ * contradictory states (sidebar "Analyzing..." + stepper "Completed" +
+ * skeleton + "Completed" badge at the same time). This is the choke point
+ * that guarantees they all transition in lockstep.
+ *
+ * Callable from:
+ *   - extraReducers (pollTaskStatus.fulfilled / analyzeComments.* / ingestFile.*)
+ *   - components (via the `resolveAnalyzingTask` action exported below)
+ *
+ * Idempotent — safe to call multiple times for the same task (e.g., once
+ * from pollTaskStatus and again from a task-list poll that detected stale-
+ * sweep). Reads state.analysisHistory by the placeholder id, mutates in
+ * place via Immer's draft semantics.
+ */
+type TerminalResolution = {
+  taskId: string;
+  /** The history entry's current id (typically `analyzing_<taskId>`). */
+  placeholderId?: string;
+  /** Final history-row status: 'completed' | 'failed' | 'cancelled'. */
+  historyStatus: HistoryStatus;
+  /** Real `insight_<id>` from the backend; absent if the task failed. */
+  insightId?: string | null;
+  /** Optional fields to overwrite on the history entry (analysis_date, counts, etc.). */
+  entryPatch?: Partial<AnalysisHistoryEntry>;
+  /** Final task-level status: 'success' | 'failure' | 'idle'. */
+  nextTaskStatus: TaskStatus;
+  /** Project key the in-flight flag was held under; defaults to clearing all. */
+  projectKey?: string | null;
+};
+
+function applyTerminalResolution(state: AnalysisState, args: TerminalResolution): void {
+  const placeholder = args.placeholderId ?? `${ANALYZING_PREFIX}${args.taskId}`;
+
+  // 1. Move analysisStatus to its terminal value.
+  state.analysisStatus = args.nextTaskStatus;
+
+  // 2. Swap the history entry's id (placeholder -> real) and update its status.
+  //    If the entry doesn't exist (e.g., page reloaded), we skip silently — the
+  //    user-facing effect is still correct because selectedAnalysisId and other
+  //    atoms still get reconciled below.
+  const idx = state.analysisHistory.findIndex(e => e.id === placeholder);
+  if (idx >= 0) {
+    const existing = state.analysisHistory[idx];
+    const nextId = args.insightId || existing.id;
+    state.analysisHistory[idx] = {
+      ...existing,
+      ...(args.entryPatch ?? {}),
+      id: nextId,
+      status: args.historyStatus,
+    };
+  }
+
+  // 3. If the user was viewing the placeholder, swap selectedAnalysisId to the
+  //    real insight_id (preferred) or null (so isTaskViewLoading gates clear).
+  if (isAnalyzingPlaceholder(state.selectedAnalysisId)
+      && state.selectedAnalysisId === placeholder) {
+    state.selectedAnalysisId = args.insightId ?? null;
+  }
+
+  // 4. Drop the in-flight project flag and recompute isAnalyzing.
+  if (args.projectKey) {
+    delete state.analyzingByProject[args.projectKey];
+  }
+  state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
+
+  // 5. Clear the live taskId when it matches the just-resolved one.
+  if (state.taskId === args.taskId) {
+    state.taskId = null;
+  }
+}
+
 const analysisSlice = createSlice({
   name: 'analysis',
   initialState,
@@ -560,9 +681,30 @@ const analysisSlice = createSlice({
       state.historyError = null;
       state.selectedAnalysisId = null;
       state.fetchingAnalysisById = false;
+      state.analysisStatus = 'idle';
+      state.isAnalyzing = false;
+      state.taskId = null;
     },
     setSelectedAnalysisId: (state, action: PayloadAction<string | null>) => {
       state.selectedAnalysisId = action.payload;
+      // Reset analysis status when switching to a historical (non-live) task.
+      // The in-flight placeholder is the only id that should leave analysisStatus
+      // mid-flight; everything else resets the gates so loading skeletons clear.
+      if (!isAnalyzingPlaceholder(action.payload)) {
+        state.analysisStatus = TASK_STATUS.IDLE;
+        state.isAnalyzing = false;
+      }
+    },
+    /**
+     * Components dispatch this when they observe (via task-list poll, stale-
+     * sweep response, or any other side channel) that an in-flight task has
+     * reached a terminal state. Routes through the same `applyTerminalResolution`
+     * coordinator that pollTaskStatus.fulfilled uses, so the four UI atoms
+     * (analysisStatus / selectedAnalysisId / history entry status / isAnalyzing)
+     * can never drift apart.
+     */
+    resolveAnalyzingTask: (state, action: PayloadAction<TerminalResolution>) => {
+      applyTerminalResolution(state, action.payload);
     },
     prependToHistory: (state, action: PayloadAction<AnalysisHistoryEntry>) => {
       const entry = action.payload;
@@ -592,6 +734,12 @@ const analysisSlice = createSlice({
       const entry = state.analysisHistory.find(e => e.id === action.payload.id);
       if (entry) {
         entry.name = action.payload.name;
+      }
+    },
+    setTaskIdForEntry: (state, action: PayloadAction<{ tempId: string; taskId: string }>) => {
+      const entry = state.analysisHistory.find(e => e.id === action.payload.tempId);
+      if (entry) {
+        entry.task_id = action.payload.taskId;
       }
     },
     clearError: (state) => {
@@ -644,8 +792,13 @@ const analysisSlice = createSlice({
         const key = action.meta.arg.projectId ?? 'personal';
         delete state.analyzingByProject[key];
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
-        state.analysisStatus = 'failure';
+        state.analysisStatus = TASK_STATUS.FAILURE;
         state.taskId = null;
+        // If the user was viewing the in-flight placeholder for this rejected
+        // thunk, clear it so the loading skeleton releases.
+        if (isAnalyzingPlaceholder(state.selectedAnalysisId)) {
+          state.selectedAnalysisId = null;
+        }
       })
       .addCase(ingestFile.pending, (state, action) => {
         state.loading = true;
@@ -671,19 +824,40 @@ const analysisSlice = createSlice({
         const key = action.meta.arg.projectId ?? 'personal';
         delete state.analyzingByProject[key];
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
-        state.analysisStatus = 'failure';
+        state.analysisStatus = TASK_STATUS.FAILURE;
         state.taskId = null;
+        if (isAnalyzingPlaceholder(state.selectedAnalysisId)) {
+          state.selectedAnalysisId = null;
+        }
       })
       .addCase(pollTaskStatus.pending, (state) => {
         state.analysisStatus = 'processing';
       })
       .addCase(pollTaskStatus.fulfilled, (state, action) => {
-        // Status is updated by analyzeComments thunk based on result
-        if (action.payload.status === 'SUCCESS') {
-          state.analysisStatus = 'success';
-        } else if (action.payload.status === 'FAILURE') {
-          state.analysisStatus = 'failure';
+        const apiStatus = action.payload?.status;
+        if (!isBackendTerminal(apiStatus)) {
+          // Not terminal yet — only update task-level status spinner.
+          return;
         }
+        const taskId = (action.meta?.arg as string | undefined) ?? state.taskId ?? null;
+        if (!taskId) return;
+
+        const nextTaskStatus: TaskStatus =
+          apiStatus === 'SUCCESS' || apiStatus === 'PARTIAL' ? TASK_STATUS.SUCCESS
+          : apiStatus === 'CANCELLED' ? TASK_STATUS.IDLE
+          : TASK_STATUS.FAILURE;
+
+        const historyStatus: HistoryStatus =
+          apiStatus === 'SUCCESS' || apiStatus === 'PARTIAL' ? HISTORY_STATUS.COMPLETED
+          : apiStatus === 'CANCELLED' ? HISTORY_STATUS.CANCELLED
+          : HISTORY_STATUS.FAILED;
+
+        applyTerminalResolution(state, {
+          taskId,
+          historyStatus,
+          insightId: action.payload?.result?.insight_id ?? null,
+          nextTaskStatus,
+        });
       })
       .addCase(pollTaskStatus.rejected, (state) => {
         state.analysisStatus = 'failure';
@@ -805,6 +979,22 @@ const analysisSlice = createSlice({
         if (entry) {
           entry.name = action.payload.name || undefined;
         }
+      })
+      // Cancel analysis task — route through the coordinator so all four state
+      // atoms transition together (history.status, selectedAnalysisId,
+      // analysisStatus, isAnalyzing) instead of partial cleanup that left
+      // selectedAnalysisId stuck at the placeholder.
+      .addCase(cancelAnalysisTask.fulfilled, (state, action) => {
+        const { tempId, taskId } = action.payload as { tempId: string; taskId?: string };
+        const extractedTaskId = taskId
+          ?? (tempId.startsWith(ANALYZING_PREFIX) ? tempId.slice(ANALYZING_PREFIX.length) : tempId);
+        applyTerminalResolution(state, {
+          taskId: extractedTaskId,
+          placeholderId: tempId,
+          historyStatus: HISTORY_STATUS.CANCELLED,
+          insightId: null,
+          nextTaskStatus: TASK_STATUS.IDLE,
+        });
       });
   },
 });
@@ -822,6 +1012,8 @@ export const {
   replaceInHistory,
   removeFromHistory,
   renameHistoryEntry,
+  setTaskIdForEntry,
+  resolveAnalyzingTask,
 } = analysisSlice.actions;
 
 export default analysisSlice.reducer; 

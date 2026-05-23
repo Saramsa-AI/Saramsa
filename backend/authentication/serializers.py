@@ -16,9 +16,21 @@ class AppUserSerializer(serializers.Serializer):
     role = serializers.CharField(max_length=50, required=False, default='user')
 
     def validate_email(self, value):
+        """Reject already-registered emails behind the SAME generic message
+        that RegisterView uses for bad/missing/mismatched invite tokens.
+
+        Why so vague? A distinct "Email already exists" response would let
+        an unauthenticated caller enumerate which emails are registered
+        (security audit flagged this as info disclosure). The actual
+        reason — duplicate email — is recorded server-side via the
+        ValidationError; admins debugging a real "but I just tried to
+        register and got this error" can find the cause in logs.
+        """
         user_service = get_user_service()
         if user_service.get_user_by_email(value):
-            raise serializers.ValidationError("Email already exists")
+            raise serializers.ValidationError(
+                "Invalid invitation. Please request a new invite from your workspace admin."
+            )
         return value
 
     def validate(self, attrs):
@@ -123,48 +135,6 @@ class AppTokenRefreshSerializer(serializers.Serializer):
             'access': str(new_refresh.access_token),
             'user': build_user_with_org_context(user_data),
         }
-
-class AppUserProfileSerializer(serializers.Serializer):
-    """Serializer for user profile updates"""
-    first_name = serializers.CharField(max_length=30, required=False, allow_blank=True)
-    last_name = serializers.CharField(max_length=30, required=False, allow_blank=True)
-    email = serializers.EmailField(required=False)
-    
-    def validate_email(self, value):
-        """Check that email is unique if changed"""
-        # This would need to be implemented based on your requirements
-        return value
-
-class AppPasswordChangeSerializer(serializers.Serializer):
-    """Serializer for password changes"""
-    old_password = serializers.CharField(write_only=True)
-    new_password = serializers.CharField(write_only=True, min_length=6)
-    
-    def validate_old_password(self, value):
-        """Validate old password"""
-        # This would need to be implemented based on your requirements
-        return value
-    
-    def validate_new_password(self, value):
-        """Validate new password"""
-        if len(value) < 6:
-            raise serializers.ValidationError("Password must be at least 6 characters long")
-        return value
-    
-    def hash_new_password(self, password):
-        """Hash new password using bcrypt"""
-        try:
-            # Convert password to bytes
-            password_bytes = password.encode('utf-8')
-            
-            # Generate salt and hash password
-            salt = bcrypt.gensalt()
-            hashed = bcrypt.hashpw(password_bytes, salt)
-            
-            # Return as string for storage
-            return hashed.decode('utf-8')
-        except Exception as e:
-            raise serializers.ValidationError(f"Password hashing failed: {str(e)}")
 
 class ForgotPasswordSerializer(serializers.Serializer):
     """Serializer for forgot password request"""

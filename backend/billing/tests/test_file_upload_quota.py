@@ -33,10 +33,12 @@ class FileUploadQuotaTest(TestCase):
         )
         # Project context is resolved before the quota check (so the charge can
         # land on the project's owning org, not the user's active org). Mock it
-        # so the test focuses on the quota gate.
+        # so the test focuses on the quota gate. The view now dispatches the
+        # long-running analysis to Celery via process_feedback_task.delay, so
+        # we patch that to confirm it is NOT called when quota is exhausted.
         with patch(
-            "feedback_analysis.views.file_upload_views.get_processing_service"
-        ) as proc_factory, patch(
+            "feedback_analysis.services.task_service.process_feedback_task.delay"
+        ) as task_delay, patch(
             "feedback_analysis.views.file_upload_views.get_analysis_service"
         ) as analysis_factory:
             analysis_factory.return_value = MagicMock(
@@ -51,28 +53,21 @@ class FileUploadQuotaTest(TestCase):
             )
 
         self.assertEqual(resp.status_code, 429)
-        proc_factory.assert_not_called()
+        task_delay.assert_not_called()
 
     def test_under_quota_increments_analysis_count(self):
-        # Stub downstream LLM/processing; gate runs for real.
+        # Stub taxonomy resolution and Celery dispatch; gate runs for real.
+        # The view now returns 202 with a task_id when the analysis is queued.
         with patch.object(
             FeedbackFileUploadView,
             "_resolve_taxonomy_for_upload",
             new=AsyncMock(return_value=({"aspects": []}, {"identified_domain": "t", "suggested_aspects": []})),
-        ), patch.object(
-            FeedbackFileUploadView,
-            "_save_analysis_data",
-            new=AsyncMock(return_value=None),
         ), patch(
-            "feedback_analysis.views.file_upload_views.get_processing_service"
-        ) as proc_factory, patch(
+            "feedback_analysis.services.task_service.process_feedback_task.delay"
+        ) as task_delay, patch(
             "feedback_analysis.views.file_upload_views.get_analysis_service"
         ) as analysis_factory:
-            proc_factory.return_value = MagicMock(
-                process_uploaded_data_async=AsyncMock(
-                    return_value={"overall": {}, "features": [], "counts": {}}
-                )
-            )
+            task_delay.return_value = MagicMock(id="fake-task-123")
             analysis_factory.return_value = MagicMock(
                 ensure_project_context=MagicMock(
                     return_value=("p-1", {"status": "active", "config_state": "complete"}, False)
@@ -85,7 +80,8 @@ class FileUploadQuotaTest(TestCase):
                 format="multipart",
             )
 
-        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.status_code, 202, resp.content)
+        task_delay.assert_called_once()
         rec = UsageRecord.objects.get(
             user_id=self.user.id, period=current_period()
         )

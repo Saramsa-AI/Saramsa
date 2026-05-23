@@ -112,3 +112,14 @@ load_test.py
 ehthumbs.db
 Thumbs.db
 .vercel
+
+# Test coverage outputs - local only, CI uploads these as artifacts
+saramsa-ai/coverage/
+backend/htmlcov/
+backend/.coverage
+backend/coverage.xml
+
+# Playwright outputs
+saramsa-ai/test-results/
+saramsa-ai/playwright-report/
+saramsa-ai/playwright/.cache/

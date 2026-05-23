@@ -18,6 +18,7 @@ type TaskItem = {
   status: StageStatus;
   statusLabel?: string;
   statusTone?: string;
+  project_id?: string | null;
   pipelineHealth?: {
     status?: string;
     errors?: Record<string, string>;
@@ -46,6 +47,9 @@ export function PipelineStatusWidget() {
   const taskId = useSelector((state: RootState) => state.analysis.taskId);
   const projectContext = useSelector(
     (state: RootState) => state.analysis.projectContext
+  );
+  const currentProject = useSelector(
+    (state: RootState) => state.projects.currentProject
   );
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [apiTasks, setApiTasks] = useState<TaskItem[]>([]);
@@ -79,6 +83,7 @@ export function PipelineStatusWidget() {
         label,
         detail: "Sentiment + synthesis pipeline",
         status: mappedStatus,
+        project_id: projectContext?.project_id ?? null,
         updatedAt: Date.now(),
       };
 
@@ -103,6 +108,7 @@ export function PipelineStatusWidget() {
           status: "error",
           statusLabel: "Partial",
           statusTone: "text-amber-600",
+          project_id: task.project_id ?? null,
           pipelineHealth: task.pipeline_health,
           commentCount: task.comment_count ?? null,
           durationSeconds: task.duration_seconds ?? null,
@@ -122,6 +128,7 @@ export function PipelineStatusWidget() {
         label: toLabel(task.project_id, task.file_name),
         detail: "Sentiment + synthesis pipeline",
         status,
+        project_id: task.project_id ?? null,
         pipelineHealth: task.pipeline_health,
         commentCount: task.comment_count ?? null,
         durationSeconds: task.duration_seconds ?? null,
@@ -180,7 +187,7 @@ export function PipelineStatusWidget() {
 
     return () => observer.disconnect();
   }, []);
-
+  
   const overall = useMemo(() => {
     switch (analysisStatus) {
       case "pending":
@@ -196,7 +203,11 @@ export function PipelineStatusWidget() {
   }, [analysisStatus]);
 
   const overallCopy = statusCopy[overall];
-  const taskSource = apiTasks.length > 0 ? apiTasks : tasks;
+  const activeProjectId = currentProject?.id ?? projectContext?.project_id ?? null;
+  const filteredApiTasks = activeProjectId
+    ? apiTasks.filter((t: TaskItem) => t.project_id === activeProjectId)
+    : apiTasks;
+  const taskSource = filteredApiTasks.length > 0 ? filteredApiTasks : tasks.filter((t: TaskItem) => !activeProjectId || t.project_id === activeProjectId);
   const activeTasks = taskSource.filter(
     (task) => task.status === "pending" || task.status === "running"
   );

@@ -4,9 +4,30 @@ import sys
 import logging
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import worker_process_init, beat_init
+from celery.signals import worker_process_init, beat_init, setup_logging
 
 from .otel import setup_otel
+
+
+@setup_logging.connect
+def _configure_celery_logging(**_kwargs):
+    """Apply Django's LOGGING dict to the celery worker.
+
+    Celery normally hijacks Python's root logger when a worker starts —
+    that silently overrides Django's dictConfig and all our per-logger
+    handlers (e.g. `apis.pipeline` → celery.log via
+    ConcurrentRotatingFileHandler). The result is task processing that
+    runs invisibly while logs are routed nowhere we look.
+
+    By connecting to the `setup_logging` signal we take over logging
+    configuration ourselves: Celery sees a handler is registered and
+    skips its own hijack, leaving Django's LOGGING dict authoritative
+    for both the backend and the worker. Phase/heartbeat lines from the
+    worker now land in the same celery.log file the backend writes to.
+    """
+    from logging.config import dictConfig
+    from django.conf import settings
+    dictConfig(settings.LOGGING)
 
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'apis.settings')
@@ -51,6 +72,12 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 
 # Suppress deprecation warning about broker_connection_retry
 app.conf.broker_connection_retry_on_startup = True
+
+# Belt-and-suspenders: prevent celery's root-logger hijack even if the
+# setup_logging signal handler above somehow doesn't fire (e.g., import
+# order edge cases). Together they guarantee Django's LOGGING dict is the
+# single source of truth for both backend and worker.
+app.conf.worker_hijack_root_logger = False
 
 # Re-apply Windows pool setting after config loading (in case settings.py overrides it)
 if sys.platform == 'win32':
@@ -105,6 +132,15 @@ app.conf.beat_schedule = {
     "weekly-digest-email": {
         "task": "send_weekly_digest",
         "schedule": crontab(minute=0, hour=9, day_of_week=1),  # Every Monday 9 AM UTC
+    },
+    "cleanup-expired-invites": {
+        # Mark pending OrganizationInvite rows past their expires_at as
+        # 'expired' so the table doesn't grow unbounded. The service layer
+        # already rejects expired invites at lookup-time, so this is hygiene
+        # rather than a correctness fix. Runs at 02:00 UTC daily — picked a
+        # low-traffic window so the UPDATE doesn't compete with user reqs.
+        "task": "cleanup_expired_invites",
+        "schedule": crontab(minute=0, hour=2),
     },
 }
 # app.conf.beat_schedule = {

@@ -1,5 +1,10 @@
 ﻿import axios, { AxiosRequestConfig, AxiosResponse, Method, AxiosError } from 'axios';
-import { getValidAccessToken, getTokens, refreshAccessToken, clearTokens } from './auth';
+import {
+  getValidAccessToken,
+  getTokens,
+  refreshAccessToken,
+  logout as logoutAndRedirect,
+} from './auth';
 
 // Extend AxiosRequestConfig to include our custom skipAuth property
 declare module 'axios' {
@@ -47,7 +52,7 @@ axiosInstance.interceptors.request.use(
   (config) => {
     // Check if auth is explicitly disabled for this request
     if (config.skipAuth !== true) {
-      const token = getAccessToken();
+      const token = getValidAccessToken();
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -83,8 +88,8 @@ axiosInstance.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const refreshToken = getRefreshToken();
-        if (!refreshToken) {
+        const tokens = getTokens();
+        if (!tokens?.refresh) {
           // No refresh token, redirect to login
           handleAuthFailure();
           return Promise.reject(error);
@@ -115,6 +120,10 @@ axiosInstance.interceptors.response.use(
 );
 
 function buildUrl(pathOrUrl: string): string {
+  if (!pathOrUrl) {
+    console.error('buildUrl called with undefined path');
+    return API_BASE;
+  }
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
   const path = pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
   // If caller passed a path beginning with /api/, avoid duplicating /api
@@ -129,31 +138,24 @@ export function buildApiUrl(pathOrUrl: string): string {
   return buildUrl(pathOrUrl);
 }
 
-function getAccessToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return getValidAccessToken();
-}
-
-function getRefreshToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  const tokens = getTokens();
-  return tokens?.refresh || null;
-}
-
-
+/**
+ * Triggered when a refresh fails inside the response interceptor — at
+ * that point the user's session is unrecoverable and they need to log
+ * in again.
+ *
+ * Delegates to the canonical `logout` in auth.ts so cleanup matches
+ * every other logout path (token clear + cookie clear + sa_user clear +
+ * integration-key clear + redirect). Before consolidation this function
+ * only cleared tokens + sa_user, leaving Azure/Jira credentials behind
+ * in localStorage between users on the same browser.
+ *
+ * Redux cleanup is NOT done here — apiRequest.ts has no access to a
+ * dispatch function. The page reload triggered by the redirect inside
+ * logout() will reset Redux state regardless, which is good enough for
+ * a sign-out path.
+ */
 function handleAuthFailure(): void {
-  if (typeof window === 'undefined') return;
-  
-  // Use the centralized auth logout function
-  clearTokens();
-  
-  // Clear user data
-  localStorage.removeItem('sa_user');
-  
-  // Redirect to login
-  if (window.location.pathname !== '/login') {
-    window.location.href = '/login';
-  }
+  logoutAndRedirect();
 }
 
 export async function apiRequest(

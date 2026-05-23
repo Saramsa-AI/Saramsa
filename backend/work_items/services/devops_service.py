@@ -38,8 +38,16 @@ class DevOpsService:
         """Generate work items from analysis data using deterministic candidates + optional AI narration."""
         try:
             # Phase-2: deterministic candidates from analysis metrics (LLM does not decide existence/priority/type)
-            candidate_service = get_work_item_candidate_service()
-            candidates = candidate_service.generate_candidates(analysis_data, previous_analysis=None)
+            # Reuse candidates from the celery pipeline if they're attached to the analysis. This keeps
+            # candidate_ids stable so the cached narration's candidate_id keys match in _apply_llm_phrasing,
+            # and avoids a duplicate candidate-generation pass on every "generate user stories" click.
+            cached_candidates = analysis_data.get("work_item_candidates") if isinstance(analysis_data, dict) else None
+            if isinstance(cached_candidates, list) and cached_candidates:
+                candidates = cached_candidates
+                logger.info("Reusing %s cached work item candidates from analysis_data", len(candidates))
+            else:
+                candidate_service = get_work_item_candidate_service()
+                candidates = candidate_service.generate_candidates(analysis_data, previous_analysis=None)
 
             if not candidates:
                 return {
@@ -77,6 +85,10 @@ class DevOpsService:
                 cached_narration = analysis_data.get("narration")
             if isinstance(cached_narration, dict) and cached_narration.get("work_items"):
                 narratives = cached_narration
+                logger.info(
+                    "Reusing cached narration from analysis_data (%s work_items) — skipping GPT call",
+                    len(cached_narration.get("work_items", [])),
+                )
             else:
                 try:
                     narration_service = get_narration_service()

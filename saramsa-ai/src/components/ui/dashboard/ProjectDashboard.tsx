@@ -49,11 +49,12 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
   const { user } = useAuth();
   const { projects, currentProject, loading, error } = useSelector((state: RootState) => state.projects);
   const { accounts } = useSelector((state: RootState) => state.integrations);
+  const [mounted, setMounted] = useState(false);
   const activeWorkspaceName =
     user?.active_organization?.name ||
     user?.organizations?.find((o) => o.id === user?.active_organization_id)?.name ||
     null;
-  
+
   const [showNewProjectDropdown, setShowNewProjectDropdown] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -65,10 +66,14 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
   const hasFetchedRef = useRef(false);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
     // Prevent double fetching in development strict mode
     if (hasFetchedRef.current) return;
     hasFetchedRef.current = true;
-    
+
     dispatch(fetchProjects());
     dispatch(fetchIntegrationAccounts());
   }, [dispatch]);
@@ -212,7 +217,7 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="space-y-0.5">
-              {activeWorkspaceName && (
+              {mounted && activeWorkspaceName && (
                 <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
                   <Building2 className="h-3 w-3 text-saramsa-brand" />
                   <span>{activeWorkspaceName}</span>
@@ -355,27 +360,29 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
             )}
           </motion.div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {projects.map((project, index) => (
-              <motion.div
-                key={project.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
-              >
-                <ProjectCard
-                  project={project}
-                  onClick={() => dispatch(setCurrentProject(project))}
-                  onEdit={handleEditProject}
-                  onSync={handleSyncProject}
-                  onDelete={handleDeleteProject}
-                  onGoToProject={onGoToProject}
-                  isSelected={currentProject?.id === project.id}
-                  deleteLoading={deletingProjectId === project.id}
-                  syncLoading={syncingProjectId === project.id}
-                />
-              </motion.div>
-            ))}
+          <div className="max-h-[calc(100vh-280px)] overflow-y-auto pr-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {projects.map((project, index) => (
+                <motion.div
+                  key={project.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                >
+                  <ProjectCard
+                    project={project}
+                    onClick={() => dispatch(setCurrentProject(project))}
+                    onEdit={handleEditProject}
+                    onSync={handleSyncProject}
+                    onDelete={handleDeleteProject}
+                    onGoToProject={onGoToProject}
+                    isSelected={currentProject?.id === project.id}
+                    deleteLoading={deletingProjectId === project.id}
+                    syncLoading={syncingProjectId === project.id}
+                  />
+                </motion.div>
+              ))}
+            </div>
           </div>
         )}
 

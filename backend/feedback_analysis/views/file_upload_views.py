@@ -15,7 +15,11 @@ import uuid
 from asgiref.sync import async_to_sync, sync_to_async
 import logging
 
-from ..services import get_analysis_service, get_processing_service
+from ..services import get_analysis_service
+from ..services.column_classifier_service import (
+    build_enriched_comments,
+    classify_columns,
+)
 from ..language_check import UnsupportedLanguage, assert_english
 from authentication.permissions import IsProjectEditor
 from apis.core.response import StandardResponse
@@ -51,27 +55,8 @@ class FeedbackFileUploadView(APIView):
                 elif 'reviews' in data and isinstance(data['reviews'], list):
                     comments = [str(review) for review in data['reviews'] if review]
         
-        elif file_type == 'csv':
-            if isinstance(data, list) and len(data) > 0:
-                # Look for common comment column names
-                comment_columns = ['comment', 'comments', 'feedback', 'review', 'reviews', 'text', 'content', 'message']
-                first_row = data[0]
-                
-                # Find the comment column
-                comment_column = None
-                for col in comment_columns:
-                    if col in first_row:
-                        comment_column = col
-                        break
-                
-                if comment_column:
-                    comments = [str(row[comment_column]) for row in data if row.get(comment_column)]
-                else:
-                    # Fallback: use the first column
-                    first_col = list(first_row.keys())[0] if first_row else None
-                    if first_col:
-                        comments = [str(row[first_col]) for row in data if row.get(first_col)]
-        
+        # CSV is handled by the LLM-based column classifier in _process_csv_file;
+        # this method is JSON-only now.
         return comments
 
     @async_to_sync
@@ -105,14 +90,16 @@ class FeedbackFileUploadView(APIView):
                 instance=request.path
             )
 
-        # Get project context using analysis service
+        # Get project context using analysis service.
+        # ensure_project_context hits the Django ORM, so it has to be wrapped
+        # in sync_to_async here — async_to_sync above puts us inside a running
+        # event loop, and Django blocks bare sync ORM calls from that context.
         analysis_service = get_analysis_service()
 
         try:
-            resolved_project_id, project_doc, is_draft = analysis_service.ensure_project_context(
-                incoming_project_id,
-                user_id,
-            )
+            resolved_project_id, project_doc, is_draft = await sync_to_async(
+                analysis_service.ensure_project_context, thread_sensitive=True
+            )(incoming_project_id, user_id)
         except ValueError as e:
             return StandardResponse.validation_error(
                 detail=str(e),
@@ -202,59 +189,20 @@ class FeedbackFileUploadView(APIView):
             )
             frozen_aspects = [a.get("label") or a.get("key") for a in taxonomy.get("aspects", []) if isinstance(a, dict)]
             logger.info(f"🔒 Using frozen aspect list: {frozen_aspects}")
-            
-            processing_service = get_processing_service()
-            result = await processing_service.process_uploaded_data_async(
-                data, 'json', 0, suggested_aspects=frozen_aspects
+
+            # Step 3: dispatch to Celery — same async contract as CSV (above)
+            # and /api/insights/analyze/. Returns 202 with task_id immediately.
+            return await self._dispatch_to_celery(
+                user_id=user_id,
+                project_id=project_id,
+                project_context=project_context,
+                file_name=file.name,
+                file_type='json',
+                original_comments=original_comments,
+                frozen_aspects=frozen_aspects,
+                aspect_suggestions=aspect_suggestions,
             )
 
-            # Format response in the new structure
-            if isinstance(result, dict) and (result.get('overall') is not None or result.get('features') is not None):
-                formatted = {
-                    "success": True,
-                    "id": f"analysis_{str(uuid.uuid4())}",
-                    "projectId": project_id if project_id else 'unknown',
-                    "userId": user_id if user_id else 'anonymous',
-                    "createdAt": datetime.now().isoformat(),
-                    "analysisType": "commentSentiment",
-                    "rawLlm": result.get("raw_llm", {}),
-                    "analysisData": {
-                        "overall": result.get("overall", {}),
-                        "counts": result.get("counts", {}),
-                        "features": result.get("features", []),
-                        "positive_keywords": result.get("positive_keywords", []),
-                        "negative_keywords": result.get("negative_keywords", []),
-                        "pipeline_metadata": result.get("pipeline_metadata", {})
-                    },
-                    "aspectSuggestions": aspect_suggestions,  # Include aspect suggestions
-                    "context": project_context,
-                }
-            else:
-                # Fallback catch-all
-                formatted = {
-                    "success": True,
-                    "id": f"analysis_{str(uuid.uuid4())}",
-                    "projectId": project_id if project_id else 'unknown',
-                    "userId": user_id if user_id else 'anonymous',
-                    "createdAt": datetime.now().isoformat(),
-                    "analysisType": "commentSentiment",
-                    "rawLlm": result,
-                    "analysisData": result.get("analysisData", {}),
-                    "aspectSuggestions": aspect_suggestions,  # Include aspect suggestions
-                    "context": project_context,
-                }
-            
-            # Save analysis data to PostgreSQL (includes aspect suggestions)
-            await self._save_analysis_data(
-                user_id, project_id, file.name, 'json', 
-                original_comments, formatted, aspect_suggestions, taxonomy
-            )
-            
-            return StandardResponse.success(
-                data=formatted,
-                message='JSON file uploaded and analyzed successfully'
-            )
-            
         except json.JSONDecodeError:
             return StandardResponse.validation_error(
                 detail='Invalid JSON file',
@@ -269,10 +217,52 @@ class FeedbackFileUploadView(APIView):
             decoded_file = file.read().decode('utf-8').splitlines()
             reader = csv.DictReader(decoded_file)
             csv_data = [row for row in reader]
-            
-            # Extract original comments before processing
-            original_comments = self.extract_comments_from_data(csv_data, 'csv')
-            logger.info(f"📊 CSV Upload: Extracted {len(original_comments)} comments from file")
+
+            if not csv_data:
+                return StandardResponse.validation_error(
+                    detail='CSV file is empty.',
+                    errors=[{"field": "file", "message": "No rows found."}],
+                    instance=request.path,
+                )
+
+            # LLM-based column classification: figure out which column is the
+            # feedback text vs. which are dimensions (Persona, Plan, Platform,
+            # Feature, Rating, user-labeled sentiment). Each comment is structured
+            # as {text, dimensions, enriched_text} so dimensions are preserved
+            # for downstream querying while enriched_text provides context to LLM.
+            # Feature-area-like column values are returned separately for taxonomy seeding.
+            headers = list(csv_data[0].keys())
+            classification = await sync_to_async(classify_columns, thread_sensitive=True)(headers, csv_data)
+            if not classification.get("primary_text"):
+                return StandardResponse.validation_error(
+                    detail='Could not identify a feedback text column.',
+                    errors=[{
+                        "field": "file",
+                        "message": (
+                            "No column looks like free-form feedback text. "
+                            f"Columns found: {headers}. "
+                            "Rename the text column to something like 'feedback_text' or 'comment'."
+                        ),
+                    }],
+                    instance=request.path,
+                )
+
+            from ..services.column_classifier_service import build_structured_comments
+            structured_comments, seed_values = await sync_to_async(
+                build_structured_comments, thread_sensitive=True
+            )(csv_data, classification)
+
+            # Extract enriched_text for LLM processing (backward compat with existing pipeline)
+            original_comments = [c["enriched_text"] for c in structured_comments]
+            # Extract dimensions for storage
+            comment_dimensions = [c["dimensions"] for c in structured_comments]
+            logger.info(
+                f"📊 CSV Upload: classifier={classification.get('source')} "
+                f"primary={classification.get('primary_text')!r} "
+                f"context={classification.get('context')} "
+                f"seed_col={classification.get('taxonomy_seed_column')!r} "
+                f"seed_values={seed_values} -> {len(original_comments)} enriched comments"
+            )
 
             try:
                 assert_english(original_comments)
@@ -283,64 +273,32 @@ class FeedbackFileUploadView(APIView):
                     instance=request.path,
                 )
 
-            # Step 2: Resolve project-owned taxonomy (Phase-1)
+            # Step 2: Resolve project-owned taxonomy (Phase-1).
+            # Pass the LLM-detected feature column values as taxonomy seeds —
+            # this is what cuts the "84% unmapped" rate we kept seeing on rich
+            # CSVs whose feature_area / category column was being ignored.
             taxonomy, aspect_suggestions = await self._resolve_taxonomy_for_upload(
-                project_id, original_comments
+                project_id, original_comments, seed_aspects=seed_values
             )
             frozen_aspects = [a.get("label") or a.get("key") for a in taxonomy.get("aspects", []) if isinstance(a, dict)]
             logger.info(f"🔒 Using frozen aspect list: {frozen_aspects}")
-            
-            processing_service = get_processing_service()
-            result = await processing_service.process_uploaded_data_async(
-                csv_data, 'csv', 0, suggested_aspects=frozen_aspects  # Use 0 for sentiment analysis (not 1)
+
+            # Step 3: dispatch the heavy LLM processing to Celery and return
+            # 202 immediately. Doing the analysis inline used to push the
+            # request past Azure's 240s gateway timeout for a real 200-row CSV.
+            # Same shape and contract as /api/insights/analyze/.
+            return await self._dispatch_to_celery(
+                user_id=user_id,
+                project_id=project_id,
+                project_context=project_context,
+                file_name=file.name,
+                file_type='csv',
+                original_comments=original_comments,
+                frozen_aspects=frozen_aspects,
+                aspect_suggestions=aspect_suggestions,
+                dimensions=comment_dimensions,
             )
-            
-            # Format CSV response in the new structure
-            if isinstance(result, dict) and (result.get('overall') is not None or result.get('features') is not None):
-                formatted = {
-                    "success": True,
-                    "id": f"analysis_{str(uuid.uuid4())}",
-                    "projectId": project_id if project_id else 'unknown',
-                    "userId": user_id if user_id else 'anonymous',
-                    "createdAt": datetime.now().isoformat(),
-                    "analysisType": "commentSentiment",
-                    "rawLlm": result.get("raw_llm", {}),
-                    "analysisData": {
-                        "overall": result.get("overall", {}),
-                        "counts": result.get("counts", {}),
-                        "features": result.get("features", []),
-                        "positive_keywords": result.get("positive_keywords", []),
-                        "negative_keywords": result.get("negative_keywords", []),
-                        "pipeline_metadata": result.get("pipeline_metadata", {})
-                    },
-                    "aspectSuggestions": aspect_suggestions,  # Include aspect suggestions
-                    "context": project_context,
-                }
-            else:
-                formatted = {
-                    "success": True,
-                    "id": f"analysis_{str(uuid.uuid4())}",
-                    "projectId": project_id if project_id else 'unknown',
-                    "userId": user_id if user_id else 'anonymous',
-                    "createdAt": datetime.now().isoformat(),
-                    "analysisType": "commentSentiment",
-                    "rawLlm": result,
-                    "analysisData": result.get("analysisData", {}),
-                    "aspectSuggestions": aspect_suggestions,  # Include aspect suggestions
-                    "context": project_context,
-                }
-            
-            # Save CSV analysis data to PostgreSQL (includes aspect suggestions)
-            await self._save_analysis_data(
-                user_id, project_id, file.name, 'csv', 
-                original_comments, formatted, aspect_suggestions, taxonomy
-            )
-            
-            return StandardResponse.success(
-                data=formatted,
-                message='CSV file uploaded and analyzed successfully'
-            )
-            
+
         except Exception as e:
             return StandardResponse.error(
                 title='CSV Processing Error',
@@ -350,117 +308,146 @@ class FeedbackFileUploadView(APIView):
                 instance=request.path
             )
     
-    async def _save_analysis_data(self, user_id, project_id, file_name, file_type, 
-                                  original_comments, formatted_result, aspect_suggestions=None, taxonomy=None):
-        """Save analysis data using service layer."""
-        try:
-            from ..services import get_analysis_service
-            analysis_service = get_analysis_service()
-            
-            # Save original user data (comments) with user ID and project ID
-            user_data_record = {
-                "user_id": user_id,
-                "project_id": project_id,
-                "file_name": file_name,
-                "file_type": file_type,
-                "upload_date": datetime.now().isoformat(),
-                "comments": original_comments,
-                "comments_count": len(original_comments),
-                "type": "user_data"
-            }
-            saved_user_data = analysis_service.save_user_data(user_data_record)
-            if saved_user_data:
-                logger.info(f"Successfully saved user data: {len(original_comments)} comments for user {user_id}, project {project_id}")
-            else:
-                logger.warning(f"Failed to save user data for user {user_id}, project {project_id}")
-            
-            # Save canonical analysis entity linked to project WITH original comments and aspect suggestions
-            analysis_id = str(uuid.uuid4())
-            analysis_record = {
-                "id": f"analysis_{analysis_id}",
-                "projectId": project_id,
-                "userId": user_id,
-                "taxonomy_id": taxonomy.get("taxonomy_id") if taxonomy else None,
-                "taxonomy_version": taxonomy.get("version") if taxonomy else None,
-                "createdAt": datetime.now().isoformat(),
-                "analysisType": "commentSentiment",
-                "rawLlm": formatted_result.get("rawLlm", {}),
-                "analysisData": formatted_result.get("analysisData", {}),
-                "name": os.path.splitext(file_name)[0] if file_name else None,
-                # Store original comments for retrieval (same as task service)
-                "original_comments": original_comments,
-                "feedback": original_comments,  # Alternative field name
-                "file_name": file_name,
-                "file_type": file_type,
-                "comments_count": len(original_comments),
-                # Store aspect suggestions for Step 3
-                "aspect_suggestions": aspect_suggestions if aspect_suggestions else None
-            }
-            saved = analysis_service.save_analysis_data(analysis_record)
+    async def _dispatch_to_celery(self, user_id, project_id, project_context,
+                                  file_name, file_type, original_comments,
+                                  frozen_aspects, aspect_suggestions, dimensions=None):
+        """Queue the long-running analysis on Celery and return HTTP 202.
+
+        Mirrors the contract of POST /api/insights/analyze/. The synchronous
+        request used to run the LLM pipeline inline, which routinely blew
+        through Azure App Service's 240s gateway timeout for real CSVs.
+
+        The client should poll GET /api/insights/task-status/<task_id>/ for
+        completion, then fetch the analysis via
+        GET /api/feedback/analysis/<analysis_id>/.
+        """
+        from ..services.task_service import process_feedback_task
+        from apis.infrastructure.cache_service import get_cache_service
+
+        analysis_id = str(uuid.uuid4())
+        company_name = os.path.splitext(file_name or '')[0] or None
+        comments_count = len(original_comments)
+
+        def _enqueue_and_index():
+            # .delay() pushes the message to the Celery broker (Redis). Even
+            # though it's fast, treat it as blocking I/O so we don't stall
+            # the asyncio event loop on slow broker round-trips.
+            result = process_feedback_task.delay(
+                original_comments,
+                company_name,
+                user_id,
+                project_id,
+                analysis_id,
+                frozen_aspects,
+                dimensions,
+            )
+            task_id = result.id
+
+            # Mirror the bookkeeping POST /api/insights/analyze/ does so the
+            # task-status endpoint can authorize this user against the task,
+            # and so the tasks-list endpoint surfaces it in history.
             try:
-                if saved and saved.get('id'):
-                    analysis_service.update_project_last_analysis(project_id, saved['id'])
-            except Exception:
-                pass
+                cache = get_cache_service()
+                started_at = datetime.now().isoformat()
+                cache.set(f"task_start:{task_id}", started_at, ttl=3600)
+                tasks_key = f"tasks:{user_id}"
+                existing = cache.get(tasks_key, default=[])
+                if not isinstance(existing, list):
+                    existing = []
+                existing = [t for t in existing if t.get("task_id") != task_id]
+                existing.insert(0, {
+                    "task_id": task_id,
+                    "analysis_id": analysis_id,
+                    "project_id": project_id,
+                    "file_name": file_name,
+                    "started_at": started_at,
+                    "comment_count": comments_count,
+                })
+                cache.set(tasks_key, existing[:15], ttl=86400)
+            except Exception as exc:
+                logger.warning(f"Failed to record task history for {task_id}: {exc}")
+            return task_id
 
-            # Record taxonomy health snapshot (best-effort, no behavior change)
-            if taxonomy:
-                try:
-                    counts = formatted_result.get("analysisData", {}).get("counts", {}) or {}
-                    total_comments = counts.get("total") or len(original_comments)
-                    features = formatted_result.get("analysisData", {}).get("features", []) or []
-                    total_mentions = sum(
-                        int(f.get("comment_count") or 0) for f in features if isinstance(f, dict)
-                    )
-                    unmapped_rate = 0.0
-                    if total_comments:
-                        unmapped_rate = max(0.0, (total_comments - total_mentions) / total_comments)
-                    avg_aspects = (total_mentions / total_comments) if total_comments else 0.0
-                    from ..services import get_taxonomy_service
-                    taxonomy_service = get_taxonomy_service()
-                    created_at = taxonomy.get("created_at") or taxonomy.get("createdAt")
-                    taxonomy_age_days = 0.0
-                    if created_at:
-                        try:
-                            created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                            taxonomy_age_days = (datetime.now() - created_dt).days
-                        except Exception:
-                            taxonomy_age_days = 0.0
-                    taxonomy_service.record_health_snapshot(project_id, taxonomy, {
-                        "last_unmapped_rate": unmapped_rate,
-                        "last_avg_aspects_per_comment": avg_aspects,
-                        "last_confidence_p95": None,
-                        "taxonomy_age_days": taxonomy_age_days,
-                    })
-                except Exception as e:
-                    logger.warning(f"Failed to record taxonomy health snapshot: {e}")
-                
-        except Exception as e:
-            logger.error(f"Error saving to PostgreSQL: {e}")
+        try:
+            task_id = await sync_to_async(_enqueue_and_index, thread_sensitive=True)()
+        except Exception as exc:
+            logger.exception("Failed to queue process_feedback_task on Celery")
+            return StandardResponse.error(
+                title='Task dispatch failed',
+                detail=f'Could not queue analysis: {exc}',
+                status_code=500,
+                error_type='task-dispatch-error',
+            )
 
-    async def _resolve_taxonomy_for_upload(self, project_id, original_comments):
+        logger.info(
+            f"📤 Upload dispatched to Celery: task_id={task_id} "
+            f"analysis_id={analysis_id} project={project_id} "
+            f"file={file_name} type={file_type} comments={comments_count}"
+        )
+
+        return StandardResponse.success(
+            data={
+                "task_id": task_id,
+                "analysis_id": analysis_id,
+                "project_id": project_id,
+                "comments_count": len(original_comments),
+                "aspect_suggestions": aspect_suggestions,
+                "context": project_context,
+                "status": "processing",
+                "message": "Analysis started in background.",
+            },
+            message='Analysis started in background.',
+            status_code=202,
+        )
+
+    async def _resolve_taxonomy_for_upload(self, project_id, original_comments, seed_aspects=None):
         """
         Resolve project-owned taxonomy for uploads.
 
-        If no taxonomy exists, bootstrap once using GPT and persist version=1.
+        If no taxonomy exists, bootstrap once and persist version=1. When
+        ``seed_aspects`` is provided (from the CSV column classifier — e.g.
+        distinct ``feature_area`` values), those are used directly as the
+        taxonomy and we skip the GPT bootstrap call entirely. This is the
+        path that takes the unmapped rate from ~84% to single digits for
+        well-labeled CSVs.
         """
+        # taxonomy_service.get_active_taxonomy / create_initial_taxonomy hit
+        # the Django ORM through the taxonomy repository. The post() handler
+        # is wrapped with @async_to_sync which puts us inside a running
+        # event loop, so every sync ORM call needs to go through
+        # sync_to_async to avoid "You cannot call this from an async context".
         from ..services import get_taxonomy_service, get_aspect_suggestion_service
         taxonomy_service = get_taxonomy_service()
-        taxonomy = taxonomy_service.get_active_taxonomy(project_id, comments=None)
+        taxonomy = await sync_to_async(
+            taxonomy_service.get_active_taxonomy, thread_sensitive=True
+        )(project_id, comments=None)
         aspect_suggestions = None
 
         if not taxonomy:
-            aspect_service = get_aspect_suggestion_service()
-            aspect_suggestions = await aspect_service.suggest_aspects(original_comments)
-            logger.info(
-                f"Aspect suggestions generated: domain='{aspect_suggestions['identified_domain']}', "
-                f"aspects={len(aspect_suggestions['suggested_aspects'])}"
-            )
-            taxonomy = taxonomy_service.create_initial_taxonomy(
-                project_id,
-                aspect_suggestions.get("suggested_aspects", []),
-                source="gpt"
-            )
+            if seed_aspects:
+                # Customer-provided categories beat anything an LLM would
+                # guess from prose. Use them as-is for v1 of the taxonomy.
+                logger.info(
+                    f"Bootstrapping taxonomy from {len(seed_aspects)} seed aspects "
+                    f"(from CSV classifier): {seed_aspects}"
+                )
+                taxonomy = await sync_to_async(
+                    taxonomy_service.create_initial_taxonomy, thread_sensitive=True
+                )(project_id, list(seed_aspects), source="csv_seed")
+                aspect_suggestions = {
+                    "identified_domain": "csv_seed",
+                    "suggested_aspects": list(seed_aspects),
+                }
+            else:
+                aspect_service = get_aspect_suggestion_service()
+                aspect_suggestions = await aspect_service.suggest_aspects(original_comments)
+                logger.info(
+                    f"Aspect suggestions generated: domain='{aspect_suggestions['identified_domain']}', "
+                    f"aspects={len(aspect_suggestions['suggested_aspects'])}"
+                )
+                taxonomy = await sync_to_async(
+                    taxonomy_service.create_initial_taxonomy, thread_sensitive=True
+                )(project_id, aspect_suggestions.get("suggested_aspects", []), source="gpt")
         else:
             aspects = [a.get("label") or a.get("key") for a in taxonomy.get("aspects", []) if isinstance(a, dict)]
             aspect_suggestions = {

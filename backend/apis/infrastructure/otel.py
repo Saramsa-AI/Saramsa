@@ -146,6 +146,19 @@ def setup_otel():
                 logger_provider=logger_provider,
             )
             logging.getLogger().addHandler(otel_handler)
+
+            # Break the OTel feedback loop: the Azure SDK and exporter log every
+            # outbound HTTP call at INFO level. Those logs would flow through the
+            # handler above, ship to App Insights, generate more SDK logs, and
+            # peg CPU. Silence them at the source. Without this, celery workers
+            # spend 100% CPU shipping noise about their own shipping and die.
+            for noisy in (
+                "azure.core.pipeline.policies.http_logging_policy",
+                "azure.monitor.opentelemetry.exporter.export._base",
+                "urllib3.connectionpool",
+            ):
+                logging.getLogger(noisy).setLevel(logging.WARNING)
+
             logger.info("Logs pipeline configured (root logger -> App Insights)")
         except Exception as e:
             logger.warning(f"Logs pipeline setup failed: {e}")

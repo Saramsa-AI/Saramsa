@@ -45,6 +45,23 @@ function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const inviteToken = searchParams?.get('invite') || '';
+
+  // Middleware sets `?redirect=<original_path>` when redirecting an
+  // unauthenticated user away from a protected route. Honor that here so
+  // they land back on the page they wanted instead of the default home.
+  //
+  // Open-redirect guard: only accept same-origin absolute paths. We refuse
+  // protocol-relative URLs ("//evil.com/..."), full URLs ("https://..."),
+  // and anything that doesn't start with "/". Returning null falls back to
+  // the default routing logic below.
+  const safeRedirectTarget = (() => {
+    const raw = searchParams?.get('redirect');
+    if (!raw) return null;
+    if (!raw.startsWith('/')) return null;
+    if (raw.startsWith('//')) return null;
+    if (raw.includes('://')) return null;
+    return raw;
+  })();
   const { login } = useAuth();
 
   // Handle component mount
@@ -83,7 +100,10 @@ function LoginPageInner() {
         if (inviteToken) {
           try {
             await authApi.acceptInviteAsLoggedInUser(inviteToken);
-            router.push('/projects');
+            // After invite accept, prefer the original redirect target if
+            // the user was sent here from a protected route. Falls back to
+            // /projects which is the default invite-acceptance landing.
+            router.push(safeRedirectTarget ?? '/projects');
             return;
           } catch (err: any) {
             // Surface the error but don't strand them on the login page —
@@ -91,6 +111,14 @@ function LoginPageInner() {
             // invite (already used, expired, wrong email, etc.).
             setError(err?.message || 'Logged in, but the invite could not be accepted.');
           }
+        }
+
+        // If the user was redirected here from a protected route, send
+        // them back there. The project-discovery below is only the
+        // fallback path for a "fresh" login from the login page directly.
+        if (safeRedirectTarget) {
+          router.push(safeRedirectTarget);
+          return;
         }
 
         // After successful login, fetch user's projects and route accordingly

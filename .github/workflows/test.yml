@@ -1,0 +1,120 @@
+# Continuous-integration test suite.
+#
+# Triggers on every pull-request against master AND every push to master.
+# Pull-request triggers prove a change is safe BEFORE it merges; the master
+# trigger is a safety net that catches issues if something else goes wrong
+# (admin merge bypassing review, branch-rule misconfiguration, etc.).
+#
+# Two jobs run in parallel — frontend (vitest) and backend (Django).
+# Either failure marks the PR red. Once branch protection is configured
+# to require these checks, the Merge button greys out until both pass.
+name: Tests
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+# Only run one CI per ref at a time. If a PR has 3 quick pushes, only
+# the most recent push's CI run finishes — older runs are cancelled. Saves
+# Actions minutes and avoids stale ✓/✗ marks on the PR.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Frontend tests (Vitest + React Testing Library + jsdom)
+  #
+  # Mirrors what `npm test` does locally. Uses npm ci (not npm install)
+  # for deterministic CI installs from the exact versions in
+  # package-lock.json.
+  # ──────────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: saramsa-ai
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # Cache the npm install based on the lockfile so re-runs are fast.
+          cache: 'npm'
+          cache-dependency-path: saramsa-ai/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run vitest with coverage
+        # `--coverage` enables the v8 provider configured in vitest.config.ts.
+        # Threshold is set to 0% (just report, don't block) so this command
+        # only fails when an actual test fails.
+        run: npm run test:coverage
+
+      - name: Upload coverage HTML as artifact
+        # Always runs, even if tests failed — the coverage data from
+        # partial runs is still useful for debugging which tests crashed.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-html
+          path: saramsa-ai/coverage/
+          retention-days: 14
+
+  # ──────────────────────────────────────────────────────────────────
+  # Backend tests (Django + apis.settings_test)
+  #
+  # Uses an in-memory SQLite via settings_test so the suite doesn't need
+  # Postgres or Redis. ~70 seconds locally; should be similar on Actions.
+  # ──────────────────────────────────────────────────────────────────
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          # Caches the pip-install based on the requirements files.
+          cache: 'pip'
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements.test.txt
+
+      - name: Install dependencies
+        # requirements.txt is the prod set; requirements.test.txt adds
+        # coverage.py and other test-only packages (see file).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements.test.txt
+
+      - name: Run Django tests with coverage
+        # `coverage run` wraps the manage.py test invocation; the test
+        # runner uses apis.settings_test which switches to in-memory
+        # SQLite and disables Azure-only services.
+        run: |
+          coverage run --source=. manage.py test --settings=apis.settings_test
+          coverage report
+          coverage html
+
+      - name: Upload coverage HTML as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-html
+          path: backend/htmlcov/
+          retention-days: 14
