@@ -181,7 +181,7 @@ class OrganizationInviteService:
         Lookup is by `token_hash` — the plaintext token is hashed first
         so we never run a query against the deprecated plaintext column.
         Existing invite URLs in the wild still work because the same
-        plaintext token hashes to the value backfilled by migration 0006.
+        plaintext token hashes to the value backfilled by migration 0008.
         """
         from ..models import Organization, OrganizationInvite
 
@@ -273,7 +273,7 @@ class OrganizationInviteService:
         }
         if include_token:
             # Prefer the one-shot plaintext stashed by create_or_get_invite
-            # — the DB row's `token` column is NULL since migration 0006.
+            # — the DB row's `token` column is NULL since migration 0008.
             # Falls back to invite.token only for backwards-compat with any
             # legacy code path that still populated the plaintext column
             # (post-migration this is always None for new rows).

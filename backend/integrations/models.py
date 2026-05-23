@@ -75,7 +75,7 @@ class OrganizationInvite(TimestampedModel):
     )
     email = models.EmailField(db_index=True)
     role = models.CharField(max_length=32, default="member")
-    # `token` is the deprecated PLAINTEXT field. After migration 0006 all
+    # `token` is the deprecated PLAINTEXT field. After migration 0008 all
     # existing rows have token=NULL and lookups go through `token_hash`.
     # Kept on the model (nullable) for rollback safety — if the hashing
     # service change has to revert, old code paths can still read this
