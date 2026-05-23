@@ -1,6 +1,6 @@
 import { createSlice, PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
-import { getProviderLabel, type WorkProvider } from '@/lib/providers';
+import { getProviderLabel, getProviderProcessTemplate, type WorkProvider } from '@/lib/providers';
 import type { AnalysisData } from '@/types/analysis';
 import {
   ANALYZING_PREFIX,
@@ -373,7 +373,7 @@ export const generateUserStories = createAsyncThunk<
       analysis_data: data.analysisData,
       comments: data.comments,
       platform: data.platform, // Correctly pass the platform parameter
-      process_template: data.processTemplate || 'Agile'
+      process_template: data.processTemplate || getProviderProcessTemplate(data.platform),
     };
 
     if (data.projectId) {
@@ -443,7 +443,7 @@ export const submitUserStories = createAsyncThunk<
       project_id: data.projectId,
       user_stories: data.userStories,
       platform: data.platform,
-      process_template: data.processTemplate || 'Agile',
+      process_template: data.processTemplate || getProviderProcessTemplate(data.platform),
       time: data.time || new Date().toISOString()
     };
 

@@ -38,7 +38,7 @@ import { Checkbox } from "./checkbox";
 import { EditActionDrawer } from "./edit-action-drawer";
 import apiRequest from "@/lib/apiRequest";
 import { getRelatedInsightsForWorkItem } from "@/lib/insightTraceability";
-import { getProviderLabel, type WorkProvider } from "@/lib/providers";
+import { getProviderLabel, getProviderProcessTemplate, type WorkProvider } from "@/lib/providers";
 import { DEFAULT_QUALITY_RULES, evaluateWorkItems, type QualityReport, type QualityRules } from "@/lib/workItemQuality";
 import { sortWorkItemsByPriority } from "@/lib/workItemPrioritySort";
 
@@ -459,7 +459,7 @@ export const UserStoryList = ({
           projectId: formattedProjectId,
           userStories: userStoriesToSubmit,
           platform: platform,
-          processTemplate: 'Agile',
+          processTemplate: getProviderProcessTemplate(platform),
           time: new Date().toISOString()
         })
       ).unwrap();
