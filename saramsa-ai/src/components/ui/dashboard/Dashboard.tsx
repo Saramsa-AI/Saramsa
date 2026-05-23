@@ -46,6 +46,7 @@ import {
 
 import type { AnalysisData } from '@/types/analysis';
 import { apiRequest } from '@/lib/apiRequest';
+import { isWorkProvider, type WorkProvider } from '@/lib/providers';
 import { Check, Loader2, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { UploadPanel } from './UploadPanel';
@@ -302,12 +303,12 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       isGeneratingUserStories,
     [isTaskViewLoading, userStoriesLoading, isGeneratingUserStories]
   );
-  const selectedPlatform = useMemo((): 'azure' | 'jira' | null => {
+  const selectedPlatform = useMemo((): WorkProvider | null => {
     if (!projects || !projects.length) return null;
     const pid = currentProjectId || projectId || '';
     const proj = projects.find((p: any) => p.id === pid);
     const provider = proj?.externalLinks?.[0]?.provider;
-    return provider === 'jira' ? 'jira' : provider === 'azure' ? 'azure' : null;
+    return typeof provider === 'string' && isWorkProvider(provider) ? provider : null;
   }, [projects, currentProjectId, projectId]);
 
   const hasGeneratedWorkItems = useMemo(
@@ -1430,7 +1431,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           const workItemsResult = await dispatch(generateUserStories({
             analysisData: analysisData,
             comments: commentsToUse,
-            platform: (currentPlatform as 'azure' | 'jira') ?? 'azure',
+            platform: currentPlatform,
             processTemplate,
             projectId: effectiveProjectId || undefined
           })).unwrap();
@@ -1472,7 +1473,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           const workItemsResult = await dispatch(generateUserStories({
             analysisData,
             comments: commentsToUse,
-            platform: (currentPlatform as 'azure' | 'jira') ?? 'azure',
+            platform: currentPlatform,
             processTemplate,
             projectId: effectiveProjectId || undefined
           })).unwrap();
