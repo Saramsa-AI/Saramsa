@@ -24,7 +24,7 @@ export interface AnalysisHistoryEntry {
   analysis_date: string;
   comments_count: number;
   positive_pct: number;
-  status: string;  // 'analyzing' | 'completed' | 'cancelled'
+  status: string;  // see HISTORY_STATUS in @/lib/analysisConstants: 'analyzing' | 'completed' | 'cancelled' | 'failed' (+ 'pending'/'processing' flow through from upstream task states)
   name?: string;
   task_id?: string;
   file_name?: string;

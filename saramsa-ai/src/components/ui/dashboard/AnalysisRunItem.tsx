@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Loader2, Pencil, Check, X, Trash2 } from 'lucide-react';
+import { Loader2, Pencil, Check, X, Trash2, AlertCircle } from 'lucide-react';
 import type { AnalysisHistoryEntry } from '@/store/features/analysis/analysisSlice';
 
 interface AnalysisRunItemProps {
@@ -19,6 +19,7 @@ interface AnalysisRunItemProps {
 export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, onCancel, index, totalCount }: AnalysisRunItemProps) {
   const isPending = entry.status === 'analyzing';
   const isCancelled = entry.status === 'cancelled';
+  const isFailed = entry.status === 'failed';
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -97,17 +98,21 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
       className={`w-full text-left px-3 py-3 rounded-none transition-all duration-200 cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-saramsa-brand/50 ${
         isPending
           ? 'bg-amber-500/10 shadow-sm'
-          : isCancelled
-            ? 'bg-muted/40'
-            : isActive
-              ? 'bg-saramsa-brand/10 shadow-sm'
-              : 'bg-card/60 hover:bg-secondary/60'
+          : isFailed
+            ? 'bg-destructive/10'
+            : isCancelled
+              ? 'bg-muted/40'
+              : isActive
+                ? 'bg-saramsa-brand/10 shadow-sm'
+                : 'bg-card/60 hover:bg-secondary/60'
       }`}
     >
       {/* Name / Date row */}
       <div className="flex items-center gap-2 mb-1">
         {isPending ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500 flex-shrink-0" />
+        ) : isFailed ? (
+          <AlertCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
         ) : isCancelled ? (
           <span className="w-2 h-2 rounded-full bg-muted-foreground/40 flex-shrink-0" />
         ) : isActive ? (
@@ -135,7 +140,7 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
           </div>
         ) : (
           <>
-            <span className={`text-sm font-medium truncate ${isPending ? 'text-amber-600 dark:text-amber-400' : isCancelled ? 'text-muted-foreground/60 line-through' : isActive ? 'text-foreground' : 'text-muted-foreground'}`}>
+            <span className={`text-sm font-medium truncate ${isPending ? 'text-amber-600 dark:text-amber-400' : isFailed ? 'text-destructive' : isCancelled ? 'text-muted-foreground/60 line-through' : isActive ? 'text-foreground' : 'text-muted-foreground'}`}>
               {isPending ? 'Analyzing...' : isCancelled ? (entry.file_name || displayName) : displayName}
             </span>
             {!isPending && !isCancelled && (
@@ -187,7 +192,10 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
             {isCancelled && (
               <span className="text-[10px] font-medium text-muted-foreground/60 ml-auto flex-shrink-0">Cancelled</span>
             )}
-            {!isPending && !isCancelled && isActive && !isEditing && (
+            {isFailed && (
+              <span className="text-[10px] font-medium text-destructive ml-auto flex-shrink-0">Failed</span>
+            )}
+            {!isPending && !isCancelled && !isFailed && isActive && !isEditing && (
               <span className="text-[10px] font-medium text-saramsa-brand ml-auto group-hover:hidden">Viewing</span>
             )}
           </>

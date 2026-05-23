@@ -232,6 +232,14 @@ export function SlackChannelPanel({
         }
       }
     } catch (error: any) {
+      // If we created a placeholder for this run, drop it — otherwise the
+      // sidebar shows an "Analyzing..." spinner forever. The Redux
+      // analyzeComments/ingestFile.rejected reducers don't fire here
+      // because the Slack path uses syncFeedbackSource + pollTaskUntilDone
+      // instead.
+      if (tempId) {
+        dispatch(removeFromHistory(tempId));
+      }
       setSyncStatusText(error?.message || "Slack sync/analysis failed.");
     } finally {
       setSyncInProgress(false);
