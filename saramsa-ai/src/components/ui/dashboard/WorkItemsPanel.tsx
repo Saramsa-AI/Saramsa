@@ -15,6 +15,25 @@ import {
 } from '../../../store/features/userStories/userStoriesSlice';
 import { UserStoryList } from '../userStoryList';
 
+// Shape both the useEffect Redux-priming side-effect and the inline
+// render-path consumed identically before this helper existed. Extracting
+// it removes the duplication and the risk that the two derivations drift
+// out of sync mid-render.
+function buildJiraUserStory(deepAnalysis: any, platform: WorkProvider) {
+  return {
+    id: deepAnalysis.id,
+    type: deepAnalysis.type || 'user_story',
+    userId: deepAnalysis.userId,
+    projectId: deepAnalysis.projectId,
+    process_template: deepAnalysis.process_template || getProviderProcessTemplate(platform),
+    platform: deepAnalysis.platform,
+    work_items: deepAnalysis.work_items,
+    summary: deepAnalysis.summary,
+    generated_at: deepAnalysis.generated_at,
+    comments_count: deepAnalysis.comments_count || 0,
+  };
+}
+
 export interface WorkItemsPanelProps {
   // Loading flags
   workItemsPanelLoading: boolean;
@@ -91,19 +110,7 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
     const hasDeepAnalysisWorkItems = deepAnalysis?.work_items && deepAnalysis.work_items.length > 0;
     const hasCurrentUserStories = currentProjectUserStories && currentProjectUserStories.length > 0;
     if (!hasDeepAnalysisWorkItems || hasCurrentUserStories) return;
-    const jiraUserStory = {
-      id: deepAnalysis.id,
-      type: deepAnalysis.type || 'user_story',
-      userId: deepAnalysis.userId,
-      projectId: deepAnalysis.projectId,
-      process_template: deepAnalysis.process_template || getProviderProcessTemplate(selectedPlatform ?? 'azure'),
-      platform: deepAnalysis.platform,
-      work_items: deepAnalysis.work_items,
-      summary: deepAnalysis.summary,
-      generated_at: deepAnalysis.generated_at,
-      comments_count: deepAnalysis.comments_count || 0,
-    };
-    dispatch(setCurrentProjectUserStories([jiraUserStory]));
+    dispatch(setCurrentProjectUserStories([buildJiraUserStory(deepAnalysis, selectedPlatform)]));
   }, [selectedPlatform, deepAnalysis, currentProjectUserStories, dispatch]);
 
   return (
@@ -158,23 +165,10 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
 
                     if (hasDeepAnalysisWorkItems) {
                       // Build the local list for display. The Redux priming
-                      // (dispatch(setCurrentProjectUserStories(...))) used to
-                      // live here as a side effect during render; it's now
-                      // moved to the useEffect at the top of this component
-                      // with the same firing condition.
-                      const jiraUserStory = {
-                        id: deepAnalysis.id,
-                        type: deepAnalysis.type || 'user_story',
-                        userId: deepAnalysis.userId,
-                        projectId: deepAnalysis.projectId,
-                        process_template: deepAnalysis.process_template || getProviderProcessTemplate(selectedPlatform ?? 'azure'),
-                        platform: deepAnalysis.platform,
-                        work_items: deepAnalysis.work_items,
-                        summary: deepAnalysis.summary,
-                        generated_at: deepAnalysis.generated_at,
-                        comments_count: deepAnalysis.comments_count || 0,
-                      };
-                      userStoriesToDisplay = [jiraUserStory];
+                      // (dispatch(setCurrentProjectUserStories(...))) lives in
+                      // the useEffect at the top of this component; using the
+                      // same buildJiraUserStory helper keeps the two in sync.
+                      userStoriesToDisplay = [buildJiraUserStory(deepAnalysis, 'jira')];
                     }
 
                     return (

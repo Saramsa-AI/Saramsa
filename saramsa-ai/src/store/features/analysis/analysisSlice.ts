@@ -794,6 +794,18 @@ const analysisSlice = createSlice({
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
         state.analysisStatus = TASK_STATUS.FAILURE;
         state.taskId = null;
+        // Mark every in-flight placeholder in history as failed. Without
+        // this the sidebar spinner stays up forever (the rejection arrives
+        // before the backend ever wrote a real insight_id, so there's
+        // nothing else to flip it). Iterating over status='analyzing'
+        // entries is safe because the UX dispatches at most one analyze at
+        // a time per user — and if it ever doesn't, leaving stuck
+        // placeholders is the strictly worse failure mode.
+        for (const entry of state.analysisHistory) {
+          if (entry.status === HISTORY_STATUS.ANALYZING) {
+            entry.status = HISTORY_STATUS.FAILED;
+          }
+        }
         // If the user was viewing the in-flight placeholder for this rejected
         // thunk, clear it so the loading skeleton releases.
         if (isAnalyzingPlaceholder(state.selectedAnalysisId)) {
@@ -826,6 +838,13 @@ const analysisSlice = createSlice({
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
         state.analysisStatus = TASK_STATUS.FAILURE;
         state.taskId = null;
+        // Same rationale as analyzeComments.rejected: flip every placeholder
+        // to FAILED so the sidebar doesn't spin forever.
+        for (const entry of state.analysisHistory) {
+          if (entry.status === HISTORY_STATUS.ANALYZING) {
+            entry.status = HISTORY_STATUS.FAILED;
+          }
+        }
         if (isAnalyzingPlaceholder(state.selectedAnalysisId)) {
           state.selectedAnalysisId = null;
         }
