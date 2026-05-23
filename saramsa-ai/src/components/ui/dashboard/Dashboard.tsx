@@ -46,7 +46,7 @@ import {
 
 import type { AnalysisData } from '@/types/analysis';
 import { apiRequest } from '@/lib/apiRequest';
-import { isWorkProvider, type WorkProvider } from '@/lib/providers';
+import { getProviderProcessTemplate, isWorkProvider, type WorkProvider } from '@/lib/providers';
 import { Check, Loader2, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { UploadPanel } from './UploadPanel';
@@ -1337,28 +1337,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       }
       if (currentPlatform === 'jira') {
         // For Jira, follow the same flow as Azure: general analysis -> work items generation
-        
         if (commentsToUse && commentsToUse.length > 0) {
-          // Step 1: Get Jira project metadata for better work item generation
-          let jiraProjectMetadata = null;
-          const selectedJiraProjectId = typeof window !== 'undefined' ? localStorage.getItem('jira_selected_project') : null;
-          
-          if (selectedJiraProjectId) {
-            try {
-              jiraProjectMetadata = null;
-            } catch (e) {
-              console.warn('⚠️ Failed to fetch Jira project metadata, proceeding without it:', e);
-            }
-          }
-          
-          // Step 2: Generate work items using the analysis data and Jira metadata
+          // Generate work items using the analysis data
           const workItemsResult = await dispatch(generateUserStories({
             analysisData,
-            comments: commentsToUse, // Use the loaded comments
+            comments: commentsToUse,
             platform: 'jira',
-            processTemplate: 'Agile', // Default for Jira
+            processTemplate: getProviderProcessTemplate('jira'),
             projectId: effectiveProjectId || undefined,
-            projectMetadata: jiraProjectMetadata
           })).unwrap();
 
           // Trigger usage badge refresh after work items generation
@@ -1417,9 +1403,13 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         } else {
         }
       } else {
-        // For Azure DevOps, use the existing logic
-        const processTemplate = (typeof window !== 'undefined') ? 
-          localStorage.getItem('azure_process_template') || 'Agile' : 'Agile';
+        // Azure / Asana / Linear path. Honor the user's saved Azure process
+        // template (CMMI, Scrum, etc.) when generating for Azure; otherwise
+        // fall back to the provider's registered default.
+        const savedAzureTemplate = currentPlatform === 'azure' && typeof window !== 'undefined'
+          ? localStorage.getItem('azure_process_template')
+          : null;
+        const processTemplate = savedAzureTemplate || getProviderProcessTemplate(currentPlatform);
         
         
         // Check if we have comments and analysis data available

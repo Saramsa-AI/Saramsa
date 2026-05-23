@@ -62,7 +62,11 @@ class WorkItemGenerationView(APIView):
                 len(top_keys), has_narration, cached_cands_len,
             )
             logger.info("WorkItemGenerationView: analysis_data keys: %s", top_keys)
-        process_template = request.data.get("process_template", "Agile")
+        # Default left as None on purpose: the per-provider override at
+        # `get_default_process_template(provider_config.provider)` only fires
+        # for falsy values, so defaulting to "Agile" here would make the
+        # provider-aware fallback below dead code.
+        process_template = request.data.get("process_template")
         incoming_project_id = request.data.get("project_id")
         platform = request.data.get("platform", "azure")
         company_name = request.data.get("company_name")
