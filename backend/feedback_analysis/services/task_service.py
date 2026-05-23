@@ -138,32 +138,53 @@ class TaskService:
         # Build cooperative cancellation checker (Windows solo pool ignores SIGTERM)
         is_cancelled = self._build_cancel_checker(analysis_id)
 
-        # Build adaptive taxonomy callback - smart domain handling
-        # Phase 1: Respect locked taxonomies (don't auto-regen unless force_regenerate=True)
-        # Phase 3: Additive growth (add new aspects instead of replacing when partial match)
+        # Adaptive taxonomy callback. The mapping rate from the first NLI pass
+        # decides what we do; the user never has to set a flag.
+        #
+        #   mapping >= 70%  -> healthy, do nothing
+        #   30-70%          -> additive growth (extend with new aspects)
+        #   10-30%          -> full regen, but respect cooldown to damp flip-flop
+        #   < 10%           -> catastrophic mismatch, regen regardless of cooldown
+        #
+        # force_regenerate remains as an admin override that bypasses cooldown.
+        SEVERE_MISMATCH_THRESHOLD = 0.10
+        ADDITIVE_GROWTH_MAX = 0.70   # below this we consider regen; above this we extend
+        ADDITIVE_GROWTH_MIN = 0.30   # below this we regen instead of extending
+
         def _regenerate_taxonomy(input_comments, mapping_rate=None):
-            """Adaptive taxonomy update:
-            - If locked + not forced: keep existing (return None to skip regen)
-            - If partial match (30-70%): ADD missing aspects (additive growth)
-            - Otherwise: full replace with new taxonomy
-            """
             import asyncio
             from feedback_analysis.services.aspect_suggestion_service import AspectSuggestionService
             from feedback_analysis.services.taxonomy_service import get_taxonomy_service
 
             taxonomy_service = get_taxonomy_service()
-            is_locked = bool(taxonomy.get("is_locked")) if taxonomy else False
             current_domain = taxonomy.get("domain", "unknown") if taxonomy else "unknown"
+            cooldown_active = taxonomy_service.is_regen_cooldown_active(taxonomy) if taxonomy else False
 
-            # Phase 1: Respect lock unless force_regenerate
-            if is_locked and not force_regenerate:
-                logger.warning(
-                    f"🔒 Taxonomy is LOCKED to domain '{current_domain}'. "
-                    f"Skipping regeneration. Use force_regenerate=True to override."
-                )
-                return None  # Signal: do not regenerate, keep existing aspects
+            severe = mapping_rate is not None and mapping_rate < SEVERE_MISMATCH_THRESHOLD
+            partial = (
+                mapping_rate is not None
+                and ADDITIVE_GROWTH_MIN <= mapping_rate < ADDITIVE_GROWTH_MAX
+            )
 
-            # Generate new aspects from current data
+            # Decide the action BEFORE paying for the LLM aspect suggestion.
+            # If we're going to do nothing, return immediately.
+            if not severe and not partial and not force_regenerate:
+                if mapping_rate is not None and mapping_rate < ADDITIVE_GROWTH_MIN:
+                    # Domain drift (10-30%). Honor cooldown to avoid flip-flop.
+                    if cooldown_active and taxonomy:
+                        last_regen = taxonomy.get("last_regenerated_at")
+                        uploads_since = taxonomy.get("uploads_since_regen", 0)
+                        logger.info(
+                            f"⏳ Regen cooldown active for domain '{current_domain}' "
+                            f"(last_regen={last_regen}, uploads_since={uploads_since}). "
+                            f"Falling back to additive growth."
+                        )
+                        # Fall through to additive growth path below.
+                        partial = True
+                # else mapping_rate is healthy or unknown — nothing to do.
+                if not partial:
+                    return None
+
             suggestion_service = AspectSuggestionService()
             result = asyncio.run(suggestion_service.suggest_aspects(
                 comments=input_comments,
@@ -177,34 +198,43 @@ class TaskService:
             if not new_aspects:
                 return None
 
-            # Phase 3: Additive growth for partial matches
-            # If mapping is 15-70% (partial), augment instead of replacing
-            if (mapping_rate is not None and 0.15 <= mapping_rate < 0.30
-                    and taxonomy and not force_regenerate):
+            # Additive growth: 30-70% partial matches, OR drift+cooldown fallback.
+            if partial and taxonomy:
                 logger.info(
-                    f"📈 PARTIAL MATCH ({mapping_rate:.0%}). Adding aspects additively "
-                    f"instead of replacing. Domain: {current_domain} + extending"
+                    f"📈 PARTIAL MATCH ({mapping_rate:.0%}). Adding aspects additively. "
+                    f"Domain: {current_domain} + extending"
                 )
                 try:
                     taxonomy_service.add_aspects_to_taxonomy(project_id, taxonomy, new_aspects)
-                    # Return combined list (existing + new)
-                    all_aspects = [a.get("label") for a in taxonomy.get("aspects", []) if isinstance(a, dict) and a.get("label")]
+                    all_aspects = [
+                        a.get("label") for a in taxonomy.get("aspects", [])
+                        if isinstance(a, dict) and a.get("label")
+                    ]
                     return all_aspects
                 except Exception as e:
                     logger.warning(f"Additive growth failed: {e}. Falling back to replacement.")
 
-            # Full replacement (true domain mismatch or force_regenerate)
+            # Full replacement. Catastrophic mismatch bypasses cooldown; the
+            # explicit force_regenerate flag bypasses it too.
             try:
-                taxonomy_service.create_initial_taxonomy(
+                source = "user_forced" if force_regenerate else "auto_regenerate"
+                created = taxonomy_service.create_initial_taxonomy(
                     project_id, new_aspects,
-                    source="auto_regenerate" if not force_regenerate else "user_forced",
+                    source=source,
                     domain=new_domain,
-                    is_locked=True,  # Lock new taxonomy to prevent flip-flop
+                )
+                bypass_reason = (
+                    "force_regenerate" if force_regenerate else
+                    f"catastrophic mismatch ({mapping_rate:.1%})" if severe else
+                    "cooldown cleared"
                 )
                 logger.info(
-                    f"💾 Saved new LOCKED taxonomy. Domain: '{current_domain}' → '{new_domain}'. "
-                    f"Source: {'user_forced' if force_regenerate else 'auto_regenerate'}"
+                    f"💾 Regenerated taxonomy. Domain: '{current_domain}' → '{new_domain}'. "
+                    f"Source: {source}. Reason: {bypass_reason}."
                 )
+                # create_initial_taxonomy already stamps last_regenerated_at for
+                # auto_regenerate/user_forced sources, so no extra mark needed.
+                _ = created
             except Exception as e:
                 logger.warning(f"Failed to save new taxonomy: {e}")
             return new_aspects
@@ -454,9 +484,10 @@ class TaskService:
             active = taxonomy_service.get_active_taxonomy(project_id, comments=None)
             if not active:
                 active = taxonomy_service.create_initial_taxonomy(
-                    project_id, suggested_aspects, source="gpt", is_locked=True
+                    project_id, suggested_aspects, source="gpt"
                 )
                 return active, suggested_aspects
+            taxonomy_service.increment_upload_counter(project_id, active)
             aspects = [a.get("label") or a.get("key") for a in active.get("aspects", []) if isinstance(a, dict)]
             return active, [a for a in aspects if a]
 
@@ -465,7 +496,11 @@ class TaskService:
         if existing and existing.get("aspects"):
             aspects = [a.get("label") or a.get("key") for a in existing.get("aspects", []) if isinstance(a, dict)]
             if aspects:
-                logger.info(f"📂 Reusing existing taxonomy (domain={existing.get('domain', 'unknown')}, locked={existing.get('is_locked', False)})")
+                logger.info(
+                    f"📂 Reusing existing taxonomy (domain={existing.get('domain', 'unknown')}, "
+                    f"uploads_since_regen={existing.get('uploads_since_regen', 0)})"
+                )
+                taxonomy_service.increment_upload_counter(project_id, existing)
                 return existing, aspects
 
         # Phase 4: Try domain template detection (fast, no LLM cost)
@@ -483,7 +518,6 @@ class TaskService:
                         project_id, template_aspects,
                         source="template",
                         domain=domain_name,
-                        is_locked=True,
                     )
                     return new_taxonomy, template_aspects
 
