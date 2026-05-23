@@ -99,7 +99,7 @@ class OrganizationInviteService:
         # Generate plaintext token + its hash. We persist ONLY the hash;
         # the plaintext is returned to the caller exactly once below for
         # delivery to the invitee (via email or shown-once URL in the UI).
-        # See migration 0006_hash_invite_tokens for why.
+        # See migration 0008_hash_invite_tokens for why.
         token = secrets.token_urlsafe(32)
         token_hash = _hash_token(token)
         expires_at = _now_utc() + timedelta(days=INVITE_TTL_DAYS)

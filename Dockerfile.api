@@ -22,7 +22,7 @@ EXPOSE 8000
 #   Before this change, the deploy workflow built + pushed a Docker image
 #   and Azure App Service restarted the container. Django migrations were
 #   NEVER part of the deploy — they had to be applied manually, which was
-#   easy to forget. The auth-flow audit's 0006_hash_invite_tokens migration
+#   easy to forget. The auth-flow audit's 0008_hash_invite_tokens migration
 #   shipped with PR #44 but didn't apply for that reason, breaking invite
 #   acceptance in prod until someone manually ran `manage.py migrate`.
 #

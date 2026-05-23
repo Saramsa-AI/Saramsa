@@ -55,7 +55,7 @@ def _make_invite(
 ) -> OrganizationInvite:
     """Bypass-the-service invite factory used by the register flow tests.
 
-    Mirrors the production layout after migration 0006_hash_invite_tokens:
+    Mirrors the production layout after migration 0008_hash_invite_tokens:
     DB row has the SHA-256 hash in `token_hash` and the deprecated
     plaintext `token` column nulled out. The `token` arg is still the
     PLAINTEXT — callers pass it into the register POST as `invite_token`,
