@@ -64,7 +64,12 @@ def _reverse_backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("integrations", "0005_organization_invite"),
+        # Originally `0005_organization_invite`. Renumbered from 0006 to
+        # 0008 when staging merged master, because staging's
+        # 0006_asana_task_mapping and 0007_schema_hardening produced a
+        # branching graph and master's `migrate` runs on container start.
+        # No data dependency on 0007 — pure DAG ordering.
+        ("integrations", "0007_schema_hardening"),
     ]
 
     operations = [

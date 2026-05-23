@@ -258,8 +258,13 @@ export function getProviderDrawerTitle(provider: WorkProvider): string {
   return providerDefinitions[provider].drawerTitle;
 }
 
-export function getProviderProcessTemplate(provider: WorkProvider): string {
-  return providerDefinitions[provider].workItems.processTemplate;
+// Accepts `string` (not `WorkProvider`) on purpose: a few callers pass
+// server-fetched platform values that aren't type-checked at the boundary
+// (e.g. `latestAnalysis.analysis.userStories.platform`). Unknown values
+// fall back to Azure's "Agile" rather than throwing a TypeError.
+export function getProviderProcessTemplate(provider: string): string {
+  const definition = providerDefinitions[provider as WorkProvider];
+  return definition?.workItems.processTemplate ?? providerDefinitions.azure.workItems.processTemplate;
 }
 
 export function getProviderEmptyCommentsMessage(provider: WorkProvider): string {
