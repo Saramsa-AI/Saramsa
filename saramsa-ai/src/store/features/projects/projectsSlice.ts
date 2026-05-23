@@ -192,49 +192,6 @@ export const syncProjectWithExternal = createAsyncThunk(
   }
 );
 
-// Fallback thunk for existing project creation (temporary compatibility)
-export const createProjectLegacy = createAsyncThunk(
-  'projects/createProjectLegacy',
-  async (data: {
-    name: string;
-    platform: 'azure_devops' | 'jira' | 'standalone';
-    externalProjectId?: string;
-    metadata?: any;
-  }) => {
-    // Use existing project creation endpoint
-    const response = await apiRequest('post', '/integrations/projects/create/', {
-      project_name: data.name,
-      platform: data.platform,
-      external_project_id: data.externalProjectId,
-      ...data.metadata,
-    }, true);
-    
-    const project = response.data.data;
-    
-    // Transform to our Project interface
-    return {
-      id: project.id,
-      name: project.name || data.name,
-      description: project.description,
-      userId: project.userId || 'current_user',
-      createdAt: project.createdAt || new Date().toISOString(),
-      updatedAt: project.updatedAt || new Date().toISOString(),
-      externalLinks: data.externalProjectId ? [{
-        provider: data.platform === 'azure_devops' ? 'azure' as const : 'jira' as const,
-        integrationAccountId: 'legacy',
-        externalId: data.externalProjectId,
-        url: project.external_url || '',
-        status: 'ok' as const,
-        lastSyncedAt: new Date().toISOString(),
-      }] : [],
-      metadata: {
-        totalComments: 0,
-        analysisStatus: 'pending' as const,
-      },
-    } as Project;
-  }
-);
-
 const projectsSlice = createSlice({
   name: 'projects',
   initialState,
@@ -370,27 +327,6 @@ const projectsSlice = createSlice({
             link.lastSyncedAt = new Date().toISOString();
           }
         }
-      })
-      
-      // Legacy project creation
-      .addCase(createProjectLegacy.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(createProjectLegacy.fulfilled, (state, action) => {
-        state.loading = false;
-        // Safety check: ensure payload exists and has an id
-        if (action.payload && action.payload.id) {
-          state.projects.push(action.payload);
-          state.currentProject = action.payload;
-        } else {
-          console.error('createProjectLegacy fulfilled but payload is invalid:', action.payload);
-          state.error = 'Project created but data is invalid';
-        }
-      })
-      .addCase(createProjectLegacy.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.error.message || 'Failed to create project';
       });
   },
 });

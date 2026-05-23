@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 import type { AppDispatch } from '@/store/store';
 import { encryptProjectId } from '@/lib/encryption';
-import type { WorkProvider } from '@/lib/providers';
+import { getProviderProcessTemplate, type WorkProvider } from '@/lib/providers';
 import {
   generateUserStories,
   setDeepAnalysis,
@@ -212,7 +212,7 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
                                 // We're inside the `selectedPlatform === 'jira'` branch,
                                 // so platform is always 'jira' here.
                                 platform: 'jira',
-                                processTemplate: 'Agile',
+                                processTemplate: getProviderProcessTemplate('jira'),
                                 projectId: projectId || undefined,
                                 projectMetadata: jiraProjectMetadata,
                               })).unwrap();
