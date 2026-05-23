@@ -65,11 +65,17 @@ class TaxonomyService:
             aspects: List of aspect labels
             source: Origin of taxonomy (gpt, auto_regenerate, template, manual)
             domain: Optional domain name (e.g. "hospitality", "fintech")
-            is_locked: If True, prevents silent auto-regeneration (requires user override)
+            is_locked: Legacy admin-only hard pin. Auto-flows leave this False;
+                cooldown handles flip-flop protection instead.
         """
         now = datetime.now(timezone.utc).isoformat()
         next_version = max(1, self.taxonomy_repo.get_latest_version(project_id) + 1)
         taxonomy_id = str(uuid.uuid4())
+
+        # If this taxonomy was just produced by a full regeneration, treat the
+        # creation moment as the regen marker; otherwise leave None so the very
+        # first taxonomy for a project doesn't enter cooldown on creation.
+        regen_now = now if source in ("auto_regenerate", "user_forced") else None
 
         taxonomy_doc = {
             "id": taxonomy_id,
@@ -91,10 +97,15 @@ class TaxonomyService:
             ],
             "source": source,
             "is_pinned": False,
-            "is_locked": is_locked,  # Phase 1: locked taxonomies don't auto-regen
-            "domain": domain or "unknown",  # Phase 1/2: track domain
+            "is_locked": is_locked,
+            "domain": domain or "unknown",
             "created_at": now,
             "updated_at": now,
+            # Cooldown tracking: prevents auto-regen flip-flop without
+            # permanently locking the taxonomy. A regen is allowed once both
+            # gates have cleared: >=24h since last full regen AND >=3 uploads.
+            "last_regenerated_at": regen_now,
+            "uploads_since_regen": 0,
             "health_snapshot": {
                 "last_unmapped_rate": None,
                 "last_avg_aspects_per_comment": None,
@@ -248,6 +259,63 @@ class TaxonomyService:
         except Exception:
             return 0.0
         return (datetime.now(timezone.utc) - created_dt).days
+
+    # ------------------------------------------------------------------
+    # Adaptive-regen cooldown
+    # ------------------------------------------------------------------
+    REGEN_COOLDOWN_HOURS = 24
+    REGEN_COOLDOWN_UPLOADS = 3
+
+    @classmethod
+    def is_regen_cooldown_active(cls, taxonomy: Dict[str, Any]) -> bool:
+        """Return True if a full regen happened too recently to do another.
+
+        Cooldown is active when EITHER guard is still tripped:
+          - fewer than REGEN_COOLDOWN_HOURS hours since the last regen, OR
+          - fewer than REGEN_COOLDOWN_UPLOADS uploads since the last regen.
+
+        A catastrophic-mismatch caller may bypass this; it exists only to
+        damp out flip-flop between similar domains.
+        """
+        if not taxonomy:
+            return False
+        last_regen = taxonomy.get("last_regenerated_at")
+        if not last_regen:
+            return False
+        try:
+            last_dt = datetime.fromisoformat(str(last_regen).replace("Z", "+00:00"))
+        except Exception:
+            return False
+        hours_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600.0
+        uploads_since = int(taxonomy.get("uploads_since_regen") or 0)
+        return hours_since < cls.REGEN_COOLDOWN_HOURS or uploads_since < cls.REGEN_COOLDOWN_UPLOADS
+
+    def record_full_regeneration(self, project_id: str, taxonomy: Dict[str, Any]) -> None:
+        """Mark a taxonomy as having just undergone full regeneration.
+
+        Resets cooldown so the next adapt attempt has to wait for the
+        configured window.
+        """
+        if not taxonomy:
+            return
+        updated = taxonomy.copy()
+        updated["last_regenerated_at"] = datetime.now(timezone.utc).isoformat()
+        updated["uploads_since_regen"] = 0
+        try:
+            self.taxonomy_repo.update(updated.get("id"), project_id, updated)
+        except Exception as e:
+            logger.warning(f"Failed to record full regeneration marker: {e}")
+
+    def increment_upload_counter(self, project_id: str, taxonomy: Dict[str, Any]) -> None:
+        """Bump uploads_since_regen so the cooldown's upload gate can clear."""
+        if not taxonomy:
+            return
+        updated = taxonomy.copy()
+        updated["uploads_since_regen"] = int(updated.get("uploads_since_regen") or 0) + 1
+        try:
+            self.taxonomy_repo.update(updated.get("id"), project_id, updated)
+        except Exception as e:
+            logger.warning(f"Failed to increment upload counter: {e}")
 
     @staticmethod
     def _normalize_aspect_key(label: str) -> str:
