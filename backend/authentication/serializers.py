@@ -13,7 +13,13 @@ class AppUserSerializer(serializers.Serializer):
     confirmPassword = serializers.CharField(write_only=True, min_length=6)
     first_name = serializers.CharField(max_length=30, required=False, allow_blank=True)
     last_name = serializers.CharField(max_length=30, required=False, allow_blank=True)
-    role = serializers.CharField(max_length=50, required=False, default='user')
+    # Read-only so a client can NEVER set their own role via the public
+    # registration/serializer input. A self-supplied role="admin" used to
+    # flow straight into profile.role, and _get_role_from_user(user) ==
+    # "admin" short-circuits every permission check to True — i.e. global
+    # privilege escalation. The server forces role="user" at the view layer;
+    # legitimate role assignment happens through internal/admin paths only.
+    role = serializers.CharField(max_length=50, read_only=True, default='user')
 
     def validate_email(self, value):
         """Reject already-registered emails behind the SAME generic message

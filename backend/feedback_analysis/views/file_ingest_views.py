@@ -171,6 +171,9 @@ class FeedbackFileIngestView(APIView):
                     else:
                         # Structured JSON - process with column classification
                         df = pd.DataFrame(json_data)
+                        # Replace pandas NaN (blank cells) with None so empty
+                        # dimensions don't serialize to the literal string "nan".
+                        df = df.where(pd.notna(df), None)
                         csv_data = df.to_dict('records')
                         headers = list(df.columns)
 
@@ -200,15 +203,25 @@ class FeedbackFileIngestView(APIView):
                     elif ext == ".xlsx":
                         df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
                     elif ext == ".xls":
+                        # Old .xls support is brittle: xlrd may be missing
+                        # (ImportError), xlrd>=2.0 dropped .xls and raises a
+                        # non-ImportError, and a corrupt file raises
+                        # xlrd.XLRDError/ValueError. Treat all of these as a
+                        # friendly "convert to .xlsx" validation error rather
+                        # than letting them fall through to a generic 500.
                         try:
                             df = pd.read_excel(io.BytesIO(content), engine='xlrd')
-                        except ImportError:
+                        except Exception as exc:
+                            logger.warning("Failed to read .xls upload via xlrd: %s", exc)
                             return StandardResponse.validation_error(
                                 detail='.xls files are not supported. Please convert to .xlsx or .csv format.',
-                                errors=[{"field": "file", "message": "Old Excel format (.xls) requires xlrd library"}],
+                                errors=[{"field": "file", "message": "Old Excel format (.xls) could not be read. Convert to .xlsx or .csv."}],
                                 instance=request.path,
                             )
 
+                    # Replace pandas NaN (blank cells) with None so empty
+                    # dimensions don't serialize to the literal string "nan".
+                    df = df.where(pd.notna(df), None)
                     csv_data = df.to_dict('records')
                     headers = list(df.columns)
 

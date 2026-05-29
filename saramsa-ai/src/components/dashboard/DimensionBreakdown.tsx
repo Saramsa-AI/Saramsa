@@ -108,7 +108,7 @@ export function DimensionBreakdown({
   };
 
   const getSentimentColor = (count: number, total: number): string => {
-    const percentage = (count / total) * 100;
+    const percentage = total > 0 ? (count / total) * 100 : 0;
     if (percentage >= 60) return 'text-green-600 dark:text-green-400';
     if (percentage >= 40) return 'text-yellow-600 dark:text-yellow-400';
     return 'text-red-600 dark:text-red-400';
@@ -148,7 +148,10 @@ export function DimensionBreakdown({
                 (sum, seg) => sum + seg.comment_count,
                 0
               );
-              const percentage = (segmentData.comment_count / totalComments) * 100;
+              const percentage =
+                totalComments > 0
+                  ? (segmentData.comment_count / totalComments) * 100
+                  : 0;
 
               return (
                 <div

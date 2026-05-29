@@ -90,7 +90,7 @@ class WorkItemGenerationView(APIView):
                 user_id_str,
             )
         except ValueError as e:
-            return StandardResponse.error(
+            return StandardResponse.validation_error(
                 detail=str(e),
                 instance=request.path
             )
@@ -263,14 +263,43 @@ class WorkItemSubmissionView(APIView):
                     for result in (submission_result.get("results") or [])
                     if result.get("story_id") is not None
                 }
-                for i, wi in enumerate(work_items):
+                for wi in work_items:
                     wi_id = wi.get("id")
                     if not wi_id:
                         continue
+                    # Match results strictly by story_id. Never fall back to a
+                    # positional lookup: the service may return results in a
+                    # different order/length, so an index-based match could
+                    # attach another work item's push status/external_id to the
+                    # wrong work item. A missing match yields an explicit
+                    # "unknown" status instead of a wrong-row write.
                     result_entry = results_by_story_id.get(str(wi_id))
-                    if not result_entry and i < len(submission_result.get("results", [])):
-                        result_entry = submission_result.get("results", [])[i]
-                    result_entry = result_entry or {}
+                    if result_entry is None:
+                        logger.warning(
+                            "No submission result matched work item %s; "
+                            "marking push status unknown",
+                            wi_id,
+                        )
+                        try:
+                            devops_service.work_item_repo.update_candidate_status(
+                                wi_id,
+                                project_id,
+                                {
+                                    "push_status": "unknown",
+                                    "external_platform": platform,
+                                    "push_error": (
+                                        "No submission result returned for this "
+                                        "work item."
+                                    ),
+                                },
+                            )
+                        except Exception as push_err:
+                            logger.warning(
+                                "Failed to update push status for %s: %s",
+                                wi_id,
+                                push_err,
+                            )
+                        continue
                     if result_entry.get("success"):
                         push_updates = {
                             "status": "approved",

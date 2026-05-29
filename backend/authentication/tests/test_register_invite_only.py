@@ -255,3 +255,32 @@ class RegisterInviteOnlyTest(TestCase):
 
         invite_url = _build_invite_url(_Request(), "tok-123")
         self.assertEqual(invite_url, "http://example.com/register?invite=tok-123")
+
+    def test_register_cannot_self_assign_admin_role(self) -> None:
+        """SECURITY regression: a registration request that smuggles in
+        ``"role": "admin"`` must NOT produce an admin user. Self-assigning
+        the global admin role short-circuits every permission check to
+        True (privilege escalation). The created user's profile role must
+        be the server-forced "user", never "admin"."""
+        admin = _make_user()
+        org = _make_org()
+        _make_membership(org, admin)
+        _make_invite(org, email="attacker@example.com", role="member", token="tok-escalate")
+
+        resp = self.client.post(
+            "/api/auth/register/",
+            {
+                "email": "attacker@example.com",
+                "password": "password123",
+                "confirmPassword": "password123",
+                "invite_token": "tok-escalate",
+                # Hostile input: try to self-assign the global admin role.
+                "role": "admin",
+            },
+            format="json",
+        )
+
+        self.assertEqual(resp.status_code, 201)
+        new_user = UserAccount.objects.get(email="attacker@example.com")
+        self.assertNotEqual(new_user.profile.get("role"), "admin")
+        self.assertEqual(new_user.profile.get("role"), "user")

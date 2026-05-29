@@ -388,7 +388,7 @@ class InsightRulesView(APIView):
         analysis_service = get_analysis_service()
         saved = analysis_service.upsert_insight_rules_for_project(project_id, payload)
         if not saved:
-            return StandardResponse.server_error(detail="Failed to save insight rules.", instance=request.path)
+            return StandardResponse.internal_server_error(detail="Failed to save insight rules.", instance=request.path)
 
         return StandardResponse.success(data=saved, message="Insight rules updated successfully.")
 
@@ -580,6 +580,22 @@ class UserStoryUpdateView(APIView):
         updates = {k: v for k, v in request.data.items() if k in allowed_fields}
         if not updates:
             return StandardResponse.validation_error(detail="No updatable fields provided.", instance=request.path)
+
+        # Validate field types before persisting to prevent mass assignment of
+        # malformed data that would corrupt downstream consumers (the user story
+        # is stored/serialized verbatim).
+        if "work_items" in updates and not isinstance(updates["work_items"], list):
+            return StandardResponse.validation_error(
+                detail="'work_items' must be a list.", instance=request.path
+            )
+        if "payload" in updates and not isinstance(updates["payload"], dict):
+            return StandardResponse.validation_error(
+                detail="'payload' must be an object.", instance=request.path
+            )
+        if "status" in updates and not isinstance(updates["status"], str):
+            return StandardResponse.validation_error(
+                detail="'status' must be a string.", instance=request.path
+            )
 
         story.update(updates)
         updated = storage_service.save_user_story(story)
