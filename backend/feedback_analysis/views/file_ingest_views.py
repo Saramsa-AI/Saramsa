@@ -23,6 +23,7 @@ from apis.core.response import StandardResponse
 from billing.quota import QuotaExceeded, check_quota, record_usage
 
 from ..file_extractors import (
+    decode_text,
     extract_comments_from_docx,
     extract_comments_from_pdf,
     extract_comments_from_text,
@@ -147,7 +148,7 @@ class FeedbackFileIngestView(APIView):
                 # Handle JSON separately (can be plain text or structured)
                 if ext == ".json":
                     # Parse JSON - support both array of objects and object with array
-                    json_data = json_lib.loads(content.decode('utf-8'))
+                    json_data = json_lib.loads(decode_text(content))
                     if isinstance(json_data, dict):
                         # Try to find an array in the top-level keys
                         for key, value in json_data.items():
@@ -195,7 +196,7 @@ class FeedbackFileIngestView(APIView):
                 else:
                     # CSV/Excel files - always structured
                     if ext == ".csv":
-                        df = pd.read_csv(io.BytesIO(content))
+                        df = pd.read_csv(io.StringIO(decode_text(content)))
                     elif ext == ".xlsx":
                         df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
                     elif ext == ".xls":

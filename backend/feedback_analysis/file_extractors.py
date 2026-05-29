@@ -58,6 +58,25 @@ def _enforce_docx_size_cap(file_obj: IO[bytes]) -> None:
 _BOM = "﻿"
 
 
+def decode_text(raw: bytes) -> str:
+    """Decode uploaded file bytes tolerantly.
+
+    Spreadsheet / ITSM exports are frequently not valid UTF-8: Excel prepends a
+    UTF-8 BOM, and Windows / ServiceNow / Jira exports use CP-1252 for smart
+    quotes (0x93/0x94), em dashes (0x97) and non-breaking spaces (0xA0). A
+    strict ``bytes.decode("utf-8")`` raises ``UnicodeDecodeError`` on those and
+    the whole upload fails with a generic "special character" error. Try UTF-8
+    (BOM-aware) first, then fall back to CP-1252 and Latin-1 so the real
+    characters survive instead of crashing the request.
+    """
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def _split_lines_to_comments(text: str) -> List[str]:
     """Normalize line endings, strip whitespace, and drop empty entries."""
     if not text:
