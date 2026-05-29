@@ -89,14 +89,31 @@ jobs:
         run: |
           echo "Waiting for container to start..."
           sleep 30
-          for i in $(seq 1 5); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://saramsa-celery-prod-2.azurewebsites.net/)
-            echo "Attempt $i: HTTP $STATUS"
-            if [ "$STATUS" = "200" ]; then
-              echo "Celery app is healthy!"
+
+          # The celery web app has no app route at "/" (it serves a 404), so a
+          # 404 still proves the container is up and reachable — only a curl
+          # failure (HTTP 000) means it's down. A curl timeout must NOT abort
+          # the loop: capture the exit code with set +e and keep retrying.
+          MAX_ATTEMPTS=8
+          TIMEOUT=30
+          RETRY_DELAY=15
+          STATUS="000"
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            set +e
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT https://saramsa-celery-prod-2.azurewebsites.net/)
+            curl_exit=$?
+            set -e
+            if [ "$curl_exit" -ne 0 ]; then
+              STATUS="000"
+            fi
+            echo "Attempt $i/$MAX_ATTEMPTS: HTTP $STATUS (curl exit $curl_exit)"
+            if [ "$STATUS" != "000" ]; then
+              echo "Celery app is reachable (HTTP $STATUS)!"
               exit 0
             fi
-            sleep 15
+            if [ "$i" -lt "$MAX_ATTEMPTS" ]; then
+              sleep $RETRY_DELAY
+            fi
           done
-          echo "WARNING: App not responding after 5 attempts"
+          echo "::error::Celery app unreachable after $MAX_ATTEMPTS attempts (last status: $STATUS)."
           exit 1
