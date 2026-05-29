@@ -232,9 +232,14 @@ class TaskService:
                     f"💾 Regenerated taxonomy. Domain: '{current_domain}' → '{new_domain}'. "
                     f"Source: {source}. Reason: {bypass_reason}."
                 )
-                # create_initial_taxonomy already stamps last_regenerated_at for
-                # auto_regenerate/user_forced sources, so no extra mark needed.
-                _ = created
+                # BUG 2 fix: explicitly arm the cooldown on the freshly created
+                # taxonomy so a full regeneration always damps the next adapt
+                # attempt. This makes the cooldown contract explicit at the
+                # regen call site rather than relying solely on the implicit
+                # stamp inside create_initial_taxonomy, and gives
+                # record_full_regeneration a real caller.
+                if created:
+                    taxonomy_service.record_full_regeneration(project_id, created)
             except Exception as e:
                 logger.warning(f"Failed to save new taxonomy: {e}")
             return new_aspects
@@ -572,9 +577,15 @@ class TaskService:
             conf_map = {"HIGH": 0.9, "MEDIUM": 0.6, "LOW": 0.3}
             for item in extracted_comments:
                 aspects = item.get("aspects") or []
-                if not aspects:
+                # BUG 3 fix: the pipeline uses the sentinel ["UNMAPPED"] (not an
+                # empty list) for comments that matched no real aspect. Treat
+                # that sentinel as unmapped and exclude it from the mapped-aspect
+                # count so avg-aspects isn't inflated and broken taxonomies are
+                # visible to _is_healthy_metrics.
+                mapped_aspects = [a for a in aspects if str(a).strip().upper() != "UNMAPPED"]
+                if not mapped_aspects:
                     unmapped_count += 1
-                aspects_total += len(aspects)
+                aspects_total += len(mapped_aspects)
                 conf = str(item.get("confidence", "")).upper()
                 if conf in conf_map:
                     confidence_scores.append(conf_map[conf])

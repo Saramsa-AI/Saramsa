@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 import uuid
 import logging
 
+from django.db import transaction
+
 from ..repositories import ProjectTaxonomyRepository
+from ..models import Taxonomy
 from .aspect_suggestion_service import get_aspect_suggestion_service
 from asgiref.sync import async_to_sync
 
@@ -69,7 +72,6 @@ class TaxonomyService:
                 cooldown handles flip-flop protection instead.
         """
         now = datetime.now(timezone.utc).isoformat()
-        next_version = max(1, self.taxonomy_repo.get_latest_version(project_id) + 1)
         taxonomy_id = str(uuid.uuid4())
 
         # If this taxonomy was just produced by a full regeneration, treat the
@@ -77,16 +79,57 @@ class TaxonomyService:
         # first taxonomy for a project doesn't enter cooldown on creation.
         regen_now = now if source in ("auto_regenerate", "user_forced") else None
 
+        # BUG 4 mitigation (code-level, no schema change): create the new active
+        # row and archive prior actives inside ONE transaction, taking a row
+        # lock on the project's existing taxonomies so concurrent uploads for
+        # the same project can't interleave and leave two status="active" rows.
+        # select_for_update() is a no-op on sqlite (tests) but serializes on
+        # Postgres, which is where the race actually bites.
+        with transaction.atomic():
+            self._lock_project_taxonomies(project_id)
+            next_version = max(1, self.taxonomy_repo.get_latest_version(project_id) + 1)
+            taxonomy_doc = self._build_taxonomy_doc(
+                taxonomy_id=taxonomy_id,
+                project_id=project_id,
+                aspects=aspects,
+                source=source,
+                domain=domain,
+                is_locked=is_locked,
+                version=next_version,
+                now=now,
+                regen_now=regen_now,
+            )
+            created = self.taxonomy_repo.create(taxonomy_doc)
+            self.taxonomy_repo.archive_others_for_project(project_id, created.get("id"))
+        return created
+
+    @staticmethod
+    def _lock_project_taxonomies(project_id: str) -> None:
+        """Take a row lock on the project's taxonomies to serialize resolve-or-create.
+
+        Must be called inside a transaction.atomic() block. Evaluating the
+        queryset forces the SELECT ... FOR UPDATE. No-op on sqlite.
+        """
+        list(
+            Taxonomy.objects
+            .select_for_update()
+            .filter(project_id=project_id, type="taxonomy")
+            .values_list("id", flat=True)
+        )
+
+    @staticmethod
+    def _build_taxonomy_doc(*, taxonomy_id, project_id, aspects, source, domain,
+                            is_locked, version, now, regen_now) -> Dict[str, Any]:
         taxonomy_doc = {
             "id": taxonomy_id,
             "taxonomy_id": taxonomy_id,
             "project_id": project_id,
             "projectId": project_id,
-            "version": next_version,
+            "version": version,
             "status": "active",
             "aspects": [
                 {
-                    "key": self._normalize_aspect_key(a),
+                    "key": TaxonomyService._normalize_aspect_key(a),
                     "label": str(a),
                     "synonyms": [],
                     "usage_count": 0,  # Phase 3: track aspect usage
@@ -113,13 +156,7 @@ class TaxonomyService:
             },
             "taxonomy_health": "UNKNOWN",
         }
-
-        created = self.taxonomy_repo.create(taxonomy_doc)
-        try:
-            self.taxonomy_repo.archive_others_for_project(project_id, created.get("id"))
-        except Exception as e:
-            logger.warning(f"Failed to archive other taxonomies after creation: {e}")
-        return created
+        return taxonomy_doc
 
     def add_aspects_to_taxonomy(self, project_id: str, taxonomy: Dict[str, Any],
                                  new_aspects: List[str]) -> Dict[str, Any]:
@@ -290,32 +327,66 @@ class TaxonomyService:
         uploads_since = int(taxonomy.get("uploads_since_regen") or 0)
         return hours_since < cls.REGEN_COOLDOWN_HOURS or uploads_since < cls.REGEN_COOLDOWN_UPLOADS
 
-    def record_full_regeneration(self, project_id: str, taxonomy: Dict[str, Any]) -> None:
+    def record_full_regeneration(self, project_id: str, taxonomy: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Mark a taxonomy as having just undergone full regeneration.
 
         Resets cooldown so the next adapt attempt has to wait for the
-        configured window.
+        configured window. Mutates ``taxonomy`` in place and returns it so the
+        caller's dict reflects the persisted cooldown markers immediately.
         """
         if not taxonomy:
-            return
-        updated = taxonomy.copy()
-        updated["last_regenerated_at"] = datetime.now(timezone.utc).isoformat()
-        updated["uploads_since_regen"] = 0
-        try:
-            self.taxonomy_repo.update(updated.get("id"), project_id, updated)
-        except Exception as e:
-            logger.warning(f"Failed to record full regeneration marker: {e}")
+            return taxonomy
+        now = datetime.now(timezone.utc).isoformat()
+        return self._apply_cooldown_update(
+            project_id, taxonomy,
+            {"last_regenerated_at": now, "uploads_since_regen": 0},
+            failure_msg="Failed to record full regeneration marker",
+        )
 
-    def increment_upload_counter(self, project_id: str, taxonomy: Dict[str, Any]) -> None:
-        """Bump uploads_since_regen so the cooldown's upload gate can clear."""
+    def increment_upload_counter(self, project_id: str, taxonomy: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Bump uploads_since_regen so the cooldown's upload gate can clear.
+
+        BUG 1 fix: previously this incremented a throwaway ``taxonomy.copy()``
+        and returned None, so the caller kept the pre-increment dict and the
+        cooldown gate saw a stale counter every run. Now it reads the
+        authoritative persisted counter, increments it, persists, AND mutates
+        the caller's ``taxonomy`` dict in place (also returning it) so the
+        regen decision downstream sees the fresh, incremented value.
+        """
         if not taxonomy:
-            return
-        updated = taxonomy.copy()
-        updated["uploads_since_regen"] = int(updated.get("uploads_since_regen") or 0) + 1
+            return taxonomy
+        # Read-modify-write against the persisted row inside a transaction so
+        # concurrent uploads for the same project can't clobber each other's
+        # increment (the persisted value is authoritative, not the in-memory
+        # copy the caller happened to be holding).
+        with transaction.atomic():
+            self._lock_project_taxonomies(project_id)
+            persisted = self.taxonomy_repo.get_by_id(taxonomy.get("id"), project_id)
+            base = int((persisted or taxonomy).get("uploads_since_regen") or 0)
+            return self._apply_cooldown_update(
+                project_id, taxonomy,
+                {"uploads_since_regen": base + 1},
+                failure_msg="Failed to increment upload counter",
+                _in_transaction=True,
+            )
+
+    def _apply_cooldown_update(self, project_id, taxonomy, fields, failure_msg,
+                              _in_transaction: bool = False) -> Dict[str, Any]:
+        """Persist cooldown bookkeeping fields and mirror them onto the caller's dict.
+
+        Updating ``taxonomy`` in place is what makes the fresh values visible to
+        the cooldown gate in the same request (the caller keeps using this very
+        dict). Returns the same dict for call-site convenience.
+        """
         try:
+            updated = dict(taxonomy)
+            updated.update(fields)
             self.taxonomy_repo.update(updated.get("id"), project_id, updated)
+            # Reflect persisted values back onto the caller's live dict.
+            taxonomy.update(fields)
         except Exception as e:
-            logger.warning(f"Failed to increment upload counter: {e}")
+            logger.warning(f"{failure_msg}: {e}")
+        return taxonomy
 
     @staticmethod
     def _normalize_aspect_key(label: str) -> str:
