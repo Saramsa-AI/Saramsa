@@ -108,7 +108,7 @@ export const FeatureSentimentsTable = ({
 
       {/* Accordion Cards */}
       <div className="space-y-2">
-        {features.map((feature, index) => {
+        {features.map((feature) => {
           const isExpanded = expandedFeatures.has(feature.name);
           const isSelected = selectedFeatures.includes(feature.name);
           const hasPositive = (feature.sample_comments?.positive?.length ?? 0) > 0;
@@ -117,7 +117,7 @@ export const FeatureSentimentsTable = ({
 
           return (
             <div
-              key={index}
+              key={feature.name}
               className={`rounded-xl border transition-all duration-200 ${
                 isSelected
                   ? 'border-saramsa-brand/30 bg-saramsa-brand/5'

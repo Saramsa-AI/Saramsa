@@ -156,7 +156,7 @@ export function InsightsPanel(props: InsightsPanelProps) {
                 hasEditedFeaturesProp={Object.keys(editedKeywords).length > 0}
                 hasComments={!!loadedComments && loadedComments.length > 0}
                 projectId={currentProjectId}
-                analysisId={latestAnalysis?.analysis_id}
+                analysisId={selectedAnalysisId ?? latestAnalysis?.analysis?.id ?? undefined}
               />
             </div>
           )}
