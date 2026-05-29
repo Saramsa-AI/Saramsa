@@ -233,7 +233,10 @@ class OrganizationInviteService:
                 raise ValueError("This invite has already been used.")
             if invite.status == "revoked":
                 raise ValueError("This invite has been revoked.")
-            if invite.expires_at < _now_utc():
+            # `<=` (not `<`) to match get_by_token: an invite at exactly its
+            # TTL instant is treated as expired, closing the zero-width
+            # window where a token at precisely `now` would still accept.
+            if invite.expires_at <= _now_utc():
                 raise ValueError("This invite has expired.")
             if invite.email != normalised_user_email:
                 raise ValueError(

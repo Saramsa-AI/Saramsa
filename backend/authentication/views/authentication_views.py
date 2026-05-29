@@ -97,7 +97,13 @@ class RegisterView(generics.CreateAPIView):
                     password=serializer.validated_data['password'],
                     first_name=serializer.validated_data.get('first_name', ''),
                     last_name=serializer.validated_data.get('last_name', ''),
-                    role=serializer.validated_data.get('role', 'user'),
+                    # SECURITY: never trust a client-supplied role here.
+                    # Public registration always creates a plain "user";
+                    # accepting input would let a caller self-assign the
+                    # global "admin" role (privilege escalation). The
+                    # serializer `role` field is read-only, but we hard-code
+                    # it here too so this invariant doesn't depend on that.
+                    role="user",
                 )
                 accept_result = get_organization_invite_service().accept_invite(
                     token=invite_token,
