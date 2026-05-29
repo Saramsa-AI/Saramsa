@@ -15,6 +15,7 @@ import uuid
 from asgiref.sync import async_to_sync, sync_to_async
 import logging
 
+from ..file_extractors import decode_text
 from ..services import get_analysis_service
 from ..services.column_classifier_service import (
     build_enriched_comments,
@@ -214,7 +215,7 @@ class FeedbackFileUploadView(APIView):
         """Process CSV feedback file."""
         try:
             csv_data = []
-            decoded_file = file.read().decode('utf-8').splitlines()
+            decoded_file = decode_text(file.read()).splitlines()
             reader = csv.DictReader(decoded_file)
             csv_data = [row for row in reader]
 

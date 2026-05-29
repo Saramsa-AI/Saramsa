@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from feedback_analysis.file_extractors import (
+    decode_text,
     extract_comments_from_docx,
     extract_comments_from_pdf,
     extract_comments_from_text,
@@ -158,3 +159,36 @@ class TestExtractCommentsFromDocx:
         buf.seek(0)
         with pytest.raises(ValueError, match="too large"):
             extract_comments_from_docx(buf)
+
+
+class TestDecodeText:
+    """Tolerant decoding for CSV/JSON uploads.
+
+    Spreadsheet / ITSM exports are routinely not strict UTF-8. A bare
+    ``bytes.decode("utf-8")`` used to crash the whole upload with a generic
+    "special character" error; ``decode_text`` must recover the real text.
+    """
+
+    def test_plain_utf8(self):
+        assert decode_text(b"feedback_id,text\n1,hello") == "feedback_id,text\n1,hello"
+
+    def test_strips_utf8_bom(self):
+        # Excel exports CSV with a UTF-8 BOM; left in, it corrupts the first
+        # header into "﻿feedback_id" and column classification fails.
+        decoded = decode_text("﻿feedback_id,text\n1,hi".encode("utf-8"))
+        assert decoded.startswith("feedback_id")
+        assert "﻿" not in decoded
+
+    def test_cp1252_smart_punctuation(self):
+        # 0x93/0x94 smart quotes, 0x97 em dash, 0xA0 nbsp: invalid UTF-8 start
+        # bytes that ServiceNow / Jira / Windows exports emit. Must not raise.
+        raw = b"id,desc\n1,Login failed \x97 saw \x93timeout\x94\xa0error"
+        decoded = decode_text(raw)
+        assert "Login failed" in decoded
+        assert "timeout" in decoded
+        assert "—" in decoded  # em dash round-trips via cp1252
+
+    def test_never_raises_on_garbage(self):
+        # Final safety net: undecodable bytes degrade to a str, never an
+        # exception that would 400 the upload.
+        assert isinstance(decode_text(b"\xff\xfe\x00\x01garbage"), str)
