@@ -776,7 +776,7 @@ class AnalysisRenameView(APIView):
 
         updated = analysis_service.update_analysis_name_for_doc(analysis, str(user_id), name or None)
         if not updated:
-            return StandardResponse.server_error(
+            return StandardResponse.internal_server_error(
                 detail="Failed to update analysis name.",
                 instance=request.path
             )
