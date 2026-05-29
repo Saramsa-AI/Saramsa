@@ -88,9 +88,14 @@ def _split_lines_to_comments(text: str) -> List[str]:
 
 
 def extract_comments_from_text(file_obj: IO[bytes]) -> List[str]:
-    """Read a UTF-8 text upload and return one comment per non-empty line."""
+    """Read a text upload and return one comment per non-empty line.
+
+    Uses :func:`decode_text` so CP-1252 / Latin-1 exports (smart quotes, em
+    dashes, non-breaking spaces) decode to the real characters instead of
+    mojibake — matching how the CSV/JSON ingest paths read their bytes.
+    """
     raw = file_obj.read()
-    decoded = raw.decode("utf-8", errors="replace")
+    decoded = decode_text(raw)
     comments = _split_lines_to_comments(decoded)
     if not comments:
         raise ValueError("Text file is empty.")

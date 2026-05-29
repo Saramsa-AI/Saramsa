@@ -255,6 +255,11 @@ class FeedbackFileUploadView(APIView):
 
             # Extract enriched_text for LLM processing (backward compat with existing pipeline)
             original_comments = [c["enriched_text"] for c in structured_comments]
+            # Plain feedback text (no [Persona: ...|Plan: ...] bracket prefix) for
+            # the language check. Running assert_english on enriched_text dilutes
+            # the language signal with metadata and risks a false "non-English"
+            # rejection — the ingest view checks plain sc['text'] for this reason.
+            plain_comments = [c["text"] for c in structured_comments]
             # Extract dimensions for storage
             comment_dimensions = [c["dimensions"] for c in structured_comments]
             logger.info(
@@ -266,7 +271,7 @@ class FeedbackFileUploadView(APIView):
             )
 
             try:
-                assert_english(original_comments)
+                assert_english(plain_comments)
             except UnsupportedLanguage as exc:
                 return StandardResponse.validation_error(
                     detail=str(exc),

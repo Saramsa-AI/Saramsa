@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -42,6 +43,34 @@ _MAX_SAMPLE_ROWS = 5
 # When we have to fall back to heuristic, columns whose average value length is
 # below this are very unlikely to be free-form feedback text.
 _MIN_TEXT_AVG_LEN = 30
+
+
+def _is_empty_cell(val: Any) -> bool:
+    """True for values that should be treated as a blank cell.
+
+    pandas turns blank CSV/Excel cells into float ``NaN`` (not ``None``/""),
+    and ``NaN is None`` is False while ``str(NaN)`` is the literal "nan" — so a
+    plain ``val is None or str(val).strip() == ""`` check lets "nan" leak into
+    stored dimensions and the bracket prefix. Catch NaN explicitly.
+    """
+    if val is None:
+        return True
+    if isinstance(val, float) and math.isnan(val):
+        return True
+    return str(val).strip() == ""
+
+
+def _normalize_cell_value(val: Any) -> Any:
+    """Coerce an integral float (5.0) back to int (5) for display/filtering.
+
+    pandas reads an integer column as float64 whenever any cell in it is blank,
+    so a ``rating`` of 5 round-trips as ``5.0`` and renders/filters as "5.0".
+    Only collapse floats that are exactly integral — genuine decimals like 4.5
+    are left untouched. Non-float values pass through unchanged.
+    """
+    if isinstance(val, float) and not math.isnan(val) and val.is_integer():
+        return int(val)
+    return val
 
 
 def _avg_value_len(rows: List[Dict[str, Any]], col: str) -> float:
@@ -249,7 +278,10 @@ def build_structured_comments(
     seen_seeds: Dict[str, None] = {}
 
     for row in rows:
-        text = str(row.get(primary, "") or "").strip()
+        primary_val = row.get(primary)
+        # NaN-aware: pandas blanks the primary cell to float NaN, whose str()
+        # is "nan" and is truthy — guard so it's treated as an empty comment.
+        text = "" if _is_empty_cell(primary_val) else str(primary_val).strip()
         if not text:
             continue
 
@@ -260,8 +292,11 @@ def build_structured_comments(
         if context_cols:
             for col in context_cols:
                 val = row.get(col)
-                if val is None or str(val).strip() == "":
+                if _is_empty_cell(val):
                     continue
+                # Collapse integral floats (5.0 -> 5) so int columns that
+                # pandas widened to float64 don't render/filter as "5.0".
+                val = _normalize_cell_value(val)
                 label = _normalize_label(col)
                 # Store in dimensions with normalized key (lowercase, underscored)
                 dim_key = col.lower().replace(" ", "_").replace("-", "_")
@@ -282,8 +317,8 @@ def build_structured_comments(
 
         if seed_col:
             sv = row.get(seed_col)
-            if sv is not None:
-                sv_str = str(sv).strip()
+            if not _is_empty_cell(sv):
+                sv_str = str(_normalize_cell_value(sv)).strip()
                 if sv_str and sv_str not in seen_seeds:
                     seen_seeds[sv_str] = None
 
