@@ -130,36 +130,73 @@ class QuotaExceeded(Exception):
         )
 
 
+# (count_field, limit_key) for each chargeable resource.
+_RESOURCE_FIELDS = {
+    "analysis": ("analysis_count", "analysis_limit"),
+    "work_item_gen": ("work_item_gen_count", "work_item_gen_limit"),
+    "llm_tokens": ("llm_tokens_used", "llm_token_limit"),
+}
+
+
+def _resolve_limit(limits: dict, limit_key: str) -> int:
+    """Resolve a resource's limit, failing CLOSED on a missing key.
+
+    A missing limit key previously defaulted to 999_999, which silently
+    handed out an effectively-unlimited quota whenever a limit was
+    misconfigured or absent — a fail-open security hole. We now treat a
+    missing key as a zero quota (deny) so a config gap cannot be exploited
+    to bypass billing. `default_limits()` always supplies every known key,
+    so legitimate tiers are unaffected; intentional unlimited tiers must
+    set an explicit large override rather than relying on a missing key.
+    """
+    if limit_key in limits:
+        return int(limits[limit_key])
+    logger.error(
+        "quota: limit_key=%s missing from resolved limits %s — failing closed (deny)",
+        limit_key, limits,
+    )
+    return 0
+
+
 def check_quota(user_id: str, resource: str, organization_id: Optional[str] = None) -> None:
     """Raise QuotaExceeded if the workspace has hit its limit for `resource`.
+
+    This is a fast pre-check so callers can reject over-quota requests with a
+    429 *before* doing expensive work. It is intentionally advisory: the
+    authoritative, race-safe enforcement lives in `record_usage`, which only
+    increments the counter when doing so keeps it within the limit. Without
+    that, concurrent requests could all pass this read-then-compare check at
+    the limit boundary and then each record usage (a TOCTOU quota bypass).
 
     Pass `organization_id` to charge a specific workspace (e.g. the project's
     owning org); omit it to fall back to the user's active org.
 
     resource: "analysis" | "work_item_gen" | "llm_tokens"
     """
+    if resource not in _RESOURCE_FIELDS:
+        return
+
     record = _get_or_create_record(user_id, organization_id)
     limits = _get_limits(user_id, organization_id)
 
-    field_map = {
-        "analysis": ("analysis_count", "analysis_limit"),
-        "work_item_gen": ("work_item_gen_count", "work_item_gen_limit"),
-        "llm_tokens": ("llm_tokens_used", "llm_token_limit"),
-    }
-
-    if resource not in field_map:
-        return
-
-    count_field, limit_key = field_map[resource]
+    count_field, limit_key = _RESOURCE_FIELDS[resource]
     used = getattr(record, count_field, 0)
-    limit = limits.get(limit_key, 999_999)
+    limit = _resolve_limit(limits, limit_key)
 
     if used >= limit:
         raise QuotaExceeded(resource, limit, used)
 
 
 def record_usage(user_id: str, resource: str, amount: int = 1, organization_id: Optional[str] = None) -> None:
-    """Increment the workspace's usage counter after a successful operation.
+    """Atomically charge the workspace's usage counter for a completed operation.
+
+    This is the authoritative quota gate. The increment is a single atomic
+    conditional UPDATE — ``SET count = count + amount WHERE count + amount <=
+    limit`` — so the counter can never exceed the limit even when many
+    requests from the same org race past `check_quota` at the boundary. If the
+    UPDATE matches no rows (the charge would overrun the quota) we raise
+    `QuotaExceeded` and leave the counter untouched, so the monthly pool is
+    never overrun.
 
     Pass `organization_id` to charge a specific workspace; omit it to fall back
     to the user's active org.
@@ -167,18 +204,28 @@ def record_usage(user_id: str, resource: str, amount: int = 1, organization_id: 
     from django.db.models import F
     from .models import UsageRecord
 
-    field_map = {
-        "analysis": "analysis_count",
-        "work_item_gen": "work_item_gen_count",
-        "llm_tokens": "llm_tokens_used",
-    }
-    field = field_map.get(resource)
-    if not field:
+    if resource not in _RESOURCE_FIELDS:
         return
+
+    field, limit_key = _RESOURCE_FIELDS[resource]
+    limit = _resolve_limit(_get_limits(user_id, organization_id), limit_key)
 
     # Ensure the row exists before .update() — .update() on an empty
     # queryset is a silent no-op, so a record_usage call without a prior
     # check_quota would otherwise drop usage.
     _get_or_create_record(user_id, organization_id)
     filter_kwargs, _defaults = _record_lookup_keys(user_id, organization_id)
-    UsageRecord.objects.filter(**filter_kwargs).update(**{field: F(field) + amount})
+
+    # Atomic conditional increment: the DB only applies the bump when the new
+    # total stays within the limit, so check-and-increment happens in one
+    # statement with no read-then-write race. 0 rows affected => over quota.
+    updated = (
+        UsageRecord.objects.filter(**{**filter_kwargs, f"{field}__lte": limit - amount})
+        .update(**{field: F(field) + amount})
+    )
+    if not updated:
+        # Re-read the current count for an accurate error; the row exists
+        # because we just get_or_create'd it.
+        record = UsageRecord.objects.filter(**filter_kwargs).first()
+        used = getattr(record, field, limit) if record else limit
+        raise QuotaExceeded(resource, limit, used)
