@@ -167,14 +167,32 @@ jobs:
         run: |
           echo "Waiting for container to start..."
           sleep 45
-          for i in $(seq 1 8); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://saramsa-api-prod.azurewebsites.net/api/health/)
-            echo "Attempt $i: HTTP $STATUS"
+
+          # /api/health/ does a live Azure OpenAI round-trip, so a healthy
+          # response can still take 40-90s (cold start, OpenAI latency). Use a
+          # generous per-request timeout and many attempts. Crucially, a curl
+          # timeout must NOT abort the loop: capture its exit code with set +e
+          # and treat failure as HTTP 000 so we keep retrying.
+          MAX_ATTEMPTS=10
+          TIMEOUT=90
+          RETRY_DELAY=15
+          STATUS="000"
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            set +e
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT https://saramsa-api-prod.azurewebsites.net/api/health/)
+            curl_exit=$?
+            set -e
+            if [ "$curl_exit" -ne 0 ]; then
+              STATUS="000"
+            fi
+            echo "Attempt $i/$MAX_ATTEMPTS: HTTP $STATUS (curl exit $curl_exit)"
             if [ "$STATUS" = "200" ]; then
               echo "API is healthy!"
               exit 0
             fi
-            sleep 15
+            if [ "$i" -lt "$MAX_ATTEMPTS" ]; then
+              sleep $RETRY_DELAY
+            fi
           done
-          echo "WARNING: API not responding after 8 attempts"
+          echo "::error::API did not return HTTP 200 after $MAX_ATTEMPTS attempts (last status: $STATUS)."
           exit 1
