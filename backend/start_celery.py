@@ -29,12 +29,31 @@ try:
 except Exception as e:
     logger.warning("OpenTelemetry setup failed in celery_ops process: %s", e)
 
-# Start Celery worker as a subprocess
-logger.info("Starting Celery worker...")
-celery_proc = subprocess.Popen(
-    [sys.executable, "-m", "celery", "-A", "apis", "worker", "--loglevel=info", "--concurrency=2", "-E"],
-    cwd=workdir
-)
+# Start Celery worker as a subprocess.
+#
+# Concurrency = 1: each worker fork loads its own ~2.2 GB DeBERTa NLI model
+# (prefork pool, no shared memory). On a 16 GB App Service plan, two forks
+# OOM-SIGKILL under load (verified in prod logs 2026-05-30). Concurrency=1
+# fits one full ML task in 4-6 GB peak. Scale OUT (multiple instances)
+# rather than UP when we need genuine parallelism.
+#
+# max-tasks-per-child=10: recycle the worker process every 10 tasks to
+# bound the model/Python memory leak we measured (RAM baseline grew from
+# 4 GB → 10 GB across a day of tasks before this guard).
+#
+# prefetch-multiplier=1: only pull 1 task per worker from Redis at a time.
+# Default (4) caused tasks to sit in worker-local queues even while other
+# workers were idle, blocking the "scale out by adding instances" plan.
+celery_args = [
+    sys.executable, "-m", "celery", "-A", "apis", "worker",
+    "--loglevel=info",
+    "--concurrency=1",
+    "--max-tasks-per-child=10",
+    "--prefetch-multiplier=1",
+    "-E",
+]
+logger.info("Starting Celery worker: %s", " ".join(celery_args[1:]))
+celery_proc = subprocess.Popen(celery_args, cwd=workdir)
 
 # Start Celery beat scheduler
 logger.info("Starting Celery beat...")
