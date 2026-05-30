@@ -26,6 +26,7 @@ import {
   cancelAnalysisTask,
   setTaskIdForEntry,
   resolveAnalyzingTask,
+  resumeInFlightTask,
 } from '../../../store/features/analysis/analysisSlice';
 import type { AnalysisHistoryEntry } from '../../../store/features/analysis/analysisSlice';
 import {
@@ -176,40 +177,85 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     };
   }, []);
 
-  // Hydration sweeper: if Redux comes back with a stale `analyzing_*`
-  // placeholder from a previous session (e.g., the user closed the tab
-  // before the task completed and their persistor restored it), reconcile
-  // it against the live task list. If the corresponding task is now in a
-  // terminal state — or doesn't exist at all — dispatch resolveAnalyzingTask
-  // so the loading skeletons release immediately instead of requiring a hard
-  // refresh. Runs once on mount.
+  // Hydration sweeper: reconcile in-flight task state against the live task
+  // list on mount. Two reconciliations, both single-shot per mount:
+  //
+  // A) If Redux comes back with a stale `analyzing_*` placeholder (the user
+  //    closed the tab before the task completed and the persistor restored
+  //    it) AND the matching task is now terminal or missing → dispatch
+  //    resolveAnalyzingTask so the loading skeletons release immediately.
+  //
+  // B) If Redux has NO placeholder (refresh wiped the non-persisted analysis
+  //    slice — see store.ts whitelist: ['auth']) BUT the task list still has
+  //    a non-terminal task for the current project → re-seed the optimistic
+  //    history entry + placeholder + resumeInFlightTask so the "Analyzing..."
+  //    tile reappears and the existing polling pipeline takes over. Without
+  //    this, an in-progress upload silently vanishes from the UI on refresh
+  //    and the user only sees completion after the next refresh.
   const hydrationSweptRef = useRef(false);
   useEffect(() => {
     if (hydrationSweptRef.current) return;
-    if (!isAnalyzingPlaceholder(selectedAnalysisId)) {
-      hydrationSweptRef.current = true;
-      return;
-    }
-    const taskId = extractTaskIdFromPlaceholder(selectedAnalysisId);
-    if (!taskId) return;
+    // Wait until we know the current project; the re-seed in branch B is
+    // project-scoped so seeding before currentProjectId resolves would attach
+    // to the wrong project (or 'personal' fallback). Branch A doesn't need
+    // the project but we run them together.
+    if (!currentProjectId) return;
     hydrationSweptRef.current = true;
+
+    const placeholderTaskId = isAnalyzingPlaceholder(selectedAnalysisId)
+      ? extractTaskIdFromPlaceholder(selectedAnalysisId)
+      : null;
+
     (async () => {
       try {
         const resp = await apiRequest('get', '/insights/tasks/', undefined, true);
         const list: any[] = resp?.data?.data?.tasks ?? [];
-        const match = list.find(t => t?.task_id === taskId);
-        if (!match || ['SUCCESS', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(match?.status)) {
-          dispatch(resolveAnalyzingTask({
-            taskId,
-            placeholderId: selectedAnalysisId as string,
-            historyStatus: match?.status === 'CANCELLED'
-              ? HISTORY_STATUS.CANCELLED
-              : match?.analysis_id && match?.status !== 'FAILED'
-              ? HISTORY_STATUS.COMPLETED
-              : HISTORY_STATUS.FAILED,
-            insightId: match?.analysis_id ? `insight_${match.analysis_id}` : null,
-            nextTaskStatus: match?.analysis_id && match?.status !== 'FAILED' ? 'success' : 'failure',
+
+        // Branch A: existing-placeholder reconciliation.
+        if (placeholderTaskId) {
+          const match = list.find(t => t?.task_id === placeholderTaskId);
+          if (!match || ['SUCCESS', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(match?.status)) {
+            dispatch(resolveAnalyzingTask({
+              taskId: placeholderTaskId,
+              placeholderId: selectedAnalysisId as string,
+              historyStatus: match?.status === 'CANCELLED'
+                ? HISTORY_STATUS.CANCELLED
+                : match?.analysis_id && match?.status !== 'FAILED'
+                ? HISTORY_STATUS.COMPLETED
+                : HISTORY_STATUS.FAILED,
+              insightId: match?.analysis_id ? `insight_${match.analysis_id}` : null,
+              nextTaskStatus: match?.analysis_id && match?.status !== 'FAILED' ? 'success' : 'failure',
+            }));
+          }
+          // If still RUNNING/PENDING, branch B below will re-attach (the
+          // placeholder is for the same task and we want the polling pipeline
+          // running again).
+        }
+
+        // Branch B: cold-mount resume. Pick the newest non-terminal task for
+        // the current project. Skip if branch A already has the same task
+        // wired up via the placeholder.
+        const NON_TERMINAL = ['RUNNING', 'PENDING', 'STARTED', 'PROCESSING'];
+        const liveTaskForProject = list
+          .filter(t => t?.project_id === currentProjectId && NON_TERMINAL.includes(String(t?.status || '').toUpperCase()))
+          .sort((a, b) => String(b?.started_at || '').localeCompare(String(a?.started_at || '')))[0];
+
+        if (liveTaskForProject && liveTaskForProject.task_id !== placeholderTaskId) {
+          const tid = liveTaskForProject.task_id as string;
+          const tempId = makeAnalyzingId(tid);
+          dispatch(prependToHistory({
+            id: tempId,
+            analysis_date: liveTaskForProject.started_at || new Date().toISOString(),
+            comments_count: Number(liveTaskForProject.comment_count ?? 0),
+            positive_pct: 0,
+            status: HISTORY_STATUS.ANALYZING,
+            file_name: liveTaskForProject.file_name || undefined,
+            task_id: tid,
           }));
+          dispatch(setSelectedAnalysisId(tempId));
+          // Re-attach to the running task; pending/fulfilled/rejected wired in
+          // the slice's extraReducers will drive isAnalyzing + status forward.
+          dispatch(resumeInFlightTask({ taskId: tid, projectId: currentProjectId }));
         }
       } catch {
         // If the task-list endpoint is unreachable, leave state alone — the
@@ -218,7 +264,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         // hiccup.
       }
     })();
-  }, [selectedAnalysisId, dispatch]);
+  }, [currentProjectId, selectedAnalysisId, dispatch]);
   useEffect(() => {
     const contextProjectId = projectContext?.project_id;
     if (!contextProjectId) return;

@@ -306,6 +306,38 @@ export const ingestFile = createAsyncThunk<
   }
 });
 
+// Re-attach to an analysis task that's already running server-side.
+//
+// Why this exists: Redux's `analysis` slice isn't persisted (only `auth` is —
+// see store.ts whitelist), so a page refresh wipes `isAnalyzing`,
+// `analyzingByProject`, the `analyzing_<id>` placeholder, and the optimistic
+// history entry. Without resuming, the in-progress "Analyzing..." tile
+// vanishes on reload even though the backend task is still running, and the
+// user only sees completion when they refresh again after it finishes.
+//
+// Dashboard.tsx's mount-time hydration sweeper calls this with the task_id of
+// any non-terminal task it finds in `/insights/tasks/` for the current
+// project. The thunk's pending/fulfilled/rejected paths are wired to the
+// SAME extraReducers as ingestFile, so the spinner, in-flight flag, history
+// entry, and selected-id all behave identically to the original upload flow.
+export const resumeInFlightTask = createAsyncThunk<
+  any,
+  { taskId: string; projectId?: string },
+  { rejectValue: string }
+>('analysis/resumeInFlightTask', async ({ taskId }, { dispatch, rejectWithValue }) => {
+  try {
+    return await waitForAnalysisTask(taskId, dispatch);
+  } catch (err: any) {
+    let errorMessage = 'Failed to resume in-flight analysis.';
+    if (typeof err === 'string') {
+      errorMessage = err;
+    } else if (err?.message) {
+      errorMessage = err.message;
+    }
+    return rejectWithValue(errorMessage);
+  }
+});
+
 // Async thunk for getting latest analysis for a project
 export const getLatestAnalysis = createAsyncThunk<
   any,
@@ -820,6 +852,39 @@ const analysisSlice = createSlice({
       .addCase(ingestFile.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload || 'File ingestion failed.';
+        const key = action.meta.arg.projectId ?? 'personal';
+        delete state.analyzingByProject[key];
+        state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
+        state.analysisStatus = TASK_STATUS.FAILURE;
+        state.taskId = null;
+        if (isAnalyzingPlaceholder(state.selectedAnalysisId)) {
+          state.selectedAnalysisId = null;
+        }
+      })
+      // resumeInFlightTask mirrors ingestFile's lifecycle — it re-attaches to
+      // a server-side task that survived a page refresh and drives the same
+      // spinner/in-flight-flag/history transitions.
+      .addCase(resumeInFlightTask.pending, (state, action) => {
+        state.loading = true;
+        state.error = null;
+        state.isAnalyzing = true;
+        const key = action.meta.arg.projectId ?? 'personal';
+        state.analyzingByProject[key] = true;
+        state.analysisStatus = 'pending';
+      })
+      .addCase(resumeInFlightTask.fulfilled, (state, action) => {
+        state.loading = false;
+        state.error = null;
+        const key = action.meta.arg.projectId ?? 'personal';
+        delete state.analyzingByProject[key];
+        state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
+        state.analysisStatus = 'success';
+        state.taskId = null;
+        state.projectContext = action.payload?.context ?? state.projectContext;
+      })
+      .addCase(resumeInFlightTask.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || 'Failed to resume in-flight analysis.';
         const key = action.meta.arg.projectId ?? 'personal';
         delete state.analyzingByProject[key];
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
