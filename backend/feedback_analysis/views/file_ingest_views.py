@@ -117,16 +117,15 @@ class FeedbackFileIngestView(APIView):
             )
 
         project_org_id = (project_doc or {}).get("organizationId") or (project_doc or {}).get("organization_id")
-        # Quota check disabled for local testing
-        # try:
-        #     check_quota(user_id_str, "analysis", organization_id=project_org_id)
-        # except QuotaExceeded as exc:
-        #     return StandardResponse.error(
-        #         title="Quota exceeded",
-        #         detail=str(exc),
-        #         status_code=429,
-        #         instance=request.path,
-        #     )
+        try:
+            check_quota(user_id_str, "analysis", organization_id=project_org_id)
+        except QuotaExceeded as exc:
+            return StandardResponse.error(
+                title="Quota exceeded",
+                detail=str(exc),
+                status_code=429,
+                instance=request.path,
+            )
 
         # Extract comments and dimensions (CSV/Excel/JSON)
         dimensions = []
@@ -320,9 +319,21 @@ class FeedbackFileIngestView(APIView):
                 )
             raise
 
+        # Record usage for quota tracking (fails gracefully if quota system unavailable)
         try:
             record_usage(user_id_str, "analysis", organization_id=project_org_id)
+        except QuotaExceeded:
+            # This should never happen since check_quota already enforced the limit,
+            # but if it does (race condition), log it and let the analysis proceed
+            # since the Celery task is already running.
+            logger.warning(
+                "Quota exceeded during record_usage after task was queued "
+                "(user_id=%s, org_id=%s). Task will complete but quota overage occurred.",
+                user_id_str, project_org_id,
+            )
         except Exception:
+            # Non-quota failures (DB unavailable, etc.) shouldn't block the response
+            # since the analysis task is already running.
             logger.exception("record_usage failed after successful ingest")
 
         cache = get_cache_service()

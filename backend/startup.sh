@@ -26,8 +26,8 @@ fi
 # lock relaxation in 0003_relax_taxonomy_locks). Running migrate here keeps
 # every deploy self-contained: if migrate fails, gunicorn never starts, the
 # health probe fails, and Azure rolls back to the previous container.
-echo "Applying migrations..."
-python manage.py migrate --noinput
+echo "Applying migrations with advisory lock protection..."
+python manage.py migrate_safe
 
 # Start Gunicorn
 echo "Starting Gunicorn from: $(pwd)"
