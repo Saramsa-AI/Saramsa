@@ -1327,7 +1327,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         },
       }));
 
-      if (selectedAnalysisId === tempId) {
+      // Always update if viewing an analyzing placeholder (handles race with other effects)
+      if (isAnalyzingPlaceholder(selectedAnalysisId) || selectedAnalysisId === tempId) {
         dispatch(setSelectedAnalysisId(payload.id));
       }
       // Else case removed: toast notification no longer needed per user request
