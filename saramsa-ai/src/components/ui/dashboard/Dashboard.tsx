@@ -599,7 +599,11 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     // show notification but don't overwrite their current view
     if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
       // Check if this is a newly completed analysis we haven't notified about
-      if (analysisId && lastProcessedAnalysisIdRef.current !== analysisId && latestAnalysis.exists) {
+      // BUG FIX: Add project check to prevent showing toast when switching projects
+      if (analysisId &&
+          lastProcessedAnalysisIdRef.current !== analysisId &&
+          latestAnalysis.exists &&
+          latestAnalysis.analysis?.projectId === currentProjectId) {
         // Update the sidebar with the new completed analysis
         const a = latestAnalysis.analysis;
         const counts = a.analysisData?.counts ?? a.result?.counts ?? a.counts ?? {};
@@ -615,18 +619,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           name: a.name,
         }));
 
-        // Show notification with brand color
-        toast('Analysis Complete!', {
-          description: `New analysis with ${total} comments is ready to view.`,
-          icon: <CheckCircle className="w-5 h-5 text-saramsa-brand" />,
-          action: {
-            label: 'View Now',
-            onClick: () => {
-              dispatch(setSelectedAnalysisId(analysisId));
-            }
-          },
-          duration: 10000, // Show for 10 seconds
-        });
+        // Toast notification removed per user request — analysis completion is
+        // already visible in sidebar history, no need for additional notification
 
         lastProcessedAnalysisIdRef.current = analysisId;
       }
@@ -639,6 +633,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
     if (latestAnalysis.exists && latestAnalysis.analysis) {
       const a = latestAnalysis.analysis; // Extract the nested analysis data
+      // BUG FIX: Verify this analysis belongs to the current project to prevent showing stale data on project switch
+      if (a.projectId && a.projectId !== currentProjectId && a.projectId !== `project_${currentProjectId}`) {
+        return;
+      }
       // The backend now returns data in the new format (analysisData field)
       // Check if data is already in the correct frontend format
       if (a.analysisData) {
@@ -713,6 +711,13 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     // CRITICAL: Don't process latestAnalysis work items if user has selected a specific historical analysis
     // This prevents overwriting the selected analysis's work items with the latest analysis
     if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
+      return;
+    }
+
+    // BUG FIX: Verify this analysis belongs to the current project to prevent showing stale data on project switch
+    if (latestAnalysis?.analysis?.projectId &&
+        latestAnalysis.analysis.projectId !== currentProjectId &&
+        latestAnalysis.analysis.projectId !== `project_${currentProjectId}`) {
       return;
     }
 
@@ -792,10 +797,11 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       return;
     }
 
-    // Set switching state to show loading UI
+    // BUG FIX: Set switching state and clear previous analysis data immediately to prevent flash of stale content
     setIsSwitchingAnalysis(true);
 
-    // Clear previous analysis data to prevent showing stale work items
+    // Clear all previous analysis data synchronously to prevent showing stale work items or analysis results
+    dispatch(setAnalysisData(null));
     dispatch(clearCurrentProjectUserStories());
     dispatch(setDeepAnalysis(null));
 
@@ -867,23 +873,26 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       onProjectSelect(projectId);
       return;
     }
-    
-    // Otherwise, use the original logic for backward compatibility
-    setCurrentProjectId(projectId);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('project_id', projectId);
-    }
-    
-    // Clear current analysis data when switching projects
+
+    // BUG FIX: Clear data synchronously BEFORE updating project ID to prevent flash of stale data
+    // Reset all refs first to prevent stale processing
+    lastProcessedAnalysisIdRef.current = null;
+    lastHistoryProjectRef.current = null;
+    lastFetchedProjectRef.current = null;
+
+    // Dispatch all clear actions synchronously
     dispatch(clearAnalysisData());
     dispatch(setLoadedComments(null));
     dispatch(clearCurrentProjectUserStories());
     dispatch(setSelectedAnalysisId(null));
+    dispatch(setDeepAnalysis(null));
 
-    // Reset the processed analysis ID ref when switching projects
-    lastProcessedAnalysisIdRef.current = null;
-    lastHistoryProjectRef.current = null;
-    
+    // Now update the project ID after data is cleared
+    setCurrentProjectId(projectId);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('project_id', projectId);
+    }
+
     // Fetch consolidated dashboard data for the selected project
     if (projectId) {
       // Mark latest fetch as satisfied for this project to avoid triggering getLatestAnalysis
@@ -1320,19 +1329,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
       if (selectedAnalysisId === tempId) {
         dispatch(setSelectedAnalysisId(payload.id));
-      } else {
-        toast('Analysis Complete!', {
-          description: `Analysis with ${total} comments completed successfully.`,
-          icon: <CheckCircle className="w-5 h-5 text-saramsa-brand" />,
-          action: {
-            label: 'View Results',
-            onClick: () => {
-              dispatch(setSelectedAnalysisId(payload.id));
-            }
-          },
-          duration: 10000,
-        });
       }
+      // Else case removed: toast notification no longer needed per user request
     } else {
       dispatch(removeFromHistory(tempId));
     }
