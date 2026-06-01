@@ -619,19 +619,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           name: a.name,
         }));
 
-        // Show notification with brand color and unique ID to prevent duplicates
-        toast('Analysis Complete!', {
-          id: `analysis-complete-${analysisId}`, // Unique ID prevents duplicate toasts
-          description: `New analysis with ${total} comments is ready to view.`,
-          icon: <CheckCircle className="w-5 h-5 text-saramsa-brand" />,
-          action: {
-            label: 'View Now',
-            onClick: () => {
-              dispatch(setSelectedAnalysisId(analysisId));
-            }
-          },
-          duration: 10000, // Show for 10 seconds
-        });
+        // Toast notification removed per user request — analysis completion is
+        // already visible in sidebar history, no need for additional notification
 
         lastProcessedAnalysisIdRef.current = analysisId;
       }
@@ -1338,21 +1327,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         },
       }));
 
-      if (selectedAnalysisId === tempId) {
+      // Always update if viewing an analyzing placeholder (handles race with other effects)
+      if (isAnalyzingPlaceholder(selectedAnalysisId) || selectedAnalysisId === tempId) {
         dispatch(setSelectedAnalysisId(payload.id));
-      } else {
-        toast('Analysis Complete!', {
-          id: `analysis-complete-${payload.id}`, // Unique ID prevents duplicate toasts
-          description: `Analysis with ${total} comments completed successfully.`,
-          icon: <CheckCircle className="w-5 h-5 text-saramsa-brand" />,
-          action: {
-            label: 'View Results',
-            onClick: () => {
-              dispatch(setSelectedAnalysisId(payload.id));
-            }
-          },
-          duration: 10000,
-        });
       }
     } else {
       dispatch(removeFromHistory(tempId));
