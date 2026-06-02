@@ -197,6 +197,14 @@ class LocalProcessingService:
                     elif len(new_aspects) > 0:
                         logger.info(f"✅ Got {len(new_aspects)} aspects from callback: {new_aspects[:5]}...")
                         aspects = new_aspects
+
+                        # Memory cleanup: Delete pass1 results before running pass2
+                        # pass1 results can be 2-3GB for large datasets and will be replaced anyway
+                        del similarity_results
+                        import gc
+                        gc.collect()
+                        logger.info("[MEMORY] Cleaned up pass1 results before pass2")
+
                         # Re-run NLI with updated aspects
                         with phase("aspect_classify_pass2", n_items=len(stripped_comments), n_aspects=len(aspects)):
                             similarity_results = self.aspect_service.classify_aspects(
