@@ -127,6 +127,9 @@ class FeedbackFileIngestView(APIView):
                 instance=request.path,
             )
 
+        # Log the uploaded filename for tracking in App Insights
+        logger.info(f"Processing file upload: {upload.name} (type: {ext}, size: {upload.size} bytes)")
+
         # Extract comments and dimensions (CSV/Excel/JSON)
         dimensions = []
         try:
@@ -197,8 +200,24 @@ class FeedbackFileIngestView(APIView):
                         logger.info(f"Structured JSON processed: {len(comments)} comments, {len(dimensions)} dimension objects")
                 else:
                     # CSV/Excel files - always structured
+                    # Detect actual file type by content (magic bytes) instead of extension
+                    # Excel files (.xlsx) are ZIP files starting with 'PK' (0x50 0x4B)
+                    is_excel_by_content = content[:2] == b'PK'
+
                     if ext == ".csv":
-                        df = pd.read_csv(io.StringIO(decode_text(content)))
+                        # If file has .csv extension but content is Excel, treat as Excel
+                        if is_excel_by_content:
+                            logger.info(f"File '{upload.name}' has .csv extension but Excel content detected, reading as Excel")
+                            try:
+                                df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
+                            except Exception as exc:
+                                return StandardResponse.validation_error(
+                                    detail=f'File appears to be Excel format but has .csv extension. Please rename to .xlsx and try again, or convert to CSV format.',
+                                    errors=[{"field": "file", "message": f"Excel file with .csv extension: {str(exc)}"}],
+                                    instance=request.path,
+                                )
+                        else:
+                            df = pd.read_csv(io.StringIO(decode_text(content)))
                     elif ext == ".xlsx":
                         df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
                     elif ext == ".xls":
@@ -242,7 +261,7 @@ class FeedbackFileIngestView(APIView):
                     # Extract dimensions for each comment
                     dimensions = [sc['dimensions'] for sc in structured_comments]
 
-                    logger.info(f"Structured file ({ext}) processed: {len(comments)} comments, {len(dimensions)} dimension objects")
+                    logger.info(f"Structured file processed: '{upload.name}' ({ext}, {len(comments)} comments, {len(dimensions)} dimension objects)")
             else:
                 comments = extract_comments_from_text(upload)
         except ValueError as exc:
@@ -253,9 +272,16 @@ class FeedbackFileIngestView(APIView):
             )
         except Exception as exc:
             logger.error(f"Error processing file: {exc}", exc_info=True)
+            # Provide user-friendly error message for common pandas parsing errors
+            error_msg = str(exc)
+            if "Expected" in error_msg and "fields" in error_msg:
+                error_msg = "File format error: The file has inconsistent columns. Please ensure all rows have the same number of columns, or check if the file extension matches its actual format (.csv vs .xlsx)."
+            elif "tokenizing" in error_msg.lower():
+                error_msg = "File parsing error: Unable to read the file. Please check the file format and try again."
+
             return StandardResponse.validation_error(
-                detail=f'Error processing file: {str(exc)}',
-                errors=[{"field": "file", "message": str(exc)}],
+                detail=error_msg,
+                errors=[{"field": "file", "message": error_msg}],
                 instance=request.path,
             )
 
