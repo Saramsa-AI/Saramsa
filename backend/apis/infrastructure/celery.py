@@ -109,6 +109,18 @@ app.autodiscover_tasks()
 app.conf.worker_send_task_events = True
 app.conf.task_send_sent_event = True
 
+# Task timeout configuration to prevent hung tasks from blocking the queue forever
+# With concurrency=1, one stuck task blocks all other tasks indefinitely.
+# Soft limit (600s / 10min): Send SIGTERM, task can cleanup gracefully
+# Hard limit (900s / 15min): Send SIGKILL, forcefully terminate the task
+# Analysis tasks typically complete in 2-5 minutes; these limits catch genuinely stuck tasks.
+app.conf.task_soft_time_limit = 600  # 10 minutes soft timeout
+app.conf.task_time_limit = 900  # 15 minutes hard timeout
+
+# Task result expiration - clean up old task results from Redis after 24 hours
+# Prevents Redis from filling up with stale task metadata
+app.conf.result_expires = 86400  # 24 hours
+
 
 # Initialize OpenTelemetry inside each forked worker process — prefork workers
 # inherit the parent's memory but BatchSpanProcessor's background threads don't
