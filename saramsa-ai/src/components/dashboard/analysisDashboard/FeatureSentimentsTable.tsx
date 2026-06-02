@@ -82,12 +82,9 @@ export const FeatureSentimentsTable = ({
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h3 className="text-lg font-semibold text-foreground">
-            Feature Level Sentiments
-          </h3>
-          <div className="w-2 h-2 bg-saramsa-brand rounded-full animate-pulse"></div>
-        </div>
+        <h3 className="text-lg font-semibold text-foreground">
+          Feature Level Sentiments
+        </h3>
         {hasEditedFeaturesProp && onRegenerateAnalysis && (
           <Button
             onClick={onRegenerateAnalysis}
