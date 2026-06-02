@@ -645,7 +645,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         dispatch(setDeepAnalysis(a.userStories ? parseDeepAnalysis(a.userStories) : null));
         lastProcessedAnalysisIdRef.current = a.id;
         // Select this run in the sidebar and ensure it exists in history
-        if (a.id) {
+        // Don't overwrite if hydration sweeper set an analyzing placeholder after refresh
+        if (a.id && !isAnalyzingPlaceholder(selectedAnalysisId)) {
           dispatch(setSelectedAnalysisId(a.id));
           const counts = a.analysisData.counts ?? {};
           const total = Number(counts.total ?? 0);
