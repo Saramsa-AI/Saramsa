@@ -334,11 +334,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const isTaskViewLoading = useMemo(
     () =>
       fetchingAnalysisById ||
-      isSwitchingAnalysis ||
-      // Only show loading if we're viewing the "analyzing" entry itself
-      // Don't block viewing old analyses just because a new one is running in background
-      isAnalyzingPlaceholder(selectedAnalysisId),
-    [fetchingAnalysisById, isSwitchingAnalysis, selectedAnalysisId]
+      isSwitchingAnalysis,
+      // REMOVED: isAnalyzingPlaceholder check - that's handled by the top banner
+      // to avoid showing duplicate "analyzing" indicators
+    [fetchingAnalysisById, isSwitchingAnalysis]
   );
 
   const workItemsPanelLoading = useMemo(
