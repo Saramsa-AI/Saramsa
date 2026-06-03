@@ -1313,24 +1313,37 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
 
     if (payload.id) {
+      // FIX 2: Use metadata from result if available (sidebar sync fix)
+      const metadata = (result as any)?.metadata;
       const counts = payload.analysisData?.counts ?? {};
-      const total = Number(counts.total ?? 0);
+      const total = metadata?.comments_count ?? Number(counts.total ?? 0);
       const positive = Number(counts.positive ?? 0);
+      const positivePct = metadata?.positive_pct ?? (total > 0 ? Math.round((positive / total) * 100) : 0);
+
       dispatch(replaceInHistory({
         oldId: tempId,
         entry: {
           id: payload.id,
-          analysis_date: payload.createdAt || new Date().toISOString(),
+          analysis_date: metadata?.analysis_date ?? payload.createdAt ?? new Date().toISOString(),
           comments_count: total,
-          positive_pct: total > 0 ? Math.round((positive / total) * 100) : 0,
+          positive_pct: positivePct,
           status: 'completed',
-          name: payload.name,
+          name: metadata?.name ?? payload.name,
         },
       }));
 
-      // Always update if viewing an analyzing placeholder (handles race with other effects)
+      // FIX 1: Delay selectedAnalysisId swap until after work items generation completes
+      // to prevent loader from hiding before UI updates. This fixes the timing bug where
+      // the loader would disappear while skeleton was still showing.
       if (isAnalyzingPlaceholder(selectedAnalysisId) || selectedAnalysisId === tempId) {
-        dispatch(setSelectedAnalysisId(payload.id));
+        // Wait for work items to be generated before swapping the ID
+        generateWorkItemsFromAnalysis(payload).then(() => {
+          dispatch(setSelectedAnalysisId(payload.id));
+        }).catch(e => {
+          console.error('Background work item generation failed:', e);
+          // Still swap the ID even if work item generation fails
+          dispatch(setSelectedAnalysisId(payload.id));
+        });
       }
       // Else case removed: toast notification no longer needed per user request
     } else {
@@ -1341,9 +1354,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       dispatch(setDeepAnalysis(payload.deepAnalysis));
     }
 
-    generateWorkItemsFromAnalysis(payload).catch(e => {
-      console.error('Background work item generation failed:', e);
-    });
+    // Work items generation is now called from the selectedAnalysisId swap logic above
+    // to ensure proper timing coordination (FIX 1)
   }
 
   // Generate work items from analysis data
