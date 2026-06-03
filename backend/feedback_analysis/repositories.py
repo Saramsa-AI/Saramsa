@@ -398,11 +398,17 @@ class AnalysisRepository:
             logger.error(f"Error updating analysis {analysis_data.get('id') if analysis_data else None}: {e}")
             return None
 
-    def get_analysis_history_for_project(self, project_id: str) -> List[Dict[str, Any]]:
+    def get_analysis_history_for_project(self, project_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get analysis history for a project, limited to most recent records.
+
+        Args:
+            project_id: The project ID to fetch history for
+            limit: Maximum number of records to return (default 20, matches frontend MAX_HISTORY_RUNS)
+        """
         qs = (
             Analysis.objects.filter(project_id=str(project_id))
             .exclude(type__in=EXCLUDED_ANALYSIS_HISTORY_TYPES)
-            .order_by("-created_at")
+            .order_by("-created_at")[:limit]  # CRITICAL: Limit to prevent loading 100+ records
         )
         return [_doc_from_analysis(row) for row in qs]
 
