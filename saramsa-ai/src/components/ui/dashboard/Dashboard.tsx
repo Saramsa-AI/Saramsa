@@ -1337,13 +1337,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       if (isAnalyzingPlaceholder(selectedAnalysisId) || selectedAnalysisId === tempId) {
         // Swap ID immediately so banner clears
         dispatch(setSelectedAnalysisId(payload.id));
-
-        // Generate work items in background (progress shown via isGeneratingUserStories)
-        generateWorkItemsFromAnalysis(payload).catch(e => {
-          console.error('Background work item generation failed:', e);
-        });
       }
-      // Else case removed: toast notification no longer needed per user request
+
+      // CRITICAL: Generate work items unconditionally for every completed analysis
+      // Previous bug: work items were only generated if user was actively viewing this analysis
+      // This caused "no deep analysis" placeholder when user navigated away during analysis
+      generateWorkItemsFromAnalysis(payload).catch(e => {
+        console.error('Background work item generation failed:', e);
+      });
     } else {
       dispatch(removeFromHistory(tempId));
     }
