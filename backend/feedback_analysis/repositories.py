@@ -398,13 +398,71 @@ class AnalysisRepository:
             logger.error(f"Error updating analysis {analysis_data.get('id') if analysis_data else None}: {e}")
             return None
 
-    def get_analysis_history_for_project(self, project_id: str) -> List[Dict[str, Any]]:
+    def get_analysis_history_for_project(self, project_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get analysis history for a project, limited to most recent records.
+
+        Args:
+            project_id: The project ID to fetch history for
+            limit: Maximum number of records to return (default 20, matches frontend MAX_HISTORY_RUNS)
+        """
         qs = (
             Analysis.objects.filter(project_id=str(project_id))
             .exclude(type__in=EXCLUDED_ANALYSIS_HISTORY_TYPES)
-            .order_by("-created_at")
+            .order_by("-created_at")[:limit]  # CRITICAL: Limit to prevent loading 100+ records
         )
         return [_doc_from_analysis(row) for row in qs]
+
+    def get_analysis_history_list_lightweight(
+        self, project_id: str, offset: int = 0, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """
+        Get lightweight analysis history list for sidebar display.
+
+        Fetches only minimal fields to reduce payload size:
+        - id, created_at, updated_at (always needed)
+        - payload (contains name and counts metadata)
+        - result (for sentiment_summary and counts fallback)
+
+        Excludes heavy fields:
+        - comments array (can be 10k+ items, ~500KB+)
+        - dimensions array (large structured data)
+
+        This reduces payload size by ~95% compared to full document.
+
+        Args:
+            project_id: The project ID to fetch history for
+            offset: Number of records to skip (for pagination)
+            limit: Maximum number of records to return (default 20)
+
+        Returns:
+            List of minimal analysis documents with only essential fields
+        """
+        qs = (
+            Analysis.objects.filter(project_id=str(project_id))
+            .exclude(type__in=EXCLUDED_ANALYSIS_HISTORY_TYPES)
+            .only(
+                "id",
+                "created_at",
+                "updated_at",
+                "payload",   # Contains: name, counts metadata
+                "result",    # Contains: sentiment_summary, counts fallback
+            )
+            .order_by("-created_at")[offset : offset + limit]
+        )
+
+        # Build lightweight documents
+        docs = []
+        for obj in qs:
+            doc = {
+                "id": str(obj.id),
+                "createdAt": obj.created_at.isoformat() if obj.created_at else None,
+                "updatedAt": obj.updated_at.isoformat() if obj.updated_at else None,
+                "payload": obj.payload or {},
+                "result": obj.result or {},
+            }
+            docs.append(doc)
+
+        return docs
 
     def get_analysis_by_quarter(self, project_id: str, quarter: str) -> Optional[Dict[str, Any]]:
         obj = Analysis.objects.filter(project_id=str(project_id), quarter=quarter).order_by("-created_at").first()

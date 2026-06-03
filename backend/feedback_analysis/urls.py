@@ -7,6 +7,7 @@ from .views import (
     InsightDetailView,
     InsightsByTypeView,
     AnalysisHistoryView,
+    AnalysisHistoryListView,
     AnalysisByQuarterView,
     CumulativeAnalysisView,
     AnalysisComparisonView,
@@ -34,6 +35,7 @@ urlpatterns = [
 
     # Analysis history & quarterly analytics
     path('history/', AnalysisHistoryView.as_view(), name='analysis_history'),
+    path('history/list/', AnalysisHistoryListView.as_view(), name='analysis_history_list'),
     path('history/quarter/', AnalysisByQuarterView.as_view(), name='analysis_by_quarter'),
     path('history/cumulative/', CumulativeAnalysisView.as_view(), name='cumulative_analysis'),
     path('history/compare/', AnalysisComparisonView.as_view(), name='analysis_comparison'),
