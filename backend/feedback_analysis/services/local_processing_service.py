@@ -201,8 +201,6 @@ class LocalProcessingService:
                         # Memory cleanup: Delete pass1 results before running pass2
                         # pass1 results can be 2-3GB for large datasets and will be replaced anyway
                         del similarity_results
-                        import gc
-                        gc.collect()
                         logger.info("[MEMORY] Cleaned up pass1 results before pass2")
 
                         # Re-run NLI with updated aspects

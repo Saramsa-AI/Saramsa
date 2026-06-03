@@ -923,7 +923,20 @@ const analysisSlice = createSlice({
           nextTaskStatus,
         });
       })
-      .addCase(pollTaskStatus.rejected, (state) => {
+      .addCase(pollTaskStatus.rejected, (state, action) => {
+        // If task is 404 (killed/cancelled), clear the analyzing placeholder
+        if (action.payload === 'Task not found.') {
+          const taskId = (action.meta?.arg as string | undefined) ?? state.taskId ?? null;
+          if (taskId) {
+            applyTerminalResolution(state, {
+              taskId,
+              historyStatus: HISTORY_STATUS.CANCELLED,
+              insightId: null,
+              nextTaskStatus: TASK_STATUS.IDLE,
+            });
+            return;
+          }
+        }
         state.analysisStatus = 'failure';
       })
       .addCase(getLatestAnalysis.pending, (state) => {
