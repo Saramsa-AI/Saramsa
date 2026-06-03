@@ -307,7 +307,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   // the original behavior since this read was synchronous.
   const projectId = useMemo(
     () => (typeof window !== 'undefined' ? localStorage.getItem('project_id') : null),
-    [projectContext, currentProjectId]
+    [currentProjectId]  // Removed projectContext - it's not used and causes unnecessary refetches
   );
   const selectedProjectName = useMemo(
     () => projects?.find((p: any) => p.id === (currentProjectId || projectId))?.name,
