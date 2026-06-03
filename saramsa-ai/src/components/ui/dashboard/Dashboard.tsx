@@ -365,8 +365,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     [historyLoading, analysisHistory.length]
   );
   const isTaskViewLoading = useMemo(
-    () => fetchingAnalysisById || isSwitchingAnalysis,
-    [fetchingAnalysisById, isSwitchingAnalysis]
+    () => fetchingAnalysisById || isSwitchingAnalysis || isViewingActiveAnalysis,
+    [fetchingAnalysisById, isSwitchingAnalysis, isViewingActiveAnalysis]
   );
 
   const workItemsPanelLoading = useMemo(

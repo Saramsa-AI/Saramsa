@@ -7,6 +7,7 @@ import {
   TASK_STATUS,
   isAnalyzingPlaceholder,
   isBackendTerminal,
+  makeAnalyzingId,
   type HistoryStatus,
   type TaskStatus,
   AnalysisLifecycleState,
@@ -735,6 +736,135 @@ const analysisSlice = createSlice({
   name: 'analysis',
   initialState,
   reducers: {
+    // ============================================================================
+    // STATE MACHINE REDUCERS - Task Map Population
+    // ============================================================================
+
+    /**
+     * Add a new task to the tasks map when analysis starts.
+     * Call this from analyzeComments.pending and ingestFile.pending.
+     */
+    startAnalysisTask: (state, action: PayloadAction<{
+      taskId: string;
+      analysisId: string;
+      projectId: string;
+      fileName?: string;
+      initialState?: AnalysisLifecycleState;
+    }>) => {
+      const { taskId, analysisId, projectId, fileName, initialState: lifecycleState } = action.payload;
+      state.tasks[analysisId] = {
+        state: lifecycleState || AnalysisLifecycleState.QUEUED,
+        projectId,
+        taskId,
+        insightId: null,
+        stateEnteredAt: Date.now(),
+        error: null,
+        workItemsAbortController: null,
+        metadata: {
+          fileName,
+          commentsCount: 0,
+          positivePct: 0,
+          analysisDate: new Date().toISOString(),
+          name: fileName || null,
+        },
+      };
+    },
+
+    /**
+     * Transition a task to a new lifecycle state.
+     * Call this from pollTaskStatus.fulfilled based on backend status.
+     */
+    transitionTaskState: (state, action: PayloadAction<{
+      taskId: string;
+      newState: AnalysisLifecycleState;
+      error?: string | null;
+      metadata?: Partial<AnalysisTaskState['metadata']>;
+    }>) => {
+      const { taskId, newState, error, metadata } = action.payload;
+      const analysisId = makeAnalyzingId(taskId);
+      const task = state.tasks[analysisId];
+      if (task) {
+        task.state = newState;
+        task.stateEnteredAt = Date.now();
+        if (error !== undefined) {
+          task.error = error;
+        }
+        if (metadata) {
+          task.metadata = { ...task.metadata, ...metadata };
+        }
+      }
+    },
+
+    /**
+     * Mark a task as successfully completed.
+     * Call this from analyzeComments.fulfilled and ingestFile.fulfilled.
+     */
+    completeAnalysisTask: (state, action: PayloadAction<{
+      taskId: string;
+      insightId: string;
+      metadata?: Partial<AnalysisTaskState['metadata']>;
+    }>) => {
+      const { taskId, insightId, metadata } = action.payload;
+      const placeholderId = makeAnalyzingId(taskId);
+      const task = state.tasks[placeholderId];
+
+      if (task) {
+        // Move task from placeholder to real insight ID
+        const completedTask: AnalysisTaskState = {
+          ...task,
+          state: AnalysisLifecycleState.COMPLETED,
+          insightId,
+          stateEnteredAt: Date.now(),
+          error: null,
+        };
+        if (metadata) {
+          completedTask.metadata = { ...completedTask.metadata, ...metadata };
+        }
+
+        // Delete placeholder and add under real ID
+        delete state.tasks[placeholderId];
+        state.tasks[insightId] = completedTask;
+      }
+    },
+
+    /**
+     * Mark a task as failed.
+     * Call this from analyzeComments.rejected and ingestFile.rejected.
+     */
+    failAnalysisTask: (state, action: PayloadAction<{
+      taskId: string;
+      error: string;
+    }>) => {
+      const { taskId, error } = action.payload;
+      const analysisId = makeAnalyzingId(taskId);
+      const task = state.tasks[analysisId];
+      if (task) {
+        task.state = AnalysisLifecycleState.FAILED;
+        task.error = error;
+        task.stateEnteredAt = Date.now();
+      }
+    },
+
+    /**
+     * Mark a task as cancelled.
+     * Call this from cancelAnalysisTask.fulfilled.
+     */
+    cancelAnalysisTask_internal: (state, action: PayloadAction<{
+      taskId: string;
+    }>) => {
+      const { taskId } = action.payload;
+      const analysisId = makeAnalyzingId(taskId);
+      const task = state.tasks[analysisId];
+      if (task) {
+        task.state = AnalysisLifecycleState.CANCELLED;
+        task.stateEnteredAt = Date.now();
+      }
+    },
+
+    // ============================================================================
+    // LEGACY REDUCERS - Kept for backward compatibility
+    // ============================================================================
+
     clearAnalysisData: (state) => {
       state.analysisData = null;
       state.deepAnalysis = null;
@@ -748,6 +878,8 @@ const analysisSlice = createSlice({
       state.analysisStatus = 'idle';
       state.isAnalyzing = false;
       state.taskId = null;
+      // Clear tasks map
+      state.tasks = {};
     },
     setSelectedAnalysisId: (state, action: PayloadAction<string | null>) => {
       state.selectedAnalysisId = action.payload;
@@ -777,6 +909,30 @@ const analysisSlice = createSlice({
         entry,
         ...state.analysisHistory.filter(e => e.id !== entry.id),
       ].slice(0, MAX_HISTORY_RUNS);
+
+      // Sync with tasks map: if this is an analyzing placeholder, ensure task exists
+      if (isAnalyzingPlaceholder(entry.id) && entry.task_id) {
+        const existingTask = state.tasks[entry.id];
+        if (!existingTask) {
+          // Create task from history entry (happens during resume)
+          state.tasks[entry.id] = {
+            state: entry.status === 'analyzing' ? AnalysisLifecycleState.QUEUED : AnalysisLifecycleState.IDLE,
+            projectId: 'unknown', // Will be updated by thunk
+            taskId: entry.task_id,
+            insightId: null,
+            stateEnteredAt: Date.now(),
+            error: null,
+            workItemsAbortController: null,
+            metadata: {
+              fileName: entry.file_name,
+              commentsCount: entry.comments_count || 0,
+              positivePct: entry.positive_pct || 0,
+              analysisDate: entry.analysis_date || new Date().toISOString(),
+              name: entry.name || entry.file_name || null,
+            },
+          };
+        }
+      }
     },
     replaceInHistory: (state, action: PayloadAction<{ oldId: string; entry: AnalysisHistoryEntry }>) => {
       const idx = state.analysisHistory.findIndex(e => e.id === action.payload.oldId);
@@ -790,6 +946,31 @@ const analysisSlice = createSlice({
         ];
       }
       state.analysisHistory = state.analysisHistory.slice(0, MAX_HISTORY_RUNS);
+
+      // Sync with tasks map: when replacing placeholder with real ID
+      const { oldId, entry } = action.payload;
+      if (isAnalyzingPlaceholder(oldId) && !isAnalyzingPlaceholder(entry.id)) {
+        const task = state.tasks[oldId];
+        if (task) {
+          // Move task from placeholder to real ID
+          delete state.tasks[oldId];
+          state.tasks[entry.id] = {
+            ...task,
+            state: entry.status === 'completed' ? AnalysisLifecycleState.COMPLETED :
+                   entry.status === 'failed' ? AnalysisLifecycleState.FAILED :
+                   entry.status === 'cancelled' ? AnalysisLifecycleState.CANCELLED :
+                   task.state,
+            insightId: entry.id,
+            metadata: {
+              fileName: entry.file_name,
+              commentsCount: entry.comments_count || task.metadata.commentsCount,
+              positivePct: entry.positive_pct || task.metadata.positivePct,
+              analysisDate: entry.analysis_date || task.metadata.analysisDate,
+              name: entry.name || entry.file_name || task.metadata.name,
+            },
+          };
+        }
+      }
     },
     removeFromHistory: (state, action: PayloadAction<string>) => {
       state.analysisHistory = state.analysisHistory.filter(e => e.id !== action.payload);
@@ -836,6 +1017,28 @@ const analysisSlice = createSlice({
         const key = `${action.meta.arg.projectId ?? 'personal'}_${taskId}`;
         state.analyzingByProject[key] = true;
         state.analysisStatus = 'pending';
+
+        // STATE MACHINE: Add task to map with QUEUED state
+        const analysisId = makeAnalyzingId(taskId);
+        const projectId = action.meta.arg.projectId ?? 'personal';
+        const fileName = action.meta.arg.fileName;
+
+        state.tasks[analysisId] = {
+          state: AnalysisLifecycleState.QUEUED,
+          projectId,
+          taskId,
+          insightId: null,
+          stateEnteredAt: Date.now(),
+          error: null,
+          workItemsAbortController: null,
+          metadata: {
+            fileName,
+            commentsCount: action.meta.arg.comments.length,
+            positivePct: 0,
+            analysisDate: new Date().toISOString(),
+            name: fileName || null,
+          },
+        };
       })
       .addCase(analyzeComments.fulfilled, (state, action) => {
         state.loading = false;
@@ -852,6 +1055,37 @@ const analysisSlice = createSlice({
           state.loadedComments = action.meta.arg.comments;
         }
         state.projectContext = action.payload?.context ?? state.projectContext;
+
+        // STATE MACHINE: Complete the task
+        const realTaskId = action.payload?.taskId;
+        const insightId = action.payload?.id;
+        if (realTaskId && insightId) {
+          const placeholderId = makeAnalyzingId(realTaskId);
+          const task = state.tasks[placeholderId];
+
+          if (task) {
+            // Extract metadata from payload
+            const metadata = action.payload?.metadata;
+            const completedTask: AnalysisTaskState = {
+              ...task,
+              state: AnalysisLifecycleState.COMPLETED,
+              insightId,
+              stateEnteredAt: Date.now(),
+              error: null,
+              metadata: metadata ? {
+                ...task.metadata,
+                commentsCount: metadata.comments_count ?? task.metadata.commentsCount,
+                positivePct: metadata.positive_pct ?? task.metadata.positivePct,
+                analysisDate: metadata.analysis_date ?? task.metadata.analysisDate,
+                name: metadata.name ?? task.metadata.name,
+              } : task.metadata,
+            };
+
+            // Move from placeholder to real ID
+            delete state.tasks[placeholderId];
+            state.tasks[insightId] = completedTask;
+          }
+        }
         // The analysis data will be set by the component after normalization
       })
       .addCase(analyzeComments.rejected, (state, action) => {
@@ -864,6 +1098,16 @@ const analysisSlice = createSlice({
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
         state.analysisStatus = TASK_STATUS.FAILURE;
         state.taskId = null;
+
+        // STATE MACHINE: Mark task as failed
+        const analysisId = makeAnalyzingId(taskId);
+        const task = state.tasks[analysisId];
+        if (task) {
+          task.state = AnalysisLifecycleState.FAILED;
+          task.error = action.payload || 'Analysis failed.';
+          task.stateEnteredAt = Date.now();
+        }
+
         // If the user was viewing the in-flight placeholder for this rejected
         // thunk, clear it so the loading skeleton releases.
         if (isAnalyzingPlaceholder(state.selectedAnalysisId)) {
@@ -879,6 +1123,28 @@ const analysisSlice = createSlice({
         const key = `${action.meta.arg.projectId ?? 'personal'}_${taskId}`;
         state.analyzingByProject[key] = true;
         state.analysisStatus = 'pending';
+
+        // STATE MACHINE: Add task to map with QUEUED state
+        const analysisId = makeAnalyzingId(taskId);
+        const projectId = action.meta.arg.projectId ?? 'personal';
+        const fileName = action.meta.arg.file.name;
+
+        state.tasks[analysisId] = {
+          state: AnalysisLifecycleState.QUEUED,
+          projectId,
+          taskId,
+          insightId: null,
+          stateEnteredAt: Date.now(),
+          error: null,
+          workItemsAbortController: null,
+          metadata: {
+            fileName,
+            commentsCount: 0, // Will be updated when backend responds
+            positivePct: 0,
+            analysisDate: new Date().toISOString(),
+            name: fileName || null,
+          },
+        };
       })
       .addCase(ingestFile.fulfilled, (state, action) => {
         state.loading = false;
@@ -891,6 +1157,37 @@ const analysisSlice = createSlice({
         state.analysisStatus = 'success';
         state.taskId = null;
         state.projectContext = action.payload?.context ?? state.projectContext;
+
+        // STATE MACHINE: Complete the task
+        const realTaskId = action.payload?.taskId;
+        const insightId = action.payload?.id;
+        if (realTaskId && insightId) {
+          const placeholderId = makeAnalyzingId(realTaskId);
+          const task = state.tasks[placeholderId];
+
+          if (task) {
+            // Extract metadata from payload
+            const metadata = action.payload?.metadata;
+            const completedTask: AnalysisTaskState = {
+              ...task,
+              state: AnalysisLifecycleState.COMPLETED,
+              insightId,
+              stateEnteredAt: Date.now(),
+              error: null,
+              metadata: metadata ? {
+                ...task.metadata,
+                commentsCount: metadata.comments_count ?? task.metadata.commentsCount,
+                positivePct: metadata.positive_pct ?? task.metadata.positivePct,
+                analysisDate: metadata.analysis_date ?? task.metadata.analysisDate,
+                name: metadata.name ?? task.metadata.name,
+              } : task.metadata,
+            };
+
+            // Move from placeholder to real ID
+            delete state.tasks[placeholderId];
+            state.tasks[insightId] = completedTask;
+          }
+        }
       })
       .addCase(ingestFile.rejected, (state, action) => {
         state.loading = false;
@@ -902,6 +1199,16 @@ const analysisSlice = createSlice({
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
         state.analysisStatus = TASK_STATUS.FAILURE;
         state.taskId = null;
+
+        // STATE MACHINE: Mark task as failed
+        const analysisId = makeAnalyzingId(taskId);
+        const task = state.tasks[analysisId];
+        if (task) {
+          task.state = AnalysisLifecycleState.FAILED;
+          task.error = action.payload || 'File ingestion failed.';
+          task.stateEnteredAt = Date.now();
+        }
+
         if (isAnalyzingPlaceholder(state.selectedAnalysisId)) {
           state.selectedAnalysisId = null;
         }
@@ -916,6 +1223,29 @@ const analysisSlice = createSlice({
         const key = action.meta.arg.projectId ?? 'personal';
         state.analyzingByProject[key] = true;
         state.analysisStatus = 'pending';
+
+        // STATE MACHINE: Re-create task in map if it doesn't exist (page refresh scenario)
+        const taskId = action.meta.arg.taskId;
+        const analysisId = makeAnalyzingId(taskId);
+        const projectId = action.meta.arg.projectId ?? 'personal';
+
+        if (!state.tasks[analysisId]) {
+          state.tasks[analysisId] = {
+            state: AnalysisLifecycleState.QUEUED, // Will be updated by pollTaskStatus
+            projectId,
+            taskId,
+            insightId: null,
+            stateEnteredAt: Date.now(),
+            error: null,
+            workItemsAbortController: null,
+            metadata: {
+              commentsCount: 0,
+              positivePct: 0,
+              analysisDate: new Date().toISOString(),
+              name: null,
+            },
+          };
+        }
       })
       .addCase(resumeInFlightTask.fulfilled, (state, action) => {
         state.loading = false;
@@ -926,6 +1256,37 @@ const analysisSlice = createSlice({
         state.analysisStatus = 'success';
         state.taskId = null;
         state.projectContext = action.payload?.context ?? state.projectContext;
+
+        // STATE MACHINE: Complete the task
+        const realTaskId = action.payload?.taskId;
+        const insightId = action.payload?.id;
+        if (realTaskId && insightId) {
+          const placeholderId = makeAnalyzingId(realTaskId);
+          const task = state.tasks[placeholderId];
+
+          if (task) {
+            // Extract metadata from payload
+            const metadata = action.payload?.metadata;
+            const completedTask: AnalysisTaskState = {
+              ...task,
+              state: AnalysisLifecycleState.COMPLETED,
+              insightId,
+              stateEnteredAt: Date.now(),
+              error: null,
+              metadata: metadata ? {
+                ...task.metadata,
+                commentsCount: metadata.comments_count ?? task.metadata.commentsCount,
+                positivePct: metadata.positive_pct ?? task.metadata.positivePct,
+                analysisDate: metadata.analysis_date ?? task.metadata.analysisDate,
+                name: metadata.name ?? task.metadata.name,
+              } : task.metadata,
+            };
+
+            // Move from placeholder to real ID
+            delete state.tasks[placeholderId];
+            state.tasks[insightId] = completedTask;
+          }
+        }
       })
       .addCase(resumeInFlightTask.rejected, (state, action) => {
         state.loading = false;
@@ -935,6 +1296,17 @@ const analysisSlice = createSlice({
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
         state.analysisStatus = TASK_STATUS.FAILURE;
         state.taskId = null;
+
+        // STATE MACHINE: Mark task as failed
+        const taskId = action.meta.arg.taskId;
+        const analysisId = makeAnalyzingId(taskId);
+        const task = state.tasks[analysisId];
+        if (task) {
+          task.state = AnalysisLifecycleState.FAILED;
+          task.error = action.payload || 'Failed to resume in-flight analysis.';
+          task.stateEnteredAt = Date.now();
+        }
+
         if (isAnalyzingPlaceholder(state.selectedAnalysisId)) {
           state.selectedAnalysisId = null;
         }
@@ -944,13 +1316,46 @@ const analysisSlice = createSlice({
       })
       .addCase(pollTaskStatus.fulfilled, (state, action) => {
         const apiStatus = action.payload?.status;
-        if (!isBackendTerminal(apiStatus)) {
-          // Not terminal yet — only update task-level status spinner.
-          return;
-        }
         const taskId = (action.meta?.arg as string | undefined) ?? state.taskId ?? null;
         if (!taskId) return;
 
+        const analysisId = makeAnalyzingId(taskId);
+
+        // STATE MACHINE: Map backend status to lifecycle state and transition
+        if (!isBackendTerminal(apiStatus)) {
+          // Non-terminal: transition task state based on backend status
+          const task = state.tasks[analysisId];
+          if (task) {
+            let newState: AnalysisLifecycleState;
+            switch (apiStatus) {
+              case 'PENDING':
+                newState = AnalysisLifecycleState.QUEUED;
+                break;
+              case 'STARTED':
+                newState = AnalysisLifecycleState.INGESTING;
+                break;
+              case 'PROCESSING':
+                newState = AnalysisLifecycleState.ANALYZING;
+                break;
+              case 'SYNTHESIZING':
+                newState = AnalysisLifecycleState.SYNTHESIZING;
+                break;
+              case 'GENERATING_WORKITEMS':
+                newState = AnalysisLifecycleState.GENERATING_WORKITEMS;
+                break;
+              default:
+                newState = task.state; // Keep current state
+            }
+
+            if (newState !== task.state) {
+              task.state = newState;
+              task.stateEnteredAt = Date.now();
+            }
+          }
+          return;
+        }
+
+        // Terminal status - handle completion/failure/cancellation
         // FIX 3: Handle REVOKED status like CANCELLED
         const nextTaskStatus: TaskStatus =
           apiStatus === 'SUCCESS' || apiStatus === 'PARTIAL' ? TASK_STATUS.SUCCESS
@@ -977,6 +1382,41 @@ const analysisSlice = createSlice({
               comments_count: total,
               positive_pct: Math.round((positive / total) * 100),
             };
+          }
+        }
+
+        // STATE MACHINE: Update task state for terminal status
+        const task = state.tasks[analysisId];
+        if (task) {
+          if (apiStatus === 'SUCCESS' || apiStatus === 'PARTIAL') {
+            // Move task from placeholder to real insight ID
+            if (insightId) {
+              const completedTask: AnalysisTaskState = {
+                ...task,
+                state: AnalysisLifecycleState.COMPLETED,
+                insightId,
+                stateEnteredAt: Date.now(),
+                error: null,
+                metadata: entryPatch ? {
+                  ...task.metadata,
+                  commentsCount: entryPatch.comments_count ?? task.metadata.commentsCount,
+                  positivePct: entryPatch.positive_pct ?? task.metadata.positivePct,
+                } : task.metadata,
+              };
+
+              delete state.tasks[analysisId];
+              state.tasks[insightId] = completedTask;
+            } else {
+              task.state = AnalysisLifecycleState.COMPLETED;
+              task.stateEnteredAt = Date.now();
+            }
+          } else if (apiStatus === 'CANCELLED' || apiStatus === 'REVOKED') {
+            task.state = AnalysisLifecycleState.CANCELLED;
+            task.stateEnteredAt = Date.now();
+          } else {
+            task.state = AnalysisLifecycleState.FAILED;
+            task.error = action.payload?.error || 'Analysis failed';
+            task.stateEnteredAt = Date.now();
           }
         }
 
@@ -1119,9 +1559,18 @@ const analysisSlice = createSlice({
       })
       // Delete analysis run
       .addCase(deleteAnalysisRun.fulfilled, (state, action) => {
-        state.analysisHistory = state.analysisHistory.filter(e => e.id !== action.payload);
+        const deletedId = action.payload;
+
+        // Remove from history
+        state.analysisHistory = state.analysisHistory.filter(e => e.id !== deletedId);
+
+        // Remove from tasks map
+        if (state.tasks[deletedId]) {
+          delete state.tasks[deletedId];
+        }
+
         // Clear current analysis if it was the deleted one
-        if (state.selectedAnalysisId === action.payload) {
+        if (state.selectedAnalysisId === deletedId) {
           state.selectedAnalysisId = null;
           state.analysisData = null;
           state.deepAnalysis = null;
@@ -1143,6 +1592,15 @@ const analysisSlice = createSlice({
         const { tempId, taskId } = action.payload as { tempId: string; taskId?: string };
         const extractedTaskId = taskId
           ?? (tempId.startsWith(ANALYZING_PREFIX) ? tempId.slice(ANALYZING_PREFIX.length) : tempId);
+
+        // STATE MACHINE: Mark task as cancelled
+        const analysisId = tempId || makeAnalyzingId(extractedTaskId);
+        const task = state.tasks[analysisId];
+        if (task) {
+          task.state = AnalysisLifecycleState.CANCELLED;
+          task.stateEnteredAt = Date.now();
+        }
+
         applyTerminalResolution(state, {
           taskId: extractedTaskId,
           placeholderId: tempId,
@@ -1155,6 +1613,13 @@ const analysisSlice = createSlice({
 });
 
 export const {
+  // State machine actions
+  startAnalysisTask,
+  transitionTaskState,
+  completeAnalysisTask,
+  failAnalysisTask,
+  cancelAnalysisTask_internal,
+  // Legacy actions
   clearAnalysisData,
   clearError,
   setAnalyzing,
