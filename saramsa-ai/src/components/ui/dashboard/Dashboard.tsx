@@ -1332,17 +1332,15 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         },
       }));
 
-      // FIX 1: Delay selectedAnalysisId swap until after work items generation completes
-      // to prevent loader from hiding before UI updates. This fixes the timing bug where
-      // the loader would disappear while skeleton was still showing.
+      // FIX: Swap selectedAnalysisId immediately to clear "Analyzing feedback..." banner
+      // Work items generation continues in background tracked by isGeneratingUserStories
       if (isAnalyzingPlaceholder(selectedAnalysisId) || selectedAnalysisId === tempId) {
-        // Wait for work items to be generated before swapping the ID
-        generateWorkItemsFromAnalysis(payload).then(() => {
-          dispatch(setSelectedAnalysisId(payload.id));
-        }).catch(e => {
+        // Swap ID immediately so banner clears
+        dispatch(setSelectedAnalysisId(payload.id));
+
+        // Generate work items in background (progress shown via isGeneratingUserStories)
+        generateWorkItemsFromAnalysis(payload).catch(e => {
           console.error('Background work item generation failed:', e);
-          // Still swap the ID even if work item generation fails
-          dispatch(setSelectedAnalysisId(payload.id));
         });
       }
       // Else case removed: toast notification no longer needed per user request
