@@ -670,10 +670,12 @@ class TaskService:
             # Classify keywords based on dominant sentiment
             pos_pct = sentiment.get('positive', 0)
             neg_pct = sentiment.get('negative', 0)
-            
-            if pos_pct > neg_pct and pos_pct > 40:
+
+            # Use dominant sentiment only (no threshold) to ensure negative keywords are extracted
+            # even when distributed across multiple features
+            if pos_pct > neg_pct:
                 positive_keywords.extend(keywords[:3])
-            elif neg_pct > pos_pct and neg_pct > 40:
+            elif neg_pct > pos_pct:
                 negative_keywords.extend(keywords[:3])
         
         # Remove duplicates and limit

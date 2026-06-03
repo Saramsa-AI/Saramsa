@@ -488,16 +488,24 @@ class WorkItemCandidateService:
         """Extract keyword strings from a feature for sub-theme splitting."""
         if not isinstance(feature, dict):
             return []
-        keywords = feature.get("keywords") or feature.get("negative_keywords") or []
-        if isinstance(keywords, list):
+        # Try negative_keywords first (more specific), fall back to keywords
+        # Use truthiness check to handle empty lists properly
+        raw_keywords = feature.get("negative_keywords")
+        if not raw_keywords:  # None or empty list
+            raw_keywords = feature.get("keywords")
+        if not raw_keywords:  # Still None or empty
+            return []
+
+        if isinstance(raw_keywords, list):
             result = []
-            for kw in keywords:
+            for kw in raw_keywords:
                 if isinstance(kw, str):
                     result.append(kw.strip().lower())
                 elif isinstance(kw, dict):
                     word = kw.get("word") or kw.get("keyword") or kw.get("text") or ""
                     if word:
                         result.append(str(word).strip().lower())
+            logger.info(f"Extracted {len(result)} keywords from feature (source: {'negative_keywords' if feature.get('negative_keywords') else 'keywords'})")
             return result
         return []
 
