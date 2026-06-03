@@ -899,9 +899,14 @@ class DevOpsService:
                 if not name:
                     continue
                 sentiment = f.get("sentiment") or {}
-                keywords = f.get("keywords") or f.get("negative_keywords") or []
+                # Try negative_keywords first, fall back to keywords (handle empty lists properly)
+                keywords = f.get("negative_keywords")
+                if not keywords:
+                    keywords = f.get("keywords")
                 if isinstance(keywords, list):
                     keywords = keywords[:5]
+                else:
+                    keywords = []
                 features_out.append({
                     "aspect_key": self._normalize_feature_key(name),
                     "name": str(name),
