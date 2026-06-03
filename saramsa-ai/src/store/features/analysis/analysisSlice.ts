@@ -57,6 +57,9 @@ interface AnalysisState {
   /** Global loading states */
   fetchingAnalysisById: boolean;
 
+  /** Track IDs currently being deleted to prevent race conditions */
+  deletingIds: string[];
+
   /** Legacy fields - kept for backward compatibility during migration */
   loading: boolean;
   error: string | null;
@@ -84,6 +87,7 @@ const initialState: AnalysisState = {
   historyLoading: false,
   historyError: null,
   fetchingAnalysisById: false,
+  deletingIds: [],
 
   // Legacy fields - kept for backward compatibility
   loading: false,
@@ -882,11 +886,19 @@ const analysisSlice = createSlice({
       state.tasks = {};
     },
     setSelectedAnalysisId: (state, action: PayloadAction<string | null>) => {
-      state.selectedAnalysisId = action.payload;
+      const newId = action.payload;
+
+      // RACE CONDITION FIX: Prevent selecting items that are being deleted
+      if (newId && state.deletingIds.includes(newId)) {
+        console.warn(`Cannot select analysis ${newId} - it is being deleted`);
+        return; // Ignore this selection
+      }
+
+      state.selectedAnalysisId = newId;
       // Reset analysis status when switching to a historical (non-live) task.
       // The in-flight placeholder is the only id that should leave analysisStatus
       // mid-flight; everything else resets the gates so loading skeletons clear.
-      if (!isAnalyzingPlaceholder(action.payload)) {
+      if (!isAnalyzingPlaceholder(newId)) {
         state.analysisStatus = TASK_STATUS.IDLE;
         state.isAnalyzing = false;
       }
@@ -1558,6 +1570,13 @@ const analysisSlice = createSlice({
         state.error = action.payload || 'Failed to load analysis.';
       })
       // Delete analysis run
+      .addCase(deleteAnalysisRun.pending, (state, action) => {
+        // Add to deletingIds to prevent race conditions
+        const deletingId = action.meta.arg; // The ID being deleted
+        if (!state.deletingIds.includes(deletingId)) {
+          state.deletingIds.push(deletingId);
+        }
+      })
       .addCase(deleteAnalysisRun.fulfilled, (state, action) => {
         const deletedId = action.payload;
 
@@ -1568,6 +1587,9 @@ const analysisSlice = createSlice({
         if (state.tasks[deletedId]) {
           delete state.tasks[deletedId];
         }
+
+        // Remove from deletingIds
+        state.deletingIds = state.deletingIds.filter(id => id !== deletedId);
 
         // ALWAYS clear selectedAnalysisId if it matches the deleted item
         // Do this even if user switched to another analysis during the delete
@@ -1586,6 +1608,11 @@ const analysisSlice = createSlice({
           state.deepAnalysis = null;
           state.loadedComments = null;
         }
+      })
+      .addCase(deleteAnalysisRun.rejected, (state, action) => {
+        // Remove from deletingIds even if delete failed
+        const deletingId = action.meta.arg;
+        state.deletingIds = state.deletingIds.filter(id => id !== deletingId);
       })
       // Rename analysis run
       .addCase(renameAnalysisRun.fulfilled, (state, action) => {
@@ -1752,6 +1779,25 @@ export function selectIsGeneratingWorkItems(state: { analysis: AnalysisState }):
   if (!selectedId) return false;
   const task = selectTaskState(state, selectedId);
   return task?.state === AnalysisLifecycleState.GENERATING_WORKITEMS;
+}
+
+/**
+ * Check if an analysis is currently being deleted.
+ * Used to show loading state and prevent interaction.
+ */
+export function selectIsDeleting(state: { analysis: AnalysisState }, analysisId: string | null): boolean {
+  if (!analysisId) return false;
+  return state.analysis.deletingIds.includes(analysisId);
+}
+
+/**
+ * Get analysis history filtered to exclude items being deleted.
+ * Use this for rendering the sidebar to avoid showing items mid-deletion.
+ */
+export function selectFilteredHistory(state: { analysis: AnalysisState }): AnalysisHistoryEntry[] {
+  return state.analysis.analysisHistory.filter(
+    entry => !state.analysis.deletingIds.includes(entry.id)
+  );
 }
 
 export default analysisSlice.reducer; 
