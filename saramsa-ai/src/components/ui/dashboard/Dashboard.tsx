@@ -1086,8 +1086,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
 
     // FIX #2: Clear old data BEFORE creating new placeholder to prevent flash of stale content
+    // NOTE: Don't use clearAnalysisData() - it wipes the entire history!
     if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
-      dispatch(clearAnalysisData());
+      dispatch(setAnalysisData(null));  // Clear only current analysis data
       dispatch(setDeepAnalysis(null));
       dispatch(clearCurrentProjectUserStories());
     }
