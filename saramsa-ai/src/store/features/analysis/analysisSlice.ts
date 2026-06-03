@@ -1569,9 +1569,19 @@ const analysisSlice = createSlice({
           delete state.tasks[deletedId];
         }
 
-        // Clear current analysis if it was the deleted one
+        // ALWAYS clear selectedAnalysisId if it matches the deleted item
+        // Do this even if user switched to another analysis during the delete
+        // (race condition fix)
         if (state.selectedAnalysisId === deletedId) {
           state.selectedAnalysisId = null;
+          state.analysisData = null;
+          state.deepAnalysis = null;
+          state.loadedComments = null;
+        }
+
+        // Also check if analysisData is for the deleted item
+        // (handles case where user switched items but data hasn't loaded yet)
+        if (state.analysisData && (state.analysisData as any).id === deletedId) {
           state.analysisData = null;
           state.deepAnalysis = null;
           state.loadedComments = null;

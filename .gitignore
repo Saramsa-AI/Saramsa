@@ -123,3 +123,8 @@ backend/coverage.xml
 saramsa-ai/test-results/
 saramsa-ai/playwright-report/
 saramsa-ai/playwright/.cache/
+
+# Playwright
+playwright/.auth/
+test-results/
+playwright-report/
