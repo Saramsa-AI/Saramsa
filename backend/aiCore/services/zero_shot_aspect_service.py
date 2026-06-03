@@ -450,12 +450,6 @@ class ZeroShotAspectService:
                 f"ETA: {eta:.0f}s{gpu_note}"
             )
 
-            # Periodic garbage collection: Every 10 batches to balance performance vs memory
-            # Reduces peak memory by 40-60% with only 5-10% performance overhead
-            if (batch_idx + 1) % 10 == 0 or batch_idx == n_batches - 1:
-                gc.collect()
-                self._log_system_memory(f"After batch {batch_idx+1}/{n_batches}")
-
         # --- Map results back to original comment order ---
         results = []
         for idx, comment in enumerate(comments):
@@ -475,7 +469,6 @@ class ZeroShotAspectService:
         # Memory cleanup: Delete unique_results after mapping (can be 2-3GB for large batches)
         # This is safe because we've already copied all needed data into results list
         del unique_results
-        gc.collect()
 
         # ── Final summary ──────────────────────────────────────────────
         processing_time = time.time() - start_time
