@@ -35,7 +35,17 @@ import {
   isAnalyzingPlaceholder,
   makeAnalyzingId,
   extractTaskIdFromPlaceholder,
+  AnalysisLifecycleState,
 } from '@/lib/analysisConstants';
+import {
+  selectTaskState,
+  selectAnalysisLifecycleState,
+  selectIsAnyAnalysisRunning,
+  selectIsProjectAnalyzing,
+  selectIsViewingActiveAnalysis,
+  selectAnalysisDisplayStatus,
+  selectIsGeneratingWorkItems,
+} from '../../../store/features/analysis/analysisSlice';
 import { fetchProjects } from '../../../store/features/projects/projectsSlice';
 import { fetchIntegrationAccounts } from '../../../store/features/integrations/integrationsSlice';
 import { 
@@ -106,13 +116,12 @@ function validateSelectedFile(file: File): { isValid: boolean; error?: string } 
 
 export function DashboardComponent({ data, onProjectSelect, initialProjectId, initialSelectedAnalysisId, skipBootstrapFetches = false }: DashboardProps) {
   const dispatch = useDispatch<AppDispatch>();
+  const analysisState = useSelector((state: RootState) => state.analysis);
   const {
     analysisData,
     deepAnalysis,
     loading,
     error,
-    isAnalyzing,
-    analysisStatus,
     loadedComments,
     latestAnalysis,
     projectContext,
@@ -120,7 +129,30 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     historyLoading,
     selectedAnalysisId,
     fetchingAnalysisById,
-  } = useSelector((state: RootState) => state.analysis);
+  } = analysisState;
+
+  // NEW: Use selectors for derived state from state machine
+  const currentTask = useSelector((state: RootState) =>
+    selectTaskState(state, selectedAnalysisId)
+  );
+  const currentLifecycleState = useSelector((state: RootState) =>
+    selectAnalysisLifecycleState(state, selectedAnalysisId)
+  );
+  const isAnyAnalysisRunning = useSelector((state: RootState) =>
+    selectIsAnyAnalysisRunning(state)
+  );
+  const isProjectAnalyzing = useSelector((state: RootState) =>
+    selectIsProjectAnalyzing(state, currentProjectId)
+  );
+  const isViewingActiveAnalysis = useSelector((state: RootState) =>
+    selectIsViewingActiveAnalysis(state)
+  );
+  const displayStatus = useSelector((state: RootState) =>
+    selectAnalysisDisplayStatus(state, selectedAnalysisId)
+  );
+  const isGeneratingWorkItems = useSelector((state: RootState) =>
+    selectIsGeneratingWorkItems(state)
+  );
   
   const { projects, loading: projectsLoading } = useSelector((state: RootState) => state.projects);
   const { accounts: integrationAccounts, loading: integrationsLoading } = useSelector((state: RootState) => state.integrations);
@@ -138,7 +170,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const [editedKeywords, setEditedKeywords] = useState<{ [key: string]: string[] }>({});
   const [currentProjectId, setCurrentProjectId] = useState<string>("");
   const [personalProjectId, setPersonalProjectId] = useState<string>('');
-  const [isGeneratingUserStories, setIsGeneratingUserStories] = useState<boolean>(false);
+  // REMOVED: isGeneratingUserStories - now tracked in Redux state machine via selectIsGeneratingWorkItems
   const [isSwitchingAnalysis, setIsSwitchingAnalysis] = useState<boolean>(false);
 
   // Declare all refs at the top to prevent recreation on every render
@@ -326,26 +358,19 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       null
     );
   }, [slackAccount]);
-  const isProjectAnalyzing = isAnalyzing;
+  // Derived loading states - use state machine instead of scattered flags
   const isTaskListLoading = useMemo(
     () => historyLoading && analysisHistory.length === 0,
     [historyLoading, analysisHistory.length]
   );
   const isTaskViewLoading = useMemo(
-    () =>
-      fetchingAnalysisById ||
-      isSwitchingAnalysis,
-      // REMOVED: isAnalyzingPlaceholder check - that's handled by the top banner
-      // to avoid showing duplicate "analyzing" indicators
+    () => fetchingAnalysisById || isSwitchingAnalysis,
     [fetchingAnalysisById, isSwitchingAnalysis]
   );
 
   const workItemsPanelLoading = useMemo(
-    () =>
-      isTaskViewLoading ||
-      userStoriesLoading ||
-      isGeneratingUserStories,
-    [isTaskViewLoading, userStoriesLoading, isGeneratingUserStories]
+    () => isTaskViewLoading || userStoriesLoading || isGeneratingWorkItems,
+    [isTaskViewLoading, userStoriesLoading, isGeneratingWorkItems]
   );
   const selectedPlatform = useMemo((): 'azure' | 'jira' | null => {
     if (!projects || !projects.length) return null;
@@ -382,47 +407,33 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   }, [activeAnalysisData?.analysisData]);
 
   const analysisProgressUi = useMemo(() => {
-    // Only show progress bar when the currently selected task is the one being analyzed
-    // i.e. the user is watching a live run, not viewing a historical entry
-    const isViewingActiveRun = isAnalyzingPlaceholder(selectedAnalysisId);
-    const isCurrentlyAnalyzing = isViewingActiveRun && (isAnalyzing || analysisStatus === 'pending' || analysisStatus === 'processing');
-    const isGeneratingItems = isViewingActiveRun && isGeneratingUserStories;
-
-    // Don't show progress bar for old completed analyses that are just being viewed
-    if (!isCurrentlyAnalyzing && !isGeneratingItems) {
+    // Only show progress bar when viewing an active analysis
+    if (!isViewingActiveAnalysis) {
       return null;
     }
 
-    switch (analysisStatus) {
-      case 'pending':
+    // Map state machine state to progress UI
+    switch (currentLifecycleState) {
+      case AnalysisLifecycleState.QUEUED:
         return { label: 'Queued', width: 'w-1/4', tone: 'bg-orange-400/80', text: 'text-orange-600 dark:text-orange-400' };
-      case 'processing':
-        return { label: 'Processing', width: 'w-2/3', tone: 'bg-orange-500/80', text: 'text-orange-600 dark:text-orange-400' };
-      case 'success':
-        if (isGeneratingItems) {
-          return { label: 'Generating Work Items', width: 'w-3/4', tone: 'bg-orange-600/80', text: 'text-orange-600 dark:text-orange-400' };
-        }
-        if (isViewingActiveRun) {
-          // Only mark the run "Completed" once the work-items pass has also
-          // finished. The stepper's stage 4 checkmark uses hasGeneratedWorkItems
-          // (per analysisProgressSteps below); without this guard, the right-
-          // side badge can read "Completed" while stage 4 still shows as idle
-          // — exactly the desync screenshot users have reported.
-          if (hasGeneratedWorkItems) {
-            return { label: 'Completed', width: 'w-full', tone: 'bg-saramsa-brand/80', text: 'text-saramsa-brand' };
-          }
-          return { label: 'Synthesizing work items', width: 'w-5/6', tone: 'bg-orange-500/80', text: 'text-orange-600 dark:text-orange-400' };
-        }
-        return null;
-      case 'failure':
-        if (isViewingActiveRun) {
-          return { label: 'Failed', width: 'w-full', tone: 'bg-red-700/80', text: 'text-red-700 dark:text-red-400' };
-        }
-        return null;
+      case AnalysisLifecycleState.INGESTING:
+        return { label: 'Reading file', width: 'w-1/3', tone: 'bg-orange-400/80', text: 'text-orange-600 dark:text-orange-400' };
+      case AnalysisLifecycleState.ANALYZING:
+        return { label: 'Analyzing feedback', width: 'w-1/2', tone: 'bg-orange-500/80', text: 'text-orange-600 dark:text-orange-400' };
+      case AnalysisLifecycleState.SYNTHESIZING:
+        return { label: 'Generating insights', width: 'w-2/3', tone: 'bg-orange-500/80', text: 'text-orange-600 dark:text-orange-400' };
+      case AnalysisLifecycleState.GENERATING_WORKITEMS:
+        return { label: 'Creating work items', width: 'w-3/4', tone: 'bg-orange-600/80', text: 'text-orange-600 dark:text-orange-400' };
+      case AnalysisLifecycleState.COMPLETED:
+        return { label: 'Completed', width: 'w-full', tone: 'bg-saramsa-brand/80', text: 'text-saramsa-brand' };
+      case AnalysisLifecycleState.FAILED:
+        return { label: 'Failed', width: 'w-full', tone: 'bg-red-700/80', text: 'text-red-700 dark:text-red-400' };
+      case AnalysisLifecycleState.CANCELLED:
+        return { label: 'Cancelled', width: 'w-full', tone: 'bg-muted/80', text: 'text-muted-foreground' };
       default:
         return null;
     }
-  }, [analysisStatus, isGeneratingUserStories, isAnalyzing, selectedAnalysisId, hasGeneratedWorkItems]);
+  }, [currentLifecycleState, isViewingActiveAnalysis]);
 
   const analysisProgressSteps = useMemo(() => {
     const base = [
@@ -432,37 +443,47 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       { label: 'Work Items', status: 'idle' as 'idle' | 'running' | 'success' | 'error' },
     ];
 
-    const isViewingActiveRun = isAnalyzingPlaceholder(selectedAnalysisId);
-    if (!isViewingActiveRun && !isGeneratingUserStories) return base;
+    if (!isViewingActiveAnalysis) return base;
 
-    if (analysisStatus === 'pending') {
-      base[0].status = 'running';
-      return base;
-    }
-    if (analysisStatus === 'processing') {
-      base[0].status = 'success';
-      base[1].status = 'running';
-      return base;
-    }
-    if (analysisStatus === 'success') {
-      base[0].status = 'success';
-      base[1].status = 'success';
-      base[2].status = 'success';
-      base[3].status = isGeneratingUserStories
-        ? 'running'
-        : hasGeneratedWorkItems
-        ? 'success'
-        : 'idle';
-      return base;
-    }
-    if (analysisStatus === 'failure') {
-      base[0].status = 'success';
-      base[1].status = 'error';
-      return base;
+    // Map state machine states to stepper status
+    switch (currentLifecycleState) {
+      case AnalysisLifecycleState.QUEUED:
+      case AnalysisLifecycleState.INGESTING:
+        base[0].status = 'running';
+        break;
+      case AnalysisLifecycleState.ANALYZING:
+        base[0].status = 'success';
+        base[1].status = 'running';
+        break;
+      case AnalysisLifecycleState.SYNTHESIZING:
+        base[0].status = 'success';
+        base[1].status = 'success';
+        base[2].status = 'running';
+        break;
+      case AnalysisLifecycleState.GENERATING_WORKITEMS:
+        base[0].status = 'success';
+        base[1].status = 'success';
+        base[2].status = 'success';
+        base[3].status = 'running';
+        break;
+      case AnalysisLifecycleState.COMPLETED:
+        base[0].status = 'success';
+        base[1].status = 'success';
+        base[2].status = 'success';
+        base[3].status = hasGeneratedWorkItems ? 'success' : 'idle';
+        break;
+      case AnalysisLifecycleState.FAILED:
+        base[0].status = 'success';
+        base[1].status = 'error';
+        break;
+      case AnalysisLifecycleState.CANCELLED:
+        base[0].status = 'idle';
+        base[1].status = 'idle';
+        break;
     }
 
     return base;
-  }, [analysisStatus, hasGeneratedWorkItems, isGeneratingUserStories, isAnalyzing, selectedAnalysisId]);
+  }, [currentLifecycleState, hasGeneratedWorkItems, isViewingActiveAnalysis]);
 
 
   // Handle regeneration of analysis
@@ -1363,7 +1384,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   // Generate work items from analysis data
   async function generateWorkItemsFromAnalysis(analysisData: any) {
     try {
-      setIsGeneratingUserStories(true);
+      // TODO Phase 2: Dispatch state machine transition to GENERATING_WORKITEMS
+      // setIsGeneratingUserStories(true);
       
       // Use platform derived from selected project (default to Azure for personal workspaces)
       const currentPlatform = selectedPlatform ?? 'azure';
@@ -1391,7 +1413,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       
       if (!commentsToUse || commentsToUse.length === 0) {
         console.error('❌ No comments available for work item generation');
-        setIsGeneratingUserStories(false);
+        // TODO Phase 2: Dispatch state machine transition to FAILED
+        // setIsGeneratingUserStories(false);
         return;
       }
       if (currentPlatform === 'jira') {
@@ -1579,7 +1602,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       // You can uncomment this to show errors to users:
       // alert(`Work item generation failed: ${errorMessage}`);
     } finally {
-      setIsGeneratingUserStories(false);
+      // TODO Phase 2: Dispatch state machine transition to COMPLETED or FAILED
+      // setIsGeneratingUserStories(false);
       
       // Fetch the persisted user stories from the backend after generation
       const effectiveProjectId = currentProjectId || personalProjectId;
@@ -1884,14 +1908,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                   topFile={topFile}
                   topError={error || topError}
                   loadedComments={loadedComments}
-                  topUploading={isAnalyzing}
+                  topUploading={isProjectAnalyzing}
                   integrationsLoading={integrationsLoading}
                   slackConnected={!!slackAccount}
                   slackDisplayName={slackDisplayName}
                   onFileSelect={setTopFile}
                   onAnalyze={handleTopAnalyze}
                   onCloudConnect={handleCloudConnect}
-                  isAnalyzing={isAnalyzing}
+                  isAnalyzing={isProjectAnalyzing}
                 />
                 {slackAccount && currentProjectId && (
                   <SlackChannelPanel
@@ -1958,14 +1982,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                 topFile={topFile}
                 topError={error || topError}
                 loadedComments={loadedComments}
-                topUploading={isAnalyzing}
+                topUploading={isProjectAnalyzing}
                 integrationsLoading={integrationsLoading}
                 slackConnected={!!slackAccount}
                 slackDisplayName={slackDisplayName}
                 onFileSelect={setTopFile}
                 onAnalyze={handleTopAnalyze}
                 onCloudConnect={handleCloudConnect}
-                isAnalyzing={isAnalyzing}
+                isAnalyzing={isProjectAnalyzing}
               />
               {slackAccount && currentProjectId && (
                 <SlackChannelPanel
@@ -2100,7 +2124,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                   isTaskViewLoading={isTaskViewLoading}
                   analysisProgressUi={analysisProgressUi}
                   hasAnalysisResults={hasAnalysisResults}
-                  isAnalyzing={isAnalyzing}
+                  isAnalyzing={isViewingActiveAnalysis}
                   selectedAnalysisId={selectedAnalysisId}
                   metrics={metrics}
                   transformedFeatures={transformedFeatures}
@@ -2120,7 +2144,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               {resultsTab === 'workitems' && (
                 <WorkItemsPanel
                   workItemsPanelLoading={workItemsPanelLoading}
-                  isGeneratingUserStories={isGeneratingUserStories}
+                  isGeneratingUserStories={isGeneratingWorkItems}
                   userStoriesLoading={userStoriesLoading}
                   isTaskViewLoading={isTaskViewLoading}
                   loading={loading}
