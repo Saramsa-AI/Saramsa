@@ -1084,6 +1084,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       setTopError(validation.error ?? null);
       return;
     }
+
+    // FIX #2: Clear old data BEFORE creating new placeholder to prevent flash of stale content
+    if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
+      dispatch(clearAnalysisData());
+      dispatch(setDeepAnalysis(null));
+      dispatch(clearCurrentProjectUserStories());
+    }
+
     const tempId = makeAnalyzingId(String(Date.now()));
     const fileToSubmit = topFile;
     const fileName = fileToSubmit.name;
@@ -1133,13 +1141,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       setTopError(null);
       dispatch(clearError());
 
-      // CRITICAL FIX: Clear any selected historical analysis before starting new one
-      // This prevents the new analysis from replacing the old one you were viewing
-      if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
-        // User was viewing a historical analysis, clear it before starting new one
-        dispatch(clearAnalysisData());
-        dispatch(setDeepAnalysis(null));
-      }
+      // FIX #2: Old data clearing moved to BEFORE tempId creation (see lines 1088-1092)
+      // This ensures stale data is cleared synchronously before new analysis starts
 
       // Load file data first
       const text = await new Promise<string>((resolve, reject) => {
@@ -1331,21 +1334,11 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         },
       }));
 
-      // FIX: Swap selectedAnalysisId immediately to clear "Analyzing feedback..." banner
+      // FIX #3: Swap selectedAnalysisId immediately to clear "Analyzing feedback..." banner
       // Work items generation continues in background tracked by isGeneratingUserStories
-      console.log('[DEBUG] applyAnalysisResult:', {
-        selectedAnalysisId,
-        tempId,
-        payloadId: payload.id,
-        isPlaceholder: isAnalyzingPlaceholder(selectedAnalysisId),
-        matches: selectedAnalysisId === tempId,
-      });
-
+      // This ensures the banner clears synchronously when analysis completes, before work items generation
       if (isAnalyzingPlaceholder(selectedAnalysisId) || selectedAnalysisId === tempId) {
-        console.log('[DEBUG] Swapping selectedAnalysisId from', selectedAnalysisId, 'to', payload.id);
         dispatch(setSelectedAnalysisId(payload.id));
-      } else {
-        console.warn('[DEBUG] NOT swapping - condition failed');
       }
 
       // CRITICAL: Generate work items unconditionally for every completed analysis
@@ -2004,23 +1997,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               )}
 
               <div id="analysis-results-section" className="space-y-6">
+              {/* FIX #1: Removed duplicate amber banner - progress stepper below is sufficient */}
               {/* Analysis Results Section — only show loader when the selected run is the one being analyzed */}
-              {isAnalyzingPlaceholder(selectedAnalysisId) && (
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
-                      <span className="text-sm font-medium text-foreground">
-                        {selectedEntry?.file_name || 'Analyzing feedback...'}
-                      </span>
-                    </div>
-                    <span className="text-xs text-amber-600 dark:text-amber-400">In Progress</span>
-                  </div>
-                  {selectedEntry && selectedEntry.comments_count > 0 && (
-                    <p className="text-xs text-muted-foreground mb-3">{selectedEntry.comments_count} comments</p>
-                  )}
-                </div>
-              )}
+              {/* REMOVED: Duplicate amber "Analyzing feedback..." banner (lines 2008-2023) */}
+              {/* The progress stepper below already shows the analyzing state clearly */}
               {analysisProgressUi && (
                 <div className="rounded-xl border border-border/60 bg-card/80 p-3 transition-all duration-300">
                   <div className="mb-2 flex items-center justify-between text-xs">
