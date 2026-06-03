@@ -1333,9 +1333,19 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
       // FIX: Swap selectedAnalysisId immediately to clear "Analyzing feedback..." banner
       // Work items generation continues in background tracked by isGeneratingUserStories
+      console.log('[DEBUG] applyAnalysisResult:', {
+        selectedAnalysisId,
+        tempId,
+        payloadId: payload.id,
+        isPlaceholder: isAnalyzingPlaceholder(selectedAnalysisId),
+        matches: selectedAnalysisId === tempId,
+      });
+
       if (isAnalyzingPlaceholder(selectedAnalysisId) || selectedAnalysisId === tempId) {
-        // Swap ID immediately so banner clears
+        console.log('[DEBUG] Swapping selectedAnalysisId from', selectedAnalysisId, 'to', payload.id);
         dispatch(setSelectedAnalysisId(payload.id));
+      } else {
+        console.warn('[DEBUG] NOT swapping - condition failed');
       }
 
       // CRITICAL: Generate work items unconditionally for every completed analysis
