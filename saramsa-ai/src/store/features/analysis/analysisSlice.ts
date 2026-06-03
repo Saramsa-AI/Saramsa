@@ -129,6 +129,10 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
               work_item_candidates: (inner as any).work_item_candidates ?? analysis.work_item_candidates,
             }
           : inner;
+        // FIX 2: Extract metadata for sidebar sync (comments_count, positive_pct)
+        const counts = inner?.counts ?? {};
+        const total = Number(analysis.comments_count ?? counts.total ?? 0);
+        const positive = Number(counts.positive ?? 0);
         // Also expose narration/work_item_candidates at the TOP LEVEL of the
         // returned object. applyAnalysisResult in Dashboard.tsx dispatches this
         // verbatim as Redux `state.analysisData`, which is what generateUserStories
@@ -140,6 +144,13 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
           analysisData: merged,
           narration: (analysis as any).narration ?? (inner as any)?.narration ?? null,
           work_item_candidates: (analysis as any).work_item_candidates ?? (inner as any)?.work_item_candidates ?? null,
+          // FIX 2: Include metadata for sidebar update via entryPatch
+          metadata: {
+            comments_count: total,
+            positive_pct: total > 0 ? Math.round((positive / total) * 100) : 0,
+            analysis_date: analysis.createdAt ?? analysis.analysis_date ?? new Date().toISOString(),
+            name: analysis.name ?? analysis.file_name,
+          },
         };
       }
       throw new Error('Analysis saved but not found by ID.');
@@ -200,6 +211,8 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<{ id:
             }
           }
           clearTimeout(timeout);
+          // FIX 4: On SSE disconnect without terminal status, dispatch terminal resolution to clear loader
+          dispatch({ type: 'analysis/pollTaskStatus/rejected', payload: 'SSE stream ended without terminal status', meta: { arg: taskId } });
           reject('SSE stream ended without terminal status');
         };
         await processStream();
@@ -671,9 +684,14 @@ function applyTerminalResolution(state: AnalysisState, args: TerminalResolution)
   if (idx >= 0) {
     const existing = state.analysisHistory[idx];
     const nextId = args.insightId || existing.id;
+
+    // FIX 2: Use entryPatch metadata passed from pollTaskStatus.fulfilled
+    // which should include comments_count and positive_pct from the backend response
+    const metadata = args.entryPatch ?? {};
+
     state.analysisHistory[idx] = {
       ...existing,
-      ...(args.entryPatch ?? {}),
+      ...metadata,
       id: nextId,
       status: args.historyStatus,
     };
@@ -798,14 +816,18 @@ const analysisSlice = createSlice({
         state.loading = true;
         state.error = null;
         state.isAnalyzing = true;
-        const key = action.meta.arg.projectId ?? 'personal';
+        // FIX 5: Use unique key per task to prevent concurrent uploads from clearing each other's flags
+        const taskId = (action.meta.requestId as string) ?? Date.now().toString();
+        const key = `${action.meta.arg.projectId ?? 'personal'}_${taskId}`;
         state.analyzingByProject[key] = true;
         state.analysisStatus = 'pending';
       })
       .addCase(analyzeComments.fulfilled, (state, action) => {
         state.loading = false;
         state.error = null;
-        const key = action.meta.arg.projectId ?? 'personal';
+        // FIX 5: Match the unique key format from pending to clear the correct flag
+        const taskId = (action.meta.requestId as string) ?? Date.now().toString();
+        const key = `${action.meta.arg.projectId ?? 'personal'}_${taskId}`;
         delete state.analyzingByProject[key];
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
         state.analysisStatus = 'success';
@@ -820,7 +842,9 @@ const analysisSlice = createSlice({
       .addCase(analyzeComments.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload || 'Analysis failed.';
-        const key = action.meta.arg.projectId ?? 'personal';
+        // FIX 5: Match the unique key format from pending to clear the correct flag
+        const taskId = (action.meta.requestId as string) ?? Date.now().toString();
+        const key = `${action.meta.arg.projectId ?? 'personal'}_${taskId}`;
         delete state.analyzingByProject[key];
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
         state.analysisStatus = TASK_STATUS.FAILURE;
@@ -835,14 +859,18 @@ const analysisSlice = createSlice({
         state.loading = true;
         state.error = null;
         state.isAnalyzing = true;
-        const key = action.meta.arg.projectId ?? 'personal';
+        // FIX 5: Use unique key per task to prevent concurrent uploads from clearing each other's flags
+        const taskId = (action.meta.requestId as string) ?? Date.now().toString();
+        const key = `${action.meta.arg.projectId ?? 'personal'}_${taskId}`;
         state.analyzingByProject[key] = true;
         state.analysisStatus = 'pending';
       })
       .addCase(ingestFile.fulfilled, (state, action) => {
         state.loading = false;
         state.error = null;
-        const key = action.meta.arg.projectId ?? 'personal';
+        // FIX 5: Match the unique key format from pending to clear the correct flag
+        const taskId = (action.meta.requestId as string) ?? Date.now().toString();
+        const key = `${action.meta.arg.projectId ?? 'personal'}_${taskId}`;
         delete state.analyzingByProject[key];
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
         state.analysisStatus = 'success';
@@ -852,7 +880,9 @@ const analysisSlice = createSlice({
       .addCase(ingestFile.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload || 'File ingestion failed.';
-        const key = action.meta.arg.projectId ?? 'personal';
+        // FIX 5: Match the unique key format from pending to clear the correct flag
+        const taskId = (action.meta.requestId as string) ?? Date.now().toString();
+        const key = `${action.meta.arg.projectId ?? 'personal'}_${taskId}`;
         delete state.analyzingByProject[key];
         state.isAnalyzing = Object.values(state.analyzingByProject).some(Boolean);
         state.analysisStatus = TASK_STATUS.FAILURE;
@@ -906,24 +936,57 @@ const analysisSlice = createSlice({
         const taskId = (action.meta?.arg as string | undefined) ?? state.taskId ?? null;
         if (!taskId) return;
 
+        // FIX 3: Handle REVOKED status like CANCELLED
         const nextTaskStatus: TaskStatus =
           apiStatus === 'SUCCESS' || apiStatus === 'PARTIAL' ? TASK_STATUS.SUCCESS
-          : apiStatus === 'CANCELLED' ? TASK_STATUS.IDLE
+          : (apiStatus === 'CANCELLED' || apiStatus === 'REVOKED') ? TASK_STATUS.IDLE
           : TASK_STATUS.FAILURE;
 
         const historyStatus: HistoryStatus =
           apiStatus === 'SUCCESS' || apiStatus === 'PARTIAL' ? HISTORY_STATUS.COMPLETED
-          : apiStatus === 'CANCELLED' ? HISTORY_STATUS.CANCELLED
+          : (apiStatus === 'CANCELLED' || apiStatus === 'REVOKED') ? HISTORY_STATUS.CANCELLED
           : HISTORY_STATUS.FAILED;
+
+        // FIX 2: Extract metadata from task result if available (for sidebar sync)
+        const insightId = action.payload?.result?.insight_id ?? null;
+        let entryPatch: Partial<AnalysisHistoryEntry> | undefined;
+
+        // If we have result data in the pollTaskStatus response, extract metadata
+        if (action.payload?.result) {
+          const result = action.payload.result;
+          const counts = result?.counts ?? result?.analysisData?.counts ?? {};
+          const total = Number(result?.comments_count ?? counts.total ?? 0);
+          const positive = Number(counts.positive ?? 0);
+          if (total > 0) {
+            entryPatch = {
+              comments_count: total,
+              positive_pct: Math.round((positive / total) * 100),
+            };
+          }
+        }
 
         applyTerminalResolution(state, {
           taskId,
           historyStatus,
-          insightId: action.payload?.result?.insight_id ?? null,
+          insightId,
+          entryPatch,
           nextTaskStatus,
         });
       })
       .addCase(pollTaskStatus.rejected, (state, action) => {
+        // FIX 6: Handle 401 authentication errors by clearing loader
+        if (action.payload === 'Authentication required. Please login again.') {
+          const taskId = (action.meta?.arg as string | undefined) ?? state.taskId ?? null;
+          if (taskId) {
+            applyTerminalResolution(state, {
+              taskId,
+              historyStatus: HISTORY_STATUS.FAILED,
+              insightId: null,
+              nextTaskStatus: TASK_STATUS.FAILURE,
+            });
+            return;
+          }
+        }
         // If task is 404 (killed/cancelled), clear the analyzing placeholder
         if (action.payload === 'Task not found.') {
           const taskId = (action.meta?.arg as string | undefined) ?? state.taskId ?? null;

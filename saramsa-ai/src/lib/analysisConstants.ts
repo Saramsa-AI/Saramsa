@@ -45,7 +45,8 @@ export const TASK_STATUS = {
 export type TaskStatus = (typeof TASK_STATUS)[keyof typeof TASK_STATUS];
 
 /** Backend's task-status response — what `/api/insights/task-status/<id>/` returns. */
-export const BACKEND_TERMINAL_STATUSES = new Set(['SUCCESS', 'PARTIAL', 'FAILURE', 'FAILED', 'CANCELLED']);
+// FIX 3: Add 'REVOKED' to terminal statuses to handle task revocation edge case
+export const BACKEND_TERMINAL_STATUSES = new Set(['SUCCESS', 'PARTIAL', 'FAILURE', 'FAILED', 'CANCELLED', 'REVOKED']);
 
 export function isBackendTerminal(status: string | null | undefined): boolean {
   return typeof status === 'string' && BACKEND_TERMINAL_STATUSES.has(status);
