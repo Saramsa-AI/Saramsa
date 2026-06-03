@@ -9,6 +9,8 @@ import {
   isBackendTerminal,
   type HistoryStatus,
   type TaskStatus,
+  AnalysisLifecycleState,
+  type AnalysisTaskState,
 } from '@/lib/analysisConstants';
 
 interface ProjectContext {
@@ -30,53 +32,69 @@ export interface AnalysisHistoryEntry {
 }
 
 interface AnalysisState {
+  /** Map of analysis_id -> task state. Single source of truth. */
+  tasks: Record<string, AnalysisTaskState>;
+
+  /** Currently selected/viewed analysis ID */
+  selectedAnalysisId: string | null;
+
+  /** Loaded analysis data for the selected ID */
   analysisData: AnalysisData | null;
   deepAnalysis: any | null;
+
+  /** Loaded comments from last upload */
+  loadedComments: string[] | null;
+
+  /** Project context from last operation */
+  projectContext: ProjectContext | null;
+
+  /** History entries for sidebar (derived from tasks + backend list) */
+  analysisHistory: AnalysisHistoryEntry[];
+  historyLoading: boolean;
+  historyError: string | null;
+
+  /** Global loading states */
+  fetchingAnalysisById: boolean;
+
+  /** Legacy fields - kept for backward compatibility during migration */
   loading: boolean;
   error: string | null;
   isAnalyzing: boolean;
   analyzingByProject: Record<string, boolean>;
-  loadedComments: string[] | null;
   latestAnalysis: any | null;
   latestLoading: boolean;
   latestError: string | null;
-  projectContext: ProjectContext | null;
-  // Async task tracking for Celery
   taskId: string | null;
   analysisStatus: 'idle' | 'pending' | 'processing' | 'success' | 'failure';
   pollingInterval: number | null;
-  // Analysis history
-  analysisHistory: AnalysisHistoryEntry[];
-  historyLoading: boolean;
-  historyError: string | null;
-  selectedAnalysisId: string | null;
-  fetchingAnalysisById: boolean;
 }
 
 const MAX_HISTORY_RUNS = 15;
 
 const initialState: AnalysisState = {
+  // New state machine
+  tasks: {},
+  selectedAnalysisId: null,
   analysisData: null,
   deepAnalysis: null,
+  loadedComments: null,
+  projectContext: null,
+  analysisHistory: [],
+  historyLoading: false,
+  historyError: null,
+  fetchingAnalysisById: false,
+
+  // Legacy fields - kept for backward compatibility
   loading: false,
   error: null,
   isAnalyzing: false,
   analyzingByProject: {},
-  loadedComments: null,
   latestAnalysis: null,
   latestLoading: false,
   latestError: null,
-  projectContext: null,
-  // Async task tracking
   taskId: null,
   analysisStatus: 'idle',
   pollingInterval: null,
-  // Analysis history
-  analysisHistory: [],
-  historyLoading: false,
-  historyError: null,
-  selectedAnalysisId: null,
-  fetchingAnalysisById: false,
 };
 
 
@@ -1152,6 +1170,114 @@ export const {
   setTaskIdForEntry,
   resolveAnalyzingTask,
 } = analysisSlice.actions;
+
+// ============================================================================
+// SELECTORS - Single source of truth access patterns
+// ============================================================================
+
+/**
+ * Get task state for a specific analysis ID.
+ * Returns null if task doesn't exist in the map.
+ */
+export function selectTaskState(state: { analysis: AnalysisState }, analysisId: string | null): AnalysisTaskState | null {
+  if (!analysisId || !state.analysis.tasks) return null;
+  return state.analysis.tasks[analysisId] || null;
+}
+
+/**
+ * Get the current lifecycle state for an analysis.
+ * Returns IDLE if task doesn't exist.
+ */
+export function selectAnalysisLifecycleState(state: { analysis: AnalysisState }, analysisId: string | null): AnalysisLifecycleState {
+  const task = selectTaskState(state, analysisId);
+  return task?.state || AnalysisLifecycleState.IDLE;
+}
+
+/**
+ * Check if ANY analysis is currently running (not idle/completed/failed/cancelled).
+ * Replaces: state.analysis.isAnalyzing
+ */
+export function selectIsAnyAnalysisRunning(state: { analysis: AnalysisState }): boolean {
+  if (!state.analysis.tasks) return false;
+  return Object.values(state.analysis.tasks).some(task =>
+    task.state !== AnalysisLifecycleState.IDLE &&
+    task.state !== AnalysisLifecycleState.COMPLETED &&
+    task.state !== AnalysisLifecycleState.FAILED &&
+    task.state !== AnalysisLifecycleState.CANCELLED
+  );
+}
+
+/**
+ * Check if a specific project has any running analysis.
+ * Replaces: state.analysis.analyzingByProject[projectId]
+ */
+export function selectIsProjectAnalyzing(state: { analysis: AnalysisState }, projectId: string): boolean {
+  if (!state.analysis.tasks) return false;
+  return Object.values(state.analysis.tasks).some(task =>
+    task.projectId === projectId &&
+    task.state !== AnalysisLifecycleState.IDLE &&
+    task.state !== AnalysisLifecycleState.COMPLETED &&
+    task.state !== AnalysisLifecycleState.FAILED &&
+    task.state !== AnalysisLifecycleState.CANCELLED
+  );
+}
+
+/**
+ * Check if the currently selected analysis is in progress.
+ * Replaces checks like: isAnalyzingPlaceholder(selectedAnalysisId) && isAnalyzing
+ */
+export function selectIsViewingActiveAnalysis(state: { analysis: AnalysisState }): boolean {
+  const selectedId = state.analysis.selectedAnalysisId;
+  if (!selectedId) return false;
+  const task = selectTaskState(state, selectedId);
+  if (!task) return false;
+  return task.state !== AnalysisLifecycleState.IDLE &&
+         task.state !== AnalysisLifecycleState.COMPLETED &&
+         task.state !== AnalysisLifecycleState.FAILED &&
+         task.state !== AnalysisLifecycleState.CANCELLED;
+}
+
+/**
+ * Get display-friendly status text for an analysis.
+ * Maps lifecycle state to user-facing labels.
+ */
+export function selectAnalysisDisplayStatus(state: { analysis: AnalysisState }, analysisId: string | null): string {
+  const lifecycleState = selectAnalysisLifecycleState(state, analysisId);
+
+  switch (lifecycleState) {
+    case AnalysisLifecycleState.IDLE:
+      return 'Ready';
+    case AnalysisLifecycleState.QUEUED:
+      return 'Queued';
+    case AnalysisLifecycleState.INGESTING:
+      return 'Reading file';
+    case AnalysisLifecycleState.ANALYZING:
+      return 'Analyzing feedback';
+    case AnalysisLifecycleState.SYNTHESIZING:
+      return 'Generating insights';
+    case AnalysisLifecycleState.GENERATING_WORKITEMS:
+      return 'Creating work items';
+    case AnalysisLifecycleState.COMPLETED:
+      return 'Completed';
+    case AnalysisLifecycleState.CANCELLED:
+      return 'Cancelled';
+    case AnalysisLifecycleState.FAILED:
+      return 'Failed';
+    default:
+      return 'Unknown';
+  }
+}
+
+/**
+ * Check if work items are currently being generated for selected analysis.
+ * Replaces: isGeneratingUserStories local state
+ */
+export function selectIsGeneratingWorkItems(state: { analysis: AnalysisState }): boolean {
+  const selectedId = state.analysis.selectedAnalysisId;
+  if (!selectedId) return false;
+  const task = selectTaskState(state, selectedId);
+  return task?.state === AnalysisLifecycleState.GENERATING_WORKITEMS;
+}
 
 export default analysisSlice.reducer; 
 

@@ -51,3 +51,79 @@ export const BACKEND_TERMINAL_STATUSES = new Set(['SUCCESS', 'PARTIAL', 'FAILURE
 export function isBackendTerminal(status: string | null | undefined): boolean {
   return typeof status === 'string' && BACKEND_TERMINAL_STATUSES.has(status);
 }
+
+// ============================================================================
+// STATE MACHINE TYPE DEFINITION
+// ============================================================================
+
+/**
+ * Analysis Lifecycle State Machine
+ *
+ * Single source of truth for all analysis lifecycle states.
+ * Replaces: isAnalyzing, analyzingByProject, analysisStatus, isGeneratingUserStories
+ */
+
+export enum AnalysisLifecycleState {
+  /** No analysis running, viewing historical results */
+  IDLE = 'idle',
+
+  /** Task submitted to backend, waiting for processing to start */
+  QUEUED = 'queued',
+
+  /** Backend is reading/parsing uploaded file */
+  INGESTING = 'ingesting',
+
+  /** Running sentiment analysis & feature extraction on feedback */
+  ANALYZING = 'analyzing',
+
+  /** GPT generating narrative insights from analysis results */
+  SYNTHESIZING = 'synthesizing',
+
+  /** Creating actionable work items from insights */
+  GENERATING_WORKITEMS = 'generating_workitems',
+
+  /** Analysis pipeline complete, showing final results */
+  COMPLETED = 'completed',
+
+  /** Task was cancelled by user or system */
+  CANCELLED = 'cancelled',
+
+  /** Error occurred during any pipeline stage */
+  FAILED = 'failed',
+}
+
+/**
+ * Per-task tracking structure. Keyed by analysis ID (either placeholder
+ * `analyzing_<task_id>` for in-flight or `insight_<id>` for completed).
+ */
+export interface AnalysisTaskState {
+  /** Current lifecycle state */
+  state: AnalysisLifecycleState;
+
+  /** Project this analysis belongs to */
+  projectId: string;
+
+  /** Backend task ID for polling */
+  taskId: string | null;
+
+  /** Real insight ID once backend completes (null while in-flight) */
+  insightId: string | null;
+
+  /** Timestamp when this task entered current state */
+  stateEnteredAt: number;
+
+  /** Error message if state is FAILED */
+  error: string | null;
+
+  /** AbortController for work items generation (if GENERATING_WORKITEMS) */
+  workItemsAbortController: AbortController | null;
+
+  /** Metadata for history sidebar (updated as task progresses) */
+  metadata: {
+    fileName?: string;
+    commentsCount: number;
+    positivePct: number;
+    analysisDate: string;
+    name?: string | null;
+  };
+}

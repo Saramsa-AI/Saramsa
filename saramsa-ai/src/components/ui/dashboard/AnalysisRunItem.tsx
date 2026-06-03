@@ -4,6 +4,9 @@ import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Loader2, Pencil, Check, X, Trash2 } from 'lucide-react';
 import type { AnalysisHistoryEntry } from '@/store/features/analysis/analysisSlice';
+import { useSelector } from 'react-redux';
+import type { RootState } from '@/store/store';
+import { selectTaskState, selectAnalysisDisplayStatus } from '@/store/features/analysis/analysisSlice';
 
 interface AnalysisRunItemProps {
   entry: AnalysisHistoryEntry;
@@ -17,8 +20,15 @@ interface AnalysisRunItemProps {
 }
 
 export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, onCancel, index, totalCount }: AnalysisRunItemProps) {
-  const isPending = entry.status === 'analyzing';
-  const isCancelled = entry.status === 'cancelled';
+  // NEW: Derive display state from Redux state machine instead of entry.status string
+  const taskState = useSelector((state: RootState) => selectTaskState(state, entry.id));
+  const displayStatus = useSelector((state: RootState) => selectAnalysisDisplayStatus(state, entry.id));
+
+  // Fallback to entry.status for historical entries not in tasks map
+  const isPending = taskState ?
+    taskState.state !== 'idle' && taskState.state !== 'completed' && taskState.state !== 'failed' && taskState.state !== 'cancelled'
+    : entry.status === 'analyzing';
+  const isCancelled = taskState ? taskState.state === 'cancelled' : entry.status === 'cancelled';
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
