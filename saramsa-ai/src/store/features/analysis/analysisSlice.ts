@@ -518,19 +518,16 @@ export const fetchAnalysisHistory = createAsyncThunk<
   { rejectValue: string }
 >('analysis/fetchAnalysisHistory', async (projectId, { rejectWithValue }) => {
   try {
-    const response = await apiRequest('get', `/feedback/history/?project_id=${projectId}`, undefined, true);
+    const response = await apiRequest('get', `/feedback/history/list/?project_id=${projectId}`, undefined, true);
     const analyses: any[] = response.data?.data?.analyses ?? [];
     return analyses.map((a: any): AnalysisHistoryEntry => {
-      const counts = a.analysisData?.counts ?? a.result?.counts ?? a.counts ?? {};
-      const total = Number(a.comments_count ?? counts.total ?? 0);
-      const positive = Number(counts.positive ?? 0);
       return {
         id: a.id,
-        analysis_date: a.createdAt ?? a.analysis_date ?? a._ts ?? '',
-        comments_count: total,
-        positive_pct: total > 0 ? Math.round((positive / total) * 100) : 0,
+        analysis_date: a.created_at ?? '',
+        comments_count: a.comments_count ?? 0,
+        positive_pct: a.positive_pct ?? 0,
         status: a.status ?? 'completed',
-        name: a.name ?? a.run_name ?? a.analysis_name ?? a.file_name,
+        name: a.name,
       };
     });
   } catch (err: any) {

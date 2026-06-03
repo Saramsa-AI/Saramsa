@@ -40,6 +40,9 @@ from .insights_views import (
     InsightRulesView,
     InsightRulesApplyView,
 )
+from .analysis_list_view import (
+    AnalysisHistoryListView,
+)
 from .ingestion_schedule_views import (
     IngestionScheduleView,
     IngestionRunNowView,
@@ -71,6 +74,7 @@ __all__ = [
     'InsightDetailView',
     'InsightsByTypeView',
     'AnalysisHistoryView',
+    'AnalysisHistoryListView',
     'AnalysisByQuarterView',
     'CumulativeAnalysisView',
     'AnalysisComparisonView',
