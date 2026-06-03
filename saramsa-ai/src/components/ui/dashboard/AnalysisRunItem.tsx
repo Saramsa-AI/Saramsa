@@ -214,7 +214,7 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
       {/* Stats row */}
       <div className="flex items-center gap-3 pl-4 text-xs text-muted-foreground">
         {isPending ? (
-          <span className="text-amber-600/70 dark:text-amber-400/70">Processing feedback data...</span>
+          <span className="text-amber-600/70 dark:text-amber-400/70">{displayStatus}</span>
         ) : (
           <></>
         )}
