@@ -116,6 +116,18 @@ function validateSelectedFile(file: File): { isValid: boolean; error?: string } 
 
 export function DashboardComponent({ data, onProjectSelect, initialProjectId, initialSelectedAnalysisId, skipBootstrapFetches = false }: DashboardProps) {
   const dispatch = useDispatch<AppDispatch>();
+
+  // Define state variables FIRST before using them in selectors
+  const [activeView, setActiveView] = useState<'dashboard' | 'user-stories'>('dashboard');
+  const [topFile, setTopFile] = useState<File | null>(null);
+  const [topError, setTopError] = useState<string | null>(null);
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
+  const [editedKeywords, setEditedKeywords] = useState<{ [key: string]: string[] }>({});
+  const [currentProjectId, setCurrentProjectId] = useState<string>("");
+  const [personalProjectId, setPersonalProjectId] = useState<string>('');
+  const [isSwitchingAnalysis, setIsSwitchingAnalysis] = useState<boolean>(false);
+
+  // NOW we can use Redux selectors (they may depend on state variables above)
   const analysisState = useSelector((state: RootState) => state.analysis);
   const {
     analysisData,
@@ -153,7 +165,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const isGeneratingWorkItems = useSelector((state: RootState) =>
     selectIsGeneratingWorkItems(state)
   );
-  
+
   const { projects, loading: projectsLoading } = useSelector((state: RootState) => state.projects);
   const { accounts: integrationAccounts, loading: integrationsLoading } = useSelector((state: RootState) => state.integrations);
   const { user } = useSelector((state: RootState) => state.auth);
@@ -161,17 +173,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     currentProjectUserStories,
     loading: userStoriesLoading,
   } = useSelector((state: RootState) => state.userStories);
-  
-  const [activeView, setActiveView] = useState<'dashboard' | 'user-stories'>('dashboard');
-  const [topFile, setTopFile] = useState<File | null>(null);
- 
-  const [topError, setTopError] = useState<string | null>(null);
-  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
-  const [editedKeywords, setEditedKeywords] = useState<{ [key: string]: string[] }>({});
-  const [currentProjectId, setCurrentProjectId] = useState<string>("");
-  const [personalProjectId, setPersonalProjectId] = useState<string>('');
-  // REMOVED: isGeneratingUserStories - now tracked in Redux state machine via selectIsGeneratingWorkItems
-  const [isSwitchingAnalysis, setIsSwitchingAnalysis] = useState<boolean>(false);
 
   // Declare all refs at the top to prevent recreation on every render
   const didInitRef = useRef(false);
