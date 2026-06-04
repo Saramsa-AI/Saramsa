@@ -1581,7 +1581,10 @@ const analysisSlice = createSlice({
       })
       .addCase(fetchAnalysisHistory.fulfilled, (state, action) => {
         state.historyLoading = false;
-        state.analysisHistory = action.payload.slice(0, MAX_HISTORY_RUNS);
+        // Filter out items that are currently being deleted to prevent race condition
+        state.analysisHistory = action.payload
+          .slice(0, MAX_HISTORY_RUNS)
+          .filter(entry => !state.deletingIds.includes(entry.id));
       })
       .addCase(fetchAnalysisHistory.rejected, (state, action) => {
         state.historyLoading = false;
