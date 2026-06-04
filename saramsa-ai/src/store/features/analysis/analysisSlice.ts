@@ -432,6 +432,18 @@ const analysisSlice = createSlice({
       state.currentTaskError = null;
     },
 
+    // Add placeholder to history (for "Analyzing..." state)
+    prependToHistoryAction: (state, action: PayloadAction<AnalysisHistoryEntry>) => {
+      console.log(`[prependToHistory] Adding placeholder:`, action.payload.id);
+      state.analysisHistory.unshift(action.payload);
+    },
+
+    // Remove from history (cleanup placeholders)
+    removeFromHistoryAction: (state, action: PayloadAction<string>) => {
+      console.log(`[removeFromHistory] Removing:`, action.payload);
+      state.analysisHistory = state.analysisHistory.filter(e => e.id !== action.payload);
+    },
+
     // Reset entire state
     resetAnalysisState: () => {
       console.log(`[reset] Resetting all state`);
@@ -559,6 +571,32 @@ const analysisSlice = createSlice({
 
       console.log(`[poll.fulfilled] Status: ${status}, State: ${taskState}`);
     });
+
+    // ========================================
+    // ingestFile (upload + analyze flow)
+    // ========================================
+    builder.addCase(ingestFile.pending, (state) => {
+      state.currentTaskStatus = 'uploading';
+      state.currentTaskError = null;
+      console.log(`[ingestFile.pending] Starting upload...`);
+    });
+
+    builder.addCase(ingestFile.fulfilled, (state, action) => {
+      state.currentTaskStatus = 'completed';
+
+      // The result should have the analysis data
+      const result = action.payload;
+      console.log(`[ingestFile.fulfilled] Upload complete:`, result?.id);
+
+      // If we got an analysis ID, it will appear in the next history fetch
+      // For now, just mark as completed
+    });
+
+    builder.addCase(ingestFile.rejected, (state, action) => {
+      state.currentTaskStatus = 'failed';
+      state.currentTaskError = action.payload || 'Upload failed';
+      console.error(`[ingestFile.rejected]`, action.payload);
+    });
   },
 });
 
@@ -570,6 +608,8 @@ export const {
   setProjectId,
   setSelectedAnalysisId,
   clearCurrentTask,
+  prependToHistoryAction,
+  removeFromHistoryAction,
   resetAnalysisState,
 } = analysisSlice.actions;
 
@@ -591,14 +631,16 @@ export const selectCurrentTaskStatus = (state: RootState) => state.analysis.curr
 // These exist to prevent build errors during migration
 // ============================================================================
 
+// Backward compatibility - map old action names to new ones
+export const prependToHistory = prependToHistoryAction;
+export const removeFromHistory = removeFromHistoryAction;
+
 // Dummy actions for components that haven't been migrated yet
 export const clearAnalysisData = () => ({ type: 'analysis/clearAnalysisData' });
 export const resolveAnalyzingTask = () => ({ type: 'analysis/resolveAnalyzingTask' });
-export const prependToHistory = (entry: any) => ({ type: 'analysis/prependToHistory', payload: entry });
 export const setLoadedComments = (comments: string[]) => ({ type: 'analysis/setLoadedComments', payload: comments });
 export const setAnalysisData = (data: any) => ({ type: 'analysis/setAnalysisData', payload: data });
 export const setDeepAnalysis = (data: any) => ({ type: 'analysis/setDeepAnalysis', payload: data });
-export const removeFromHistory = () => ({ type: 'analysis/removeFromHistory' });
 export const clearError = () => ({ type: 'analysis/clearError' });
 export const setTaskIdForEntry = () => ({ type: 'analysis/setTaskIdForEntry' });
 export const replaceInHistory = () => ({ type: 'analysis/replaceInHistory' });
