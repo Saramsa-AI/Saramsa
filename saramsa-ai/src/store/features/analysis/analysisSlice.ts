@@ -453,9 +453,16 @@ const analysisSlice = createSlice({
     // BACKWARD COMPATIBILITY: Dashboard calls setAnalysisData after fetchAnalysisById
     setAnalysisDataAction: (state, action: PayloadAction<any>) => {
       console.log(`[setAnalysisData] Setting analysis data:`, action.payload?.id);
+
+      // CRITICAL: Dashboard might pass raw API data OR already-normalized data
+      // Always normalize to ensure correct structure
+      const normalizedData = action.payload ? normalizeAnalysisData(action.payload) : null;
+
       // Set both new and old fields for compatibility
-      state.selectedAnalysisData = action.payload;
-      state.analysisData = action.payload;
+      state.selectedAnalysisData = normalizedData;
+      state.analysisData = normalizedData;
+      state.deepAnalysis = normalizedData?.userStories ?? null;
+      state.loadedComments = normalizedData?.comments ?? null;
     },
 
     // BACKWARD COMPATIBILITY: Dashboard calls setDeepAnalysis for work items
