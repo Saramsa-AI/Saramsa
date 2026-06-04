@@ -50,6 +50,11 @@ interface AnalysisState {
 
   // Project context
   projectId: string | null;
+
+  // BACKWARD COMPATIBILITY - for components not yet migrated
+  analysisData: AnalysisData | null;
+  deepAnalysis: any | null;
+  loadedComments: string[] | null;
 }
 
 const initialState: AnalysisState = {
@@ -67,6 +72,11 @@ const initialState: AnalysisState = {
   currentTaskError: null,
 
   projectId: null,
+
+  // BACKWARD COMPATIBILITY
+  analysisData: null,
+  deepAnalysis: null,
+  loadedComments: null,
 };
 
 // ============================================================================
@@ -301,6 +311,11 @@ const analysisSlice = createSlice({
       if (action.payload === null) {
         state.selectedAnalysisData = null;
         state.selectedAnalysisError = null;
+
+        // BACKWARD COMPATIBILITY - also clear old fields
+        state.analysisData = null;
+        state.deepAnalysis = null;
+        state.loadedComments = null;
       }
     },
 
@@ -351,7 +366,13 @@ const analysisSlice = createSlice({
     builder.addCase(fetchAnalysisById.fulfilled, (state, action) => {
       state.selectedAnalysisLoading = false;
       state.selectedAnalysisData = action.payload;
-      console.log(`[fetchById.fulfilled] Loaded`, action.payload.id);
+
+      // BACKWARD COMPATIBILITY - populate old fields for components not yet migrated
+      state.analysisData = action.payload;
+      state.deepAnalysis = action.payload?.userStories ?? null;
+      state.loadedComments = action.payload?.comments ?? null;
+
+      console.log(`[fetchById.fulfilled] Loaded`, action.payload?.id);
     });
 
     builder.addCase(fetchAnalysisById.rejected, (state, action) => {
