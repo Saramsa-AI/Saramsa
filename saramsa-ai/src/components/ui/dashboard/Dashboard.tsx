@@ -797,6 +797,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     // Clear history ref to force fresh fetch (clears stale data from cache)
     lastHistoryProjectRef.current = null;
 
+    // Clear selected analysis to prevent showing stale data during history load
+    dispatch(setSelectedAnalysisId(null));
+
     dispatch(fetchProjects());
     dispatch(fetchIntegrationAccounts());
   }, [dispatch, skipBootstrapFetches]);
