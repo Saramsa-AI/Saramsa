@@ -665,7 +665,7 @@ export const ingestFile = createAsyncThunk<
   any,
   { file: File; projectId?: string },
   { rejectValue: string }
->('analysis/ingestFile', async ({ file, projectId }, { dispatch, rejectWithValue }) => {
+>('analysis/ingestFile', async ({ file, projectId }, { dispatch, rejectWithValue, getState }) => {
   try {
     console.log('[ingestFile] Starting upload:', file.name);
 
@@ -695,11 +695,12 @@ export const ingestFile = createAsyncThunk<
     const result = await waitForAnalysisTask(taskId, dispatch);
 
     // Refresh history after completion so new analysis appears in sidebar
-    const state = (dispatch as any).getState?.();
+    const state: any = getState();
     const stateProjectId = state?.analysis?.projectId || projectId;
     if (stateProjectId) {
       console.log('[ingestFile] Refreshing history after completion');
-      dispatch(fetchAnalysisHistory({ projectId: stateProjectId }));
+      await dispatch(fetchAnalysisHistory({ projectId: stateProjectId })).unwrap();
+      console.log('[ingestFile] History refreshed successfully');
     }
 
     return result;
