@@ -29,6 +29,10 @@ test('Complete Upload → Analyze → View Flow', async ({ page }) => {
     await page.goto('http://localhost:3001');
     await page.waitForTimeout(3000);
 
+    // Wait for projects to load (wait for loading to disappear)
+    await page.waitForSelector('text=NewTest', { timeout: 15000 });
+    console.log('Projects loaded');
+
     // Find and click NewTest project
     const projectCard = page.locator('text=NewTest').first();
     if (await projectCard.count() === 0) {
@@ -61,7 +65,7 @@ test('Complete Upload → Analyze → View Flow', async ({ page }) => {
     console.log('─'.repeat(50));
 
     const fileInput = page.locator('input[type="file"]').first();
-    const filePath = path.join(__dirname, '..', '..', 'backend', 'Data30.json');
+    const filePath = path.join(__dirname, '..', '..', 'Saramsa-Data', 'Data-30.json');
 
     console.log(`Uploading file: ${filePath}`);
     await fileInput.setInputFiles(filePath);

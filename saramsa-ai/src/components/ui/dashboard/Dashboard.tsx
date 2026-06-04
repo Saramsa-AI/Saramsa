@@ -821,23 +821,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     dispatch(fetchAnalysisHistory({ projectId: pid }));
   }, [currentProjectId, projectId, dispatch]);
 
-  // Auto-cleanup: Remove stale "analyzing_" placeholders from history after fetch
-  // These are phantom items from failed uploads that never completed
-  useEffect(() => {
-    if (analysisHistory.length === 0) return;
-
-    const stalePlaceholders = analysisHistory.filter(
-      entry => entry.id.startsWith('analyzing_') && entry.status === 'analyzing'
-    );
-
-    if (stalePlaceholders.length > 0) {
-      console.warn(`🧹 Cleaning ${stalePlaceholders.length} stale placeholder(s)`);
-      stalePlaceholders.forEach(item => {
-        dispatch(removeFromHistory(item.id));
-      });
-    }
-  }, [analysisHistory, dispatch]);
-
   // Load full analysis when a historical run is selected
   useEffect(() => {
     if (!selectedAnalysisId) {
