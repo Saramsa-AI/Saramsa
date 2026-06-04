@@ -84,6 +84,63 @@ const initialState: AnalysisState = {
 // ============================================================================
 
 /**
+ * Poll task status until completion and fetch the analysis result
+ * This is the critical missing piece - without it, uploads just hang!
+ */
+async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let pollCount = 0;
+    const maxPolls = 900; // 30 minutes max (2s interval)
+
+    const pollInterval = setInterval(async () => {
+      try {
+        pollCount++;
+        console.log(`[waitForAnalysisTask] Poll #${pollCount} for task ${taskId}`);
+
+        const response = await apiRequest('get', `/insights/task-status/${taskId}/`, undefined, true);
+        const statusData = response.data.data;
+        const status = statusData.status;
+
+        console.log(`[waitForAnalysisTask] Status: ${status}`);
+
+        if (status === 'COMPLETED' || status === 'SUCCESS') {
+          clearInterval(pollInterval);
+
+          // Fetch the full analysis data
+          const insightId = statusData.result?.insight_id;
+          if (insightId) {
+            const analysisRes = await apiRequest('get', `/feedback/analysis/${insightId}/`, undefined, true);
+            const analysisData = analysisRes.data?.data;
+
+            console.log(`[waitForAnalysisTask] Analysis loaded:`, insightId);
+            resolve({
+              id: insightId,
+              analysisData: analysisData,
+              taskId: taskId
+            });
+          } else {
+            resolve({
+              id: `analysis_${Date.now()}`,
+              analysisData: statusData.result,
+              taskId: taskId
+            });
+          }
+        } else if (status === 'FAILURE' || status === 'FAILED') {
+          clearInterval(pollInterval);
+          reject(new Error(statusData.error || 'Analysis failed'));
+        } else if (pollCount >= maxPolls) {
+          clearInterval(pollInterval);
+          reject(new Error('Analysis timeout'));
+        }
+      } catch (error) {
+        clearInterval(pollInterval);
+        reject(error);
+      }
+    }, 2000); // Poll every 2 seconds
+  });
+}
+
+/**
  * Normalize API response to expected frontend structure
  * The API can return data in many formats - handle them all
  */
@@ -537,10 +594,10 @@ export const selectCurrentTaskStatus = (state: RootState) => state.analysis.curr
 // Dummy actions for components that haven't been migrated yet
 export const clearAnalysisData = () => ({ type: 'analysis/clearAnalysisData' });
 export const resolveAnalyzingTask = () => ({ type: 'analysis/resolveAnalyzingTask' });
-export const prependToHistory = () => ({ type: 'analysis/prependToHistory' });
-export const setLoadedComments = () => ({ type: 'analysis/setLoadedComments' });
-export const setAnalysisData = () => ({ type: 'analysis/setAnalysisData' });
-export const setDeepAnalysis = () => ({ type: 'analysis/setDeepAnalysis' });
+export const prependToHistory = (entry: any) => ({ type: 'analysis/prependToHistory', payload: entry });
+export const setLoadedComments = (comments: string[]) => ({ type: 'analysis/setLoadedComments', payload: comments });
+export const setAnalysisData = (data: any) => ({ type: 'analysis/setAnalysisData', payload: data });
+export const setDeepAnalysis = (data: any) => ({ type: 'analysis/setDeepAnalysis', payload: data });
 export const removeFromHistory = () => ({ type: 'analysis/removeFromHistory' });
 export const clearError = () => ({ type: 'analysis/clearError' });
 export const setTaskIdForEntry = () => ({ type: 'analysis/setTaskIdForEntry' });
@@ -586,8 +643,14 @@ export const ingestFile = createAsyncThunk<
       throw new Error('No task ID received from server');
     }
 
-    // Return the response data (includes task_id, analysis_id, comments, etc.)
-    return data;
+    // Store comments if available
+    if (Array.isArray(data?.comments) && data.comments.length > 0) {
+      dispatch(setLoadedComments(data.comments));
+    }
+
+    // Poll until analysis completes
+    console.log('[ingestFile] Starting to poll for completion...');
+    return await waitForAnalysisTask(taskId, dispatch);
   } catch (err: any) {
     console.error('[ingestFile] Error:', err);
     let errorMessage = 'File ingestion failed. Please try again.';
