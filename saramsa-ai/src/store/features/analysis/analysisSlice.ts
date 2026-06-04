@@ -80,6 +80,42 @@ const initialState: AnalysisState = {
 };
 
 // ============================================================================
+// HELPERS
+// ============================================================================
+
+/**
+ * Normalize API response to expected frontend structure
+ * The API can return data in two formats:
+ * 1. New format: { id, analysisData: { overall, counts, features } }
+ * 2. Old format: { overall, counts, features } (at top level)
+ */
+function normalizeAnalysisData(input: any): AnalysisData {
+  if (!input) return input;
+
+  // If already in new format with analysisData nested, use as-is
+  if (input.analysisData) {
+    return input as AnalysisData;
+  }
+
+  // If in old format, wrap it under analysisData
+  if (input.overall || input.counts || input.features) {
+    return {
+      ...input,
+      analysisData: {
+        overall: input.overall || {},
+        counts: input.counts || {},
+        features: input.features || [],
+        positive_keywords: input.positive_keywords || [],
+        negative_keywords: input.negative_keywords || [],
+      }
+    } as AnalysisData;
+  }
+
+  // Otherwise return as-is
+  return input as AnalysisData;
+}
+
+// ============================================================================
 // ASYNC THUNKS
 // ============================================================================
 
@@ -365,14 +401,18 @@ const analysisSlice = createSlice({
 
     builder.addCase(fetchAnalysisById.fulfilled, (state, action) => {
       state.selectedAnalysisLoading = false;
-      state.selectedAnalysisData = action.payload;
+
+      // Normalize the data to ensure correct structure
+      const normalizedData = normalizeAnalysisData(action.payload);
+
+      state.selectedAnalysisData = normalizedData;
 
       // BACKWARD COMPATIBILITY - populate old fields for components not yet migrated
-      state.analysisData = action.payload;
-      state.deepAnalysis = action.payload?.userStories ?? null;
-      state.loadedComments = action.payload?.comments ?? null;
+      state.analysisData = normalizedData;
+      state.deepAnalysis = normalizedData?.userStories ?? null;
+      state.loadedComments = normalizedData?.comments ?? null;
 
-      console.log(`[fetchById.fulfilled] Loaded`, action.payload?.id);
+      console.log(`[fetchById.fulfilled] Loaded`, normalizedData?.id);
     });
 
     builder.addCase(fetchAnalysisById.rejected, (state, action) => {
