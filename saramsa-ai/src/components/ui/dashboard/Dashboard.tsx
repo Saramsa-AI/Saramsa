@@ -364,8 +364,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   }, [slackAccount]);
   // Derived loading states - use state machine instead of scattered flags
   const isTaskListLoading = useMemo(
-    () => historyLoading && analysisHistory.length === 0,
-    [historyLoading, analysisHistory.length]
+    () => historyLoading,  // Show loading whenever fetching, even if cached items exist
+    [historyLoading]
   );
   const isTaskViewLoading = useMemo(
     () => fetchingAnalysisById || isSwitchingAnalysis || isViewingActiveAnalysis,
