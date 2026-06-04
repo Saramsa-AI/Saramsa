@@ -443,6 +443,11 @@ const analysisSlice = createSlice({
       if (state.selectedAnalysisId === deletedId) {
         state.selectedAnalysisId = null;
         state.selectedAnalysisData = null;
+
+        // BACKWARD COMPATIBILITY - also clear old fields
+        state.analysisData = null;
+        state.deepAnalysis = null;
+        state.loadedComments = null;
       }
 
       console.log(`[delete.fulfilled] Deleted ${deletedId}`);
