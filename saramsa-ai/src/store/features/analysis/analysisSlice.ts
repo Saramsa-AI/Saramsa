@@ -593,7 +593,15 @@ export const deleteAnalysisRun = createAsyncThunk<
   'analysis/deleteAnalysisRun',
   async (analysisId, { rejectWithValue, dispatch, getState }) => {
     try {
-      const projectId = getState().analysis.projectId;
+      const state = getState();
+      const projectId = state.analysis.projectId;
+
+      console.log('[deleteAnalysisRun] State:', {
+        projectId,
+        analysisId,
+        fullState: state.analysis
+      });
+
       if (!projectId) {
         throw new Error('No project ID available');
       }

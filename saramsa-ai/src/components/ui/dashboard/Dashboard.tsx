@@ -808,10 +808,13 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   // Fetch analysis history when project changes
   useEffect(() => {
     const pid = currentProjectId || projectId || '';
+    console.log('[Dashboard] Project ID:', pid, { currentProjectId, projectId });
+
     if (!pid || lastHistoryProjectRef.current === pid) return;
     lastHistoryProjectRef.current = pid;
 
     // Set project ID in Redux state (needed for delete/rename operations)
+    console.log('[Dashboard] Setting project ID in Redux:', pid);
     dispatch(setProjectId(pid));
 
     // NEW API: fetchAnalysisHistory({ projectId })
