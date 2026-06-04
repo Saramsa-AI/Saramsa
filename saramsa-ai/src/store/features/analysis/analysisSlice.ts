@@ -692,7 +692,17 @@ export const ingestFile = createAsyncThunk<
 
     // Poll until analysis completes
     console.log('[ingestFile] Starting to poll for completion...');
-    return await waitForAnalysisTask(taskId, dispatch);
+    const result = await waitForAnalysisTask(taskId, dispatch);
+
+    // Refresh history after completion so new analysis appears in sidebar
+    const state = (dispatch as any).getState?.();
+    const projectId = state?.analysis?.projectId;
+    if (projectId) {
+      console.log('[ingestFile] Refreshing history after completion');
+      dispatch(fetchAnalysisHistory({ projectId }));
+    }
+
+    return result;
   } catch (err: any) {
     console.error('[ingestFile] Error:', err);
     let errorMessage = 'File ingestion failed. Please try again.';
