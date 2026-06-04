@@ -85,34 +85,46 @@ const initialState: AnalysisState = {
 
 /**
  * Normalize API response to expected frontend structure
- * The API can return data in two formats:
- * 1. New format: { id, analysisData: { overall, counts, features } }
- * 2. Old format: { overall, counts, features } (at top level)
+ * The API can return data in many formats - handle them all
  */
 function normalizeAnalysisData(input: any): AnalysisData {
   if (!input) return input;
 
-  // If already in new format with analysisData nested, use as-is
-  if (input.analysisData) {
-    return input as AnalysisData;
+  console.log('[normalizeAnalysisData] Input keys:', Object.keys(input));
+
+  // Extract the core analysis data from various possible structures
+  let analysisData = input.analysisData || input.analysis?.analysisData || input;
+
+  // If the data has overall/counts/features at top level, it needs wrapping
+  if (analysisData.overall || analysisData.counts || analysisData.features) {
+    // Already has the right inner structure, just make sure it's nested
+    if (!input.analysisData) {
+      analysisData = {
+        overall: analysisData.overall || {},
+        counts: analysisData.counts || {},
+        features: analysisData.features || [],
+        positive_keywords: analysisData.positive_keywords || [],
+        negative_keywords: analysisData.negative_keywords || [],
+      };
+    }
   }
 
-  // If in old format, wrap it under analysisData
-  if (input.overall || input.counts || input.features) {
-    return {
-      ...input,
-      analysisData: {
-        overall: input.overall || {},
-        counts: input.counts || {},
-        features: input.features || [],
-        positive_keywords: input.positive_keywords || [],
-        negative_keywords: input.negative_keywords || [],
-      }
-    } as AnalysisData;
-  }
+  // Build the normalized response
+  const normalized = {
+    id: input.id || input.analysis_id || input.analysisId,
+    projectId: input.projectId || input.project_id,
+    userId: input.userId || input.user_id,
+    createdAt: input.createdAt || input.created_at,
+    analysisType: input.analysisType || input.analysis_type || 'commentSentiment',
+    analysisData: analysisData,
+    userStories: input.userStories || input.user_stories,
+    comments: input.comments,
+    rawLlm: input.rawLlm || input.raw_llm,
+  } as AnalysisData;
 
-  // Otherwise return as-is
-  return input as AnalysisData;
+  console.log('[normalizeAnalysisData] Normalized ID:', normalized.id);
+
+  return normalized;
 }
 
 // ============================================================================
@@ -559,6 +571,20 @@ export const generateUserStories = createAsyncThunk('analysis/generateUserStorie
   console.warn('[DEPRECATED] generateUserStories called - needs migration');
   return null;
 });
+
+export const submitUserStories = createAsyncThunk('analysis/submitUserStories', async () => {
+  console.warn('[DEPRECATED] submitUserStories called - needs migration');
+  return null;
+});
+
+export const cancelAnalysisTask = createAsyncThunk('analysis/cancelAnalysisTask', async () => {
+  console.warn('[DEPRECATED] cancelAnalysisTask called - needs migration');
+  return null;
+});
+
+// Alias for backward compatibility
+export const renameAnalysisRun = renameAnalysis;
+export const deleteAnalysisRun = deleteAnalysis;
 
 // Dummy selectors that return safe defaults
 export const selectTaskState = () => null;
