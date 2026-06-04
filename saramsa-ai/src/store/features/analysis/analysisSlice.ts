@@ -464,6 +464,7 @@ export const setDeepAnalysis = () => ({ type: 'analysis/setDeepAnalysis' });
 export const removeFromHistory = () => ({ type: 'analysis/removeFromHistory' });
 export const clearError = () => ({ type: 'analysis/clearError' });
 export const setTaskIdForEntry = () => ({ type: 'analysis/setTaskIdForEntry' });
+export const replaceInHistory = () => ({ type: 'analysis/replaceInHistory' });
 
 // Dummy thunks
 export const resumeInFlightTask = createAsyncThunk('analysis/resumeInFlightTask', async () => {
@@ -488,6 +489,11 @@ export const ingestFile = createAsyncThunk('analysis/ingestFile', async () => {
 
 export const analyzeComments = createAsyncThunk('analysis/analyzeComments', async () => {
   console.warn('[DEPRECATED] analyzeComments called - use uploadAndAnalyze instead');
+  return null;
+});
+
+export const generateUserStories = createAsyncThunk('analysis/generateUserStories', async () => {
+  console.warn('[DEPRECATED] generateUserStories called - needs migration');
   return null;
 });
 

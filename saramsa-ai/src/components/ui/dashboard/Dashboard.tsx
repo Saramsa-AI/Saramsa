@@ -809,7 +809,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     const pid = currentProjectId || projectId || '';
     if (!pid || lastHistoryProjectRef.current === pid) return;
     lastHistoryProjectRef.current = pid;
-    dispatch(fetchAnalysisHistory(pid));
+
+    // NEW API: fetchAnalysisHistory({ projectId })
+    dispatch(fetchAnalysisHistory({ projectId: pid }));
   }, [currentProjectId, projectId, dispatch]);
 
   // Auto-cleanup: Remove stale "analyzing_" placeholders from history after fetch
@@ -862,7 +864,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
     (async () => {
       try {
-        const result = await dispatch(fetchAnalysisById(selectedAnalysisId)).unwrap();
+        // NEW API: fetchAnalysisById({ analysisId })
+        const result = await dispatch(fetchAnalysisById({ analysisId: selectedAnalysisId })).unwrap();
         // If the user switched again before this resolved, drop the result.
         if (controller.signal.aborted) return;
         if (result?.exists !== false && result?.analysis) {
