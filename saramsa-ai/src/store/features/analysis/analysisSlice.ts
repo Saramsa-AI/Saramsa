@@ -27,6 +27,7 @@ export interface AnalysisHistoryEntry {
   comments_count: number;
   positive_pct: number;
   status: string;  // 'analyzing' | 'completed' | 'cancelled'
+  display_number?: number;  // Permanent sequence number from backend
   name?: string;
   task_id?: string;
   file_name?: string;
