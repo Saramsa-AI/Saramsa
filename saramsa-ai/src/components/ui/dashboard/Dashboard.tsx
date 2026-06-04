@@ -18,6 +18,7 @@ import {
   clearAnalysisData,
   clearError,
   setSelectedAnalysisId,
+  setProjectId,
   prependToHistory,
   replaceInHistory,
   removeFromHistory,
@@ -809,6 +810,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     const pid = currentProjectId || projectId || '';
     if (!pid || lastHistoryProjectRef.current === pid) return;
     lastHistoryProjectRef.current = pid;
+
+    // Set project ID in Redux state (needed for delete/rename operations)
+    dispatch(setProjectId(pid));
 
     // NEW API: fetchAnalysisHistory({ projectId })
     dispatch(fetchAnalysisHistory({ projectId: pid }));

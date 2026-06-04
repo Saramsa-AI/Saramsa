@@ -582,9 +582,33 @@ export const cancelAnalysisTask = createAsyncThunk('analysis/cancelAnalysisTask'
   return null;
 });
 
-// Alias for backward compatibility
+// Backward compatibility wrappers
+// Old API: deleteAnalysisRun(id: string)
+// New API: deleteAnalysis({ analysisId, projectId })
+export const deleteAnalysisRun = createAsyncThunk<
+  { deletedId: string; projectId: string },
+  string,
+  { rejectValue: string; state: RootState }
+>(
+  'analysis/deleteAnalysisRun',
+  async (analysisId, { rejectWithValue, dispatch, getState }) => {
+    try {
+      const projectId = getState().analysis.projectId;
+      if (!projectId) {
+        throw new Error('No project ID available');
+      }
+
+      // Call the new delete function
+      const result = await dispatch(deleteAnalysis({ analysisId, projectId })).unwrap();
+      return result;
+    } catch (error: any) {
+      return rejectWithValue(error.message || 'Failed to delete analysis');
+    }
+  }
+);
+
+// Alias rename function (it has the same signature so simple alias works)
 export const renameAnalysisRun = renameAnalysis;
-export const deleteAnalysisRun = deleteAnalysis;
 
 // Dummy selectors that return safe defaults
 export const selectTaskState = () => null;
