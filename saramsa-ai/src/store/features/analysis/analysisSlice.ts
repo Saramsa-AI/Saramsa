@@ -87,16 +87,24 @@ export const fetchAnalysisHistory = createAsyncThunk<
     try {
       console.log(`[fetchHistory] Fetching for project: ${projectId}`);
 
-      const response = await apiRequest('POST', '/history/', { project_id: projectId });
+      // Use the correct endpoint from the old API
+      const response = await apiRequest('get', `/feedback/history/list/?project_id=${projectId}`, undefined, true);
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
+      const analyses: any[] = response.data?.data?.analyses ?? [];
+      console.log(`[fetchHistory] Received ${analyses.length} items`);
 
-      const data = await response.json();
-      console.log(`[fetchHistory] Received ${data.length} items`);
-
-      return data as AnalysisHistoryEntry[];
+      // Map to AnalysisHistoryEntry format
+      return analyses.map((a: any): AnalysisHistoryEntry => ({
+        id: a.id,
+        analysis_date: a.created_at ?? '',
+        comments_count: a.comments_count ?? 0,
+        positive_pct: a.positive_pct ?? 0,
+        status: a.status ?? 'completed',
+        display_number: a.display_number,
+        name: a.name,
+        task_id: a.task_id,
+        file_name: a.file_name,
+      }));
     } catch (error: any) {
       console.error('[fetchHistory] Error:', error);
       return rejectWithValue(error.message || 'Failed to fetch history');
@@ -117,13 +125,10 @@ export const fetchAnalysisById = createAsyncThunk<
     try {
       console.log(`[fetchById] Fetching analysis: ${analysisId}`);
 
-      const response = await apiRequest('POST', `/analyses/${analysisId}/`, {});
+      // Use the correct endpoint from the old API
+      const response = await apiRequest('get', `/feedback/analysis/${analysisId}/`, undefined, true);
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
+      const data = response.data?.data ?? response.data;
       console.log(`[fetchById] Loaded analysis:`, data.id);
 
       return data as AnalysisData;
@@ -148,11 +153,8 @@ export const deleteAnalysis = createAsyncThunk<
     try {
       console.log(`[delete] Deleting analysis: ${analysisId}`);
 
-      const response = await apiRequest('POST', `/analyses/${analysisId}/delete/`, {});
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
+      // Use the correct endpoint from the old API
+      await apiRequest('delete', `/feedback/analysis/${encodeURIComponent(analysisId)}/`, undefined, true);
 
       console.log(`[delete] Deleted successfully`);
 
