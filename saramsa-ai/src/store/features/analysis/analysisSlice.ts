@@ -767,11 +767,43 @@ export const deleteAnalysisRun = createAsyncThunk<
 // Alias rename function (it has the same signature so simple alias works)
 export const renameAnalysisRun = renameAnalysis;
 
-// Dummy selectors that return safe defaults
+// Real selectors for UI state
+export const selectIsProjectAnalyzing = (state: { analysis: AnalysisState }) => {
+  // Check if currently uploading or analyzing
+  const taskStatus = state.analysis.currentTaskStatus;
+  if (taskStatus === 'uploading' || taskStatus === 'analyzing') {
+    return true;
+  }
+
+  // Check if there are any "analyzing_" placeholders in history
+  const hasAnalyzingPlaceholder = state.analysis.analysisHistory.some(
+    entry => entry.id.startsWith('analyzing_') || entry.status === 'analyzing'
+  );
+
+  return hasAnalyzingPlaceholder;
+};
+
+export const selectIsViewingActiveAnalysis = (state: { analysis: AnalysisState }) => {
+  const selectedId = state.analysis.selectedAnalysisId;
+  if (!selectedId) return false;
+
+  // Check if selected item is an analyzing placeholder
+  return selectedId.startsWith('analyzing_');
+};
+
+export const selectAnalysisDisplayStatus = (state: { analysis: AnalysisState }, analysisId: string | null) => {
+  if (!analysisId) return '';
+
+  const taskStatus = state.analysis.currentTaskStatus;
+
+  if (taskStatus === 'uploading') return 'Uploading file...';
+  if (taskStatus === 'analyzing') return 'Analyzing feedback...';
+
+  return 'Processing...';
+};
+
+// Dummy selectors that aren't critical
 export const selectTaskState = () => null;
-export const selectAnalysisDisplayStatus = () => 'Loading...';
 export const selectAnalysisLifecycleState = () => 'idle';
 export const selectIsAnyAnalysisRunning = () => false;
-export const selectIsProjectAnalyzing = () => false;
-export const selectIsViewingActiveAnalysis = () => false;
 export const selectIsGeneratingWorkItems = () => false;
