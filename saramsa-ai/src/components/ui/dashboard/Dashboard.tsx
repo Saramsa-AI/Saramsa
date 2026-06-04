@@ -143,8 +143,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     fetchingAnalysisById,
   } = analysisState;
 
-  // Use filtered history to exclude items being deleted (prevents race condition)
-  const analysisHistory = useSelector(selectFilteredHistory);
+  // Use raw history - items stay visible until delete API succeeds
+  const analysisHistory = analysisState.analysisHistory;
 
   // NEW: Use selectors for derived state from state machine
   const currentTask = useSelector((state: RootState) =>

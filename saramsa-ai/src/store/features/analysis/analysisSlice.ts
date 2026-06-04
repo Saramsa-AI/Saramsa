@@ -1581,10 +1581,9 @@ const analysisSlice = createSlice({
       })
       .addCase(fetchAnalysisHistory.fulfilled, (state, action) => {
         state.historyLoading = false;
-        // Filter out items that are currently being deleted to prevent race condition
-        state.analysisHistory = action.payload
-          .slice(0, MAX_HISTORY_RUNS)
-          .filter(entry => !state.deletingIds.includes(entry.id));
+        // Replace history with backend data
+        // Items stay visible until backend confirms deletion
+        state.analysisHistory = action.payload.slice(0, MAX_HISTORY_RUNS);
       })
       .addCase(fetchAnalysisHistory.rejected, (state, action) => {
         state.historyLoading = false;
@@ -1604,20 +1603,12 @@ const analysisSlice = createSlice({
       })
       // Delete analysis run
       .addCase(deleteAnalysisRun.pending, (state, action) => {
-        // Add to deletingIds to prevent race conditions
-        const deletingId = action.meta.arg; // The ID being deleted
+        // Track deletion in progress - used to prevent selecting deleted items
+        const deletingId = action.meta.arg;
         if (!state.deletingIds.includes(deletingId)) {
           state.deletingIds.push(deletingId);
         }
-
-        // Clear center panel immediately if deleting the currently selected item
-        // This keeps sidebar and center panel in sync (both clear at the same time)
-        if (state.selectedAnalysisId === deletingId) {
-          state.selectedAnalysisId = null;
-          state.analysisData = null;
-          state.deepAnalysis = null;
-          state.loadedComments = null;
-        }
+        // Don't clear UI - let items stay visible until API confirms deletion
       })
       .addCase(deleteAnalysisRun.fulfilled, (state, action) => {
         const deletedId = action.payload;
