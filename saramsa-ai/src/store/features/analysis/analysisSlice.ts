@@ -1609,6 +1609,15 @@ const analysisSlice = createSlice({
         if (!state.deletingIds.includes(deletingId)) {
           state.deletingIds.push(deletingId);
         }
+
+        // Clear center panel immediately if deleting the currently selected item
+        // This keeps sidebar and center panel in sync (both clear at the same time)
+        if (state.selectedAnalysisId === deletingId) {
+          state.selectedAnalysisId = null;
+          state.analysisData = null;
+          state.deepAnalysis = null;
+          state.loadedComments = null;
+        }
       })
       .addCase(deleteAnalysisRun.fulfilled, (state, action) => {
         const deletedId = action.payload;
