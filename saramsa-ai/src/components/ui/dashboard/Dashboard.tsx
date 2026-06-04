@@ -45,6 +45,7 @@ import {
   selectIsViewingActiveAnalysis,
   selectAnalysisDisplayStatus,
   selectIsGeneratingWorkItems,
+  selectFilteredHistory,
 } from '../../../store/features/analysis/analysisSlice';
 import { fetchProjects } from '../../../store/features/projects/projectsSlice';
 import { fetchIntegrationAccounts } from '../../../store/features/integrations/integrationsSlice';
@@ -137,11 +138,13 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     loadedComments,
     latestAnalysis,
     projectContext,
-    analysisHistory,
     historyLoading,
     selectedAnalysisId,
     fetchingAnalysisById,
   } = analysisState;
+
+  // Use filtered history to exclude items being deleted (prevents race condition)
+  const analysisHistory = useSelector(selectFilteredHistory);
 
   // NEW: Use selectors for derived state from state machine
   const currentTask = useSelector((state: RootState) =>

@@ -1051,6 +1051,21 @@ const analysisSlice = createSlice({
             name: fileName || null,
           },
         };
+
+        // Add placeholder entry to history so it appears in sidebar immediately
+        state.analysisHistory.unshift({
+          id: analysisId,
+          analysis_date: new Date().toISOString(),
+          comments_count: action.meta.arg.comments.length,
+          positive_pct: 0,
+          status: HISTORY_STATUS.ANALYZING,
+          name: fileName || 'Analysis',
+          task_id: taskId,
+          file_name: fileName,
+        });
+
+        // Auto-select the new analysis to show loader in center panel
+        state.selectedAnalysisId = analysisId;
       })
       .addCase(analyzeComments.fulfilled, (state, action) => {
         state.loading = false;
@@ -1157,6 +1172,21 @@ const analysisSlice = createSlice({
             name: fileName || null,
           },
         };
+
+        // Add placeholder entry to history so it appears in sidebar immediately
+        state.analysisHistory.unshift({
+          id: analysisId,
+          analysis_date: new Date().toISOString(),
+          comments_count: 0,
+          positive_pct: 0,
+          status: HISTORY_STATUS.ANALYZING,
+          name: fileName,
+          task_id: taskId,
+          file_name: fileName,
+        });
+
+        // Auto-select the new analysis to show loader in center panel
+        state.selectedAnalysisId = analysisId;
       })
       .addCase(ingestFile.fulfilled, (state, action) => {
         state.loading = false;
