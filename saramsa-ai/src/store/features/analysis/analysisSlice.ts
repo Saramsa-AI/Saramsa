@@ -696,10 +696,10 @@ export const ingestFile = createAsyncThunk<
 
     // Refresh history after completion so new analysis appears in sidebar
     const state = (dispatch as any).getState?.();
-    const projectId = state?.analysis?.projectId;
-    if (projectId) {
+    const stateProjectId = state?.analysis?.projectId || projectId;
+    if (stateProjectId) {
       console.log('[ingestFile] Refreshing history after completion');
-      dispatch(fetchAnalysisHistory({ projectId }));
+      dispatch(fetchAnalysisHistory({ projectId: stateProjectId }));
     }
 
     return result;
