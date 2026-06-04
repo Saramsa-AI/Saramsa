@@ -449,6 +449,26 @@ const analysisSlice = createSlice({
       console.log(`[reset] Resetting all state`);
       return initialState;
     },
+
+    // BACKWARD COMPATIBILITY: Dashboard calls setAnalysisData after fetchAnalysisById
+    setAnalysisDataAction: (state, action: PayloadAction<any>) => {
+      console.log(`[setAnalysisData] Setting analysis data:`, action.payload?.id);
+      // Set both new and old fields for compatibility
+      state.selectedAnalysisData = action.payload;
+      state.analysisData = action.payload;
+    },
+
+    // BACKWARD COMPATIBILITY: Dashboard calls setDeepAnalysis for work items
+    setDeepAnalysisAction: (state, action: PayloadAction<any>) => {
+      console.log(`[setDeepAnalysis] Setting deep analysis`);
+      state.deepAnalysis = action.payload;
+    },
+
+    // BACKWARD COMPATIBILITY: Dashboard calls setLoadedComments
+    setLoadedCommentsAction: (state, action: PayloadAction<string[] | null>) => {
+      console.log(`[setLoadedComments] Setting ${action.payload?.length || 0} comments`);
+      state.loadedComments = action.payload;
+    },
   },
 
   extraReducers: (builder) => {
@@ -611,6 +631,9 @@ export const {
   prependToHistoryAction,
   removeFromHistoryAction,
   resetAnalysisState,
+  setAnalysisDataAction,
+  setDeepAnalysisAction,
+  setLoadedCommentsAction,
 } = analysisSlice.actions;
 
 export default analysisSlice.reducer;
@@ -634,13 +657,13 @@ export const selectCurrentTaskStatus = (state: RootState) => state.analysis.curr
 // Backward compatibility - map old action names to new ones
 export const prependToHistory = prependToHistoryAction;
 export const removeFromHistory = removeFromHistoryAction;
+export const setAnalysisData = setAnalysisDataAction;
+export const setDeepAnalysis = setDeepAnalysisAction;
+export const setLoadedComments = setLoadedCommentsAction;
 
-// Dummy actions for components that haven't been migrated yet
+// Dummy actions for components that haven't been migrated yet (no-ops)
 export const clearAnalysisData = () => ({ type: 'analysis/clearAnalysisData' });
 export const resolveAnalyzingTask = () => ({ type: 'analysis/resolveAnalyzingTask' });
-export const setLoadedComments = (comments: string[]) => ({ type: 'analysis/setLoadedComments', payload: comments });
-export const setAnalysisData = (data: any) => ({ type: 'analysis/setAnalysisData', payload: data });
-export const setDeepAnalysis = (data: any) => ({ type: 'analysis/setDeepAnalysis', payload: data });
 export const clearError = () => ({ type: 'analysis/clearError' });
 export const setTaskIdForEntry = () => ({ type: 'analysis/setTaskIdForEntry' });
 export const replaceInHistory = () => ({ type: 'analysis/replaceInHistory' });
