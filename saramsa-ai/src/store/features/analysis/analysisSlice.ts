@@ -562,9 +562,48 @@ export const getLatestAnalysis = createAsyncThunk('analysis/getLatestAnalysis', 
   return null;
 });
 
-export const ingestFile = createAsyncThunk('analysis/ingestFile', async () => {
-  console.warn('[DEPRECATED] ingestFile called - use uploadAndAnalyze instead');
-  return null;
+export const ingestFile = createAsyncThunk<
+  any,
+  { file: File; projectId?: string },
+  { rejectValue: string }
+>('analysis/ingestFile', async ({ file, projectId }, { dispatch, rejectWithValue }) => {
+  try {
+    console.log('[ingestFile] Starting upload:', file.name);
+
+    const form = new FormData();
+    form.append('file', file);
+    if (projectId) {
+      form.append('project_id', projectId);
+    }
+
+    const response = await apiRequest('post', '/insights/ingest/', form, true, true);
+    const data = response.data.data;
+    const taskId = data?.task_id;
+
+    console.log('[ingestFile] Upload complete, task ID:', taskId);
+
+    if (!taskId) {
+      throw new Error('No task ID received from server');
+    }
+
+    // Return the response data (includes task_id, analysis_id, comments, etc.)
+    return data;
+  } catch (err: any) {
+    console.error('[ingestFile] Error:', err);
+    let errorMessage = 'File ingestion failed. Please try again.';
+    if (err.response?.status === 401) {
+      errorMessage = 'Authentication required. Please login again.';
+    } else if (err.response?.status === 400) {
+      errorMessage = err.response?.data?.detail || 'Invalid file.';
+    } else if (err.response?.status === 503) {
+      errorMessage = err.response?.data?.detail || 'Analysis service unavailable.';
+    } else if (err.response?.status >= 500) {
+      errorMessage = 'Server error. Please try again later.';
+    } else if (err.message) {
+      errorMessage = err.message;
+    }
+    return rejectWithValue(errorMessage);
+  }
 });
 
 export const analyzeComments = createAsyncThunk('analysis/analyzeComments', async () => {
