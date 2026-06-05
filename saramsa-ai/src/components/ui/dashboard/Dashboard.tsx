@@ -1887,7 +1887,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
   const handleRunRename = async (id: string, name: string) => {
     try {
-      await dispatch(renameAnalysisRun({ id, name })).unwrap();
+      await dispatch(renameAnalysisRun({ analysisId: id, newName: name })).unwrap();
     } catch (err: any) {
       console.error('Failed to rename analysis run:', err);
       alert(typeof err === 'string' ? err : 'Failed to rename analysis run.');
