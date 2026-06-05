@@ -832,7 +832,7 @@ export const deleteAnalysisRun = createAsyncThunk<
 export const renameAnalysisRun = renameAnalysis;
 
 // Real selectors for UI state
-export const selectIsProjectAnalyzing = (state: { analysis: AnalysisState }) => {
+export const selectIsProjectAnalyzing = (state: { analysis: AnalysisState }, _projectId?: string | null) => {
   // Check if currently uploading or analyzing
   const taskStatus = state.analysis.currentTaskStatus;
   if (taskStatus === 'uploading' || taskStatus === 'analyzing') {
@@ -870,4 +870,4 @@ export const selectAnalysisDisplayStatus = (state: { analysis: AnalysisState }, 
 export const selectTaskState = (_state: { analysis: AnalysisState }, _analysisId: string | null) => null;
 export const selectAnalysisLifecycleState = (_state: { analysis: AnalysisState }, _analysisId: string | null) => 'idle';
 export const selectIsAnyAnalysisRunning = (_state: { analysis: AnalysisState }) => false;
-export const selectIsGeneratingWorkItems = () => false;
+export const selectIsGeneratingWorkItems = (_state?: { analysis: AnalysisState }) => false;
