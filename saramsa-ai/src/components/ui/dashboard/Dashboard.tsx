@@ -136,7 +136,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     selectedAnalysisLoading: loading,
     selectedAnalysisError: error,
     loadedComments,
-    projectId,
+    // projectId - not used, gets overridden by localStorage version below
     historyLoading,
     selectedAnalysisId,
     selectedAnalysisData: latestAnalysis, // Rename for backward compatibility
