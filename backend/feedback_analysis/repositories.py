@@ -48,6 +48,7 @@ def _doc_from_analysis(obj: Analysis) -> Dict[str, Any]:
             "type": obj.type,
             "analysis_type": obj.analysis_type,
             "quarter": obj.quarter,
+            "display_number": obj.display_number,  # Permanent sequence number for UI
             "result": obj.result or {},
             "comments": obj.comments or [],
             "dimensions": obj.dimensions or [],

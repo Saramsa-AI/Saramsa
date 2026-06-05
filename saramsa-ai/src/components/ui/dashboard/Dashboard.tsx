@@ -18,6 +18,7 @@ import {
   clearAnalysisData,
   clearError,
   setSelectedAnalysisId,
+  setProjectId,
   prependToHistory,
   replaceInHistory,
   removeFromHistory,
@@ -45,6 +46,7 @@ import {
   selectIsViewingActiveAnalysis,
   selectAnalysisDisplayStatus,
   selectIsGeneratingWorkItems,
+  selectFilteredHistory,
 } from '../../../store/features/analysis/analysisSlice';
 import { fetchProjects } from '../../../store/features/projects/projectsSlice';
 import { fetchIntegrationAccounts } from '../../../store/features/integrations/integrationsSlice';
@@ -116,6 +118,18 @@ function validateSelectedFile(file: File): { isValid: boolean; error?: string } 
 
 export function DashboardComponent({ data, onProjectSelect, initialProjectId, initialSelectedAnalysisId, skipBootstrapFetches = false }: DashboardProps) {
   const dispatch = useDispatch<AppDispatch>();
+
+  // Define state variables FIRST before using them in selectors
+  const [activeView, setActiveView] = useState<'dashboard' | 'user-stories'>('dashboard');
+  const [topFile, setTopFile] = useState<File | null>(null);
+  const [topError, setTopError] = useState<string | null>(null);
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
+  const [editedKeywords, setEditedKeywords] = useState<{ [key: string]: string[] }>({});
+  const [currentProjectId, setCurrentProjectId] = useState<string>("");
+  const [personalProjectId, setPersonalProjectId] = useState<string>('');
+  const [isSwitchingAnalysis, setIsSwitchingAnalysis] = useState<boolean>(false);
+
+  // NOW we can use Redux selectors (they may depend on state variables above)
   const analysisState = useSelector((state: RootState) => state.analysis);
   const {
     analysisData,
@@ -125,11 +139,13 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     loadedComments,
     latestAnalysis,
     projectContext,
-    analysisHistory,
     historyLoading,
     selectedAnalysisId,
     fetchingAnalysisById,
   } = analysisState;
+
+  // Use raw history - items stay visible until delete API succeeds
+  const analysisHistory = analysisState.analysisHistory;
 
   // NEW: Use selectors for derived state from state machine
   const currentTask = useSelector((state: RootState) =>
@@ -153,7 +169,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const isGeneratingWorkItems = useSelector((state: RootState) =>
     selectIsGeneratingWorkItems(state)
   );
-  
+
   const { projects, loading: projectsLoading } = useSelector((state: RootState) => state.projects);
   const { accounts: integrationAccounts, loading: integrationsLoading } = useSelector((state: RootState) => state.integrations);
   const { user } = useSelector((state: RootState) => state.auth);
@@ -161,17 +177,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     currentProjectUserStories,
     loading: userStoriesLoading,
   } = useSelector((state: RootState) => state.userStories);
-  
-  const [activeView, setActiveView] = useState<'dashboard' | 'user-stories'>('dashboard');
-  const [topFile, setTopFile] = useState<File | null>(null);
- 
-  const [topError, setTopError] = useState<string | null>(null);
-  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
-  const [editedKeywords, setEditedKeywords] = useState<{ [key: string]: string[] }>({});
-  const [currentProjectId, setCurrentProjectId] = useState<string>("");
-  const [personalProjectId, setPersonalProjectId] = useState<string>('');
-  // REMOVED: isGeneratingUserStories - now tracked in Redux state machine via selectIsGeneratingWorkItems
-  const [isSwitchingAnalysis, setIsSwitchingAnalysis] = useState<boolean>(false);
 
   // Declare all refs at the top to prevent recreation on every render
   const didInitRef = useRef(false);
@@ -360,12 +365,12 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   }, [slackAccount]);
   // Derived loading states - use state machine instead of scattered flags
   const isTaskListLoading = useMemo(
-    () => historyLoading && analysisHistory.length === 0,
-    [historyLoading, analysisHistory.length]
+    () => historyLoading,  // Show loading whenever fetching, even if cached items exist
+    [historyLoading]
   );
   const isTaskViewLoading = useMemo(
-    () => fetchingAnalysisById || isSwitchingAnalysis,
-    [fetchingAnalysisById, isSwitchingAnalysis]
+    () => fetchingAnalysisById || isSwitchingAnalysis || isViewingActiveAnalysis,
+    [fetchingAnalysisById, isSwitchingAnalysis, isViewingActiveAnalysis]
   );
 
   const workItemsPanelLoading = useMemo(
@@ -789,6 +794,13 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     if (skipBootstrapFetches) return;
     if (didInitRef.current) return;
     didInitRef.current = true;
+
+    // Clear history ref to force fresh fetch (clears stale data from cache)
+    lastHistoryProjectRef.current = null;
+
+    // Clear selected analysis to prevent showing stale data during history load
+    dispatch(setSelectedAnalysisId(null));
+
     dispatch(fetchProjects());
     dispatch(fetchIntegrationAccounts());
   }, [dispatch, skipBootstrapFetches]);
@@ -796,9 +808,17 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   // Fetch analysis history when project changes
   useEffect(() => {
     const pid = currentProjectId || projectId || '';
+    console.log('[Dashboard] Project ID:', pid, { currentProjectId, projectId });
+
     if (!pid || lastHistoryProjectRef.current === pid) return;
     lastHistoryProjectRef.current = pid;
-    dispatch(fetchAnalysisHistory(pid));
+
+    // Set project ID in Redux state (needed for delete/rename operations)
+    console.log('[Dashboard] Setting project ID in Redux:', pid);
+    dispatch(setProjectId(pid));
+
+    // NEW API: fetchAnalysisHistory({ projectId })
+    dispatch(fetchAnalysisHistory({ projectId: pid }));
   }, [currentProjectId, projectId, dispatch]);
 
   // Load full analysis when a historical run is selected
@@ -834,22 +854,19 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
     (async () => {
       try {
-        const result = await dispatch(fetchAnalysisById(selectedAnalysisId)).unwrap();
+        // NEW API: fetchAnalysisById({ analysisId })
+        const result = await dispatch(fetchAnalysisById({ analysisId: selectedAnalysisId })).unwrap();
         // If the user switched again before this resolved, drop the result.
         if (controller.signal.aborted) return;
         if (result?.exists !== false && result?.analysis) {
           const a = result.analysis;
-          if (a.analysisData) {
-            dispatch(setAnalysisData(a));
-            dispatch(setDeepAnalysis(a.userStories ? a.userStories : null));
-          } else {
-            dispatch(setAnalysisData(normalizeAnalysis(a.result ?? a)));
-            dispatch(setDeepAnalysis(a.userStories ?? null));
-          }
+          // ALWAYS normalize to extract work_items from pipeline_work_items!
+          dispatch(setAnalysisData(normalizeAnalysis(a)));
+          // setAnalysisDataAction now handles deepAnalysis from work_items
         } else if (result?.analysisData || result?.id) {
           // Direct analysis object returned
-          dispatch(setAnalysisData(result.analysisData ? result : normalizeAnalysis(result)));
-          dispatch(setDeepAnalysis(result.userStories ?? null));
+          dispatch(setAnalysisData(normalizeAnalysis(result)));
+          // setAnalysisDataAction now handles deepAnalysis from work_items
         }
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -1671,6 +1688,16 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         narration: input.narration ?? input.analysisData.narration ?? null,
         work_item_candidates:
           input.work_item_candidates ?? input.analysisData.work_item_candidates ?? null,
+        // CRITICAL: Extract final work items (not just candidates!) and add id field
+        work_items: (input.work_items ?? input.pipeline_work_items ?? []).map((item: any) => {
+          const workItem = {
+            ...item,
+            id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
+          };
+          console.log(`[normalizeAnalysis] Work item ID: ${workItem.id}, Title: ${workItem.title?.substring(0, 30)}`);
+          return workItem;
+        }),
+        userStories: input.userStories ?? input.user_stories ?? null,
       } as AnalysisData;
 
       return normalized;
@@ -1718,6 +1745,16 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         // Cache-priming fields for the user-story-creation endpoint (see other branch).
         narration: input.narration ?? null,
         work_item_candidates: input.work_item_candidates ?? null,
+        // CRITICAL: Extract final work items (not just candidates!) and add id field
+        work_items: (input.work_items ?? input.pipeline_work_items ?? []).map((item: any) => {
+          const workItem = {
+            ...item,
+            id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
+          };
+          console.log(`[normalizeAnalysis] Work item ID: ${workItem.id}, Title: ${workItem.title?.substring(0, 30)}`);
+          return workItem;
+        }),
+        userStories: input.userStories ?? input.user_stories ?? null,
       } as AnalysisData;
 
       return normalized;

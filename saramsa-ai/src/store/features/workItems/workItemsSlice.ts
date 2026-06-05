@@ -44,6 +44,7 @@ interface WorkItemsState {
   loading: boolean;
   error: string | null;
   selectedItem: ActionItem | Feature | null;
+  deletedWorkItemIds: string[];  // Track permanently deleted pipeline work items
 }
 
 const initialState: WorkItemsState = {
@@ -53,6 +54,7 @@ const initialState: WorkItemsState = {
   loading: false,
   error: null,
   selectedItem: null,
+  deletedWorkItemIds: [],
 };
 
 const workItemsSlice = createSlice({
@@ -70,6 +72,10 @@ const workItemsSlice = createSlice({
     },
     removeActionItem: (state, action: PayloadAction<string>) => {
       state.actionItems = state.actionItems.filter(item => item.id !== action.payload);
+      // Also mark as permanently deleted so it doesn't reappear on refresh
+      if (!state.deletedWorkItemIds.includes(action.payload)) {
+        state.deletedWorkItemIds.push(action.payload);
+      }
     },
     addFeature: (state, action: PayloadAction<Feature>) => {
       state.features.push(action.payload);

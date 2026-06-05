@@ -17,6 +17,7 @@ class Analysis(TimestampedModel):
     type = models.CharField(max_length=64, default="analysis", db_index=True)
     analysis_type = models.CharField(max_length=64, blank=True, default="", db_index=True)
     quarter = models.CharField(max_length=32, blank=True, default="", db_index=True)
+    display_number = models.IntegerField(null=True, blank=True, db_index=True)  # Permanent sequence number for UI display
     result = models.JSONField(default=dict, blank=True)
     comments = models.JSONField(default=list, blank=True)
     dimensions = models.JSONField(default=list, blank=True)
@@ -28,7 +29,17 @@ class Analysis(TimestampedModel):
             models.Index(fields=["project", "created_at"]),
             models.Index(fields=["user", "created_at"]),
             models.Index(fields=["type", "created_at"]),
+            models.Index(fields=["project", "display_number"]),
         ]
+
+    def save(self, *args, **kwargs):
+        # Auto-assign next display number if not set
+        if self.display_number is None and self.project:
+            max_num = Analysis.objects.filter(project=self.project).aggregate(
+                models.Max('display_number')
+            )['display_number__max']
+            self.display_number = (max_num or 0) + 1
+        super().save(*args, **kwargs)
 
 
 class Upload(TimestampedModel):
@@ -63,10 +74,23 @@ class Insight(TimestampedModel):
     type = models.CharField(max_length=64, default="insight", db_index=True)
     analysis_type = models.CharField(max_length=64, blank=True, default="", db_index=True)
     analysis_date = models.DateTimeField(null=True, blank=True, db_index=True)
+    display_number = models.IntegerField(null=True, blank=True, db_index=True)  # Permanent sequence number for UI display
     payload = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = "insights"
+        indexes = [
+            models.Index(fields=["project", "display_number"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        # Auto-assign next display number if not set
+        if self.display_number is None and self.project:
+            max_num = Insight.objects.filter(project=self.project).aggregate(
+                models.Max('display_number')
+            )['display_number__max']
+            self.display_number = (max_num or 0) + 1
+        super().save(*args, **kwargs)
 
 
 class Taxonomy(TimestampedModel):

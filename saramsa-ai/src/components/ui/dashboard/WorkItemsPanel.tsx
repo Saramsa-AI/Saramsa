@@ -306,9 +306,8 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
               const shouldShowUserStories = (hasValidDeepAnalysis && hasWorkItems) || hasUserStories;
 
               return shouldShowUserStories ? (
-                <UserStoryList
-                  key={`user-stories-${deepAnalysis?.id || currentProjectUserStories?.[0]?.id || 'default'}`}
-                  userStories={hasWorkItems ? [{
+                (() => {
+                  const userStoriesToPass = hasWorkItems ? [{
                     id: deepAnalysis.id,
                     type: deepAnalysis.type || 'user_story',
                     userId: deepAnalysis.userId,
@@ -319,17 +318,25 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
                     summary: deepAnalysis.summary,
                     generated_at: deepAnalysis.generated_at,
                     comments_count: deepAnalysis.comments_count || 0,
-                  }] : (currentProjectUserStories ?? undefined)}
-                  platform="azure"
-                  projectId={currentProjectId}
-                />
+                  }] : (currentProjectUserStories ?? undefined);
+                  console.log('[WorkItemsPanel] Passing to UserStoryList:', userStoriesToPass?.[0]?.work_items?.length, 'work items');
+                  console.log('[WorkItemsPanel] Work item IDs:', userStoriesToPass?.[0]?.work_items?.map((wi: any) => wi.id));
+                  return (
+                    <UserStoryList
+                      key={`user-stories-${deepAnalysis?.id || currentProjectUserStories?.[0]?.id || 'default'}`}
+                      userStories={userStoriesToPass}
+                      platform="azure"
+                      projectId={currentProjectId}
+                    />
+                  );
+                })()
               ) : (
                 <div className="text-center py-8">
                   <p className="text-muted-foreground">
                     No deep analysis data available. Please upload feedback data to generate user stories.
                   </p>
                 </div>
-              );
+              )
             })()
           )}
         </div>

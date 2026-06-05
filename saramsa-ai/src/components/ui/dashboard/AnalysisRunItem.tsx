@@ -54,8 +54,8 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
       /\butc\b/i.test(cleaned) ||
       /^\d{4}-\d{2}-\d{2}/.test(cleaned);
     if (looksAutoRun) {
-      // Use reverse index so newest = highest number
-      const number = totalCount != null ? totalCount - index : index + 1;
+      // Use permanent display_number from backend (never changes, even after deletes)
+      const number = entry.display_number ?? (totalCount != null ? totalCount - index : index + 1);
       return `Feedback Review #${number}`;
     }
     return cleaned;
@@ -214,7 +214,7 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
       {/* Stats row */}
       <div className="flex items-center gap-3 pl-4 text-xs text-muted-foreground">
         {isPending ? (
-          <span className="text-amber-600/70 dark:text-amber-400/70">Processing feedback data...</span>
+          <span className="text-amber-600/70 dark:text-amber-400/70">{displayStatus}</span>
         ) : (
           <></>
         )}
