@@ -731,6 +731,12 @@ export const ingestFile = createAsyncThunk<
       console.log('[ingestFile] Refreshing history after completion');
       await dispatch(fetchAnalysisHistory({ projectId: stateProjectId })).unwrap();
       console.log('[ingestFile] History refreshed successfully');
+
+      // Auto-select the new analysis so center panel displays it
+      if (result?.id) {
+        console.log('[ingestFile] Auto-selecting new analysis:', result.id);
+        dispatch(setSelectedAnalysisId(result.id));
+      }
     }
 
     return result;
