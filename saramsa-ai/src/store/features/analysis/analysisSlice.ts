@@ -148,6 +148,7 @@ function normalizeAnalysisData(input: any): AnalysisData {
   if (!input) return input;
 
   console.log('[normalizeAnalysisData] Input keys:', Object.keys(input));
+  console.log('[normalizeAnalysisData] Full input:', input);
 
   // Extract the core analysis data from various possible structures
   let analysisData = input.analysisData || input.analysis?.analysisData || input;
@@ -246,9 +247,15 @@ export const fetchAnalysisById = createAsyncThunk<
       const response = await apiRequest('get', `/feedback/analysis/${analysisId}/`, undefined, true);
 
       const data = response.data?.data ?? response.data;
-      console.log(`[fetchById] Loaded analysis:`, data.id);
+      console.log(`[fetchById] RAW response.data:`, response.data);
+      console.log(`[fetchById] Extracted data:`, data);
 
-      return data as AnalysisData;
+      // CRITICAL: API returns {exists, analysis} - extract the analysis object!
+      const analysisData = data.analysis ?? data;
+      console.log(`[fetchById] Analysis object:`, analysisData);
+      console.log(`[fetchById] Loaded analysis ID:`, analysisData.id);
+
+      return analysisData as AnalysisData;
     } catch (error: any) {
       console.error('[fetchById] Error:', error);
       return rejectWithValue(error.message || 'Analysis not found');
