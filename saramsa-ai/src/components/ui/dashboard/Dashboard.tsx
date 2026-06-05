@@ -1692,6 +1692,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         narration: input.narration ?? input.analysisData.narration ?? null,
         work_item_candidates:
           input.work_item_candidates ?? input.analysisData.work_item_candidates ?? null,
+        // CRITICAL: Extract final work items (not just candidates!)
+        work_items: input.work_items ?? input.pipeline_work_items ?? null,
+        userStories: input.userStories ?? input.user_stories ?? null,
       } as AnalysisData;
 
       return normalized;
@@ -1739,6 +1742,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         // Cache-priming fields for the user-story-creation endpoint (see other branch).
         narration: input.narration ?? null,
         work_item_candidates: input.work_item_candidates ?? null,
+        // CRITICAL: Extract final work items (not just candidates!)
+        work_items: input.work_items ?? input.pipeline_work_items ?? null,
+        userStories: input.userStories ?? input.user_stories ?? null,
       } as AnalysisData;
 
       return normalized;
