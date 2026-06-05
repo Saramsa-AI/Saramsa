@@ -139,14 +139,15 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     // projectId - not used, gets overridden by localStorage version below
     historyLoading,
     selectedAnalysisId,
-    selectedAnalysisData: latestAnalysis, // Rename for backward compatibility
+    // selectedAnalysisData - not renaming, doesn't match expected structure
   } = analysisState;
 
   // fetchingAnalysisById is same as selectedAnalysisLoading
   const fetchingAnalysisById = loading;
 
-  // projectContext is not in state - create empty object for backward compatibility
+  // Backward compatibility stubs - these don't exist in new state
   const projectContext = null;
+  const latestAnalysis = null;
 
   // Use raw history - items stay visible until delete API succeeds
   const analysisHistory = analysisState.analysisHistory;
