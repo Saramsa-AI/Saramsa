@@ -193,7 +193,7 @@ export function SlackChannelPanel({
         let loaded = false;
         for (let attempt = 0; attempt < 5; attempt += 1) {
           try {
-            await dispatch(fetchAnalysisById(newInsightId)).unwrap();
+            await dispatch(fetchAnalysisById({ analysisId: newInsightId })).unwrap();
             loaded = true;
             break;
           } catch {
