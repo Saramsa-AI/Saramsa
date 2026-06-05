@@ -133,15 +133,17 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const {
     analysisData,
     deepAnalysis,
-    loading,
-    error,
+    selectedAnalysisLoading: loading,
+    selectedAnalysisError: error,
     loadedComments,
-    latestAnalysis,
-    projectContext,
+    projectId: projectContext, // Rename projectId to projectContext for backward compatibility
     historyLoading,
     selectedAnalysisId,
-    fetchingAnalysisById,
+    selectedAnalysisData: latestAnalysis, // Rename for backward compatibility
   } = analysisState;
+
+  // fetchingAnalysisById is same as selectedAnalysisLoading
+  const fetchingAnalysisById = loading;
 
   // Use raw history - items stay visible until delete API succeeds
   const analysisHistory = analysisState.analysisHistory;
