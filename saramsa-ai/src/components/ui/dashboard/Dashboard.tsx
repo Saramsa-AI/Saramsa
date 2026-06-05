@@ -136,7 +136,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     selectedAnalysisLoading: loading,
     selectedAnalysisError: error,
     loadedComments,
-    projectId: projectContext, // Rename projectId to projectContext for backward compatibility
+    projectId,
     historyLoading,
     selectedAnalysisId,
     selectedAnalysisData: latestAnalysis, // Rename for backward compatibility
@@ -144,6 +144,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
   // fetchingAnalysisById is same as selectedAnalysisLoading
   const fetchingAnalysisById = loading;
+
+  // projectContext is not in state - create empty object for backward compatibility
+  const projectContext = null;
 
   // Use raw history - items stay visible until delete API succeeds
   const analysisHistory = analysisState.analysisHistory;
