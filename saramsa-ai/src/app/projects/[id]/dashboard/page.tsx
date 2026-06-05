@@ -29,7 +29,7 @@ export default function ProjectDashboardPage() {
   const { projects, loading: projectsLoading } = useSelector(
     (state: RootState) => state.projects
   );
-  const { loading: analysisLoading } = useSelector(
+  const { historyLoading: analysisLoading } = useSelector(
     (state: RootState) => state.analysis
   );
 
