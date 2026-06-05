@@ -307,6 +307,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     })();
   }, [currentProjectId, selectedAnalysisId, dispatch]);
   useEffect(() => {
+    // DEPRECATED: projectContext is not in Redux state anymore
+    // This code was relying on projectContext.project_id and projectContext.is_draft
+    // which don't exist. Commenting out for now.
+    /*
     const contextProjectId = projectContext?.project_id;
     if (!contextProjectId) return;
 
@@ -317,6 +321,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     if (!currentProjectId) {
       setCurrentProjectId(contextProjectId);
     }
+    */
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('project_id', contextProjectId);
