@@ -125,7 +125,7 @@ export function SlackChannelPanel({
     const intervalMs = 2000;
 
     while (Date.now() - startedAt < timeoutMs) {
-      const payload = await dispatch(pollTaskStatus({ taskId })).unwrap();
+      const payload: any = await dispatch(pollTaskStatus({ taskId })).unwrap();
       const status = payload?.status;
       if (status === "SUCCESS" || status === "PARTIAL") {
         return { ok: true, result: payload?.result };
