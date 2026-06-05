@@ -46,7 +46,6 @@ import {
   selectIsViewingActiveAnalysis,
   selectAnalysisDisplayStatus,
   selectIsGeneratingWorkItems,
-  selectFilteredHistory,
 } from '../../../store/features/analysis/analysisSlice';
 import { fetchProjects } from '../../../store/features/projects/projectsSlice';
 import { fetchIntegrationAccounts } from '../../../store/features/integrations/integrationsSlice';
