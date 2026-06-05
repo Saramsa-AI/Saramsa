@@ -175,11 +175,13 @@ function normalizeAnalysisData(input: any): AnalysisData {
     analysisType: input.analysisType || input.analysis_type || 'commentSentiment',
     analysisData: analysisData,
     userStories: input.userStories || input.user_stories,
+    work_items: input.work_items || input.pipeline_work_items,  // CRITICAL: Extract work items!
     comments: input.comments,
     rawLlm: input.rawLlm || input.raw_llm,
   } as AnalysisData;
 
   console.log('[normalizeAnalysisData] Normalized ID:', normalized.id);
+  console.log('[normalizeAnalysisData] Work items count:', normalized.work_items?.length || 0);
 
   return normalized;
 }
