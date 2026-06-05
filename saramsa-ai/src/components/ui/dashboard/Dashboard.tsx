@@ -862,15 +862,15 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           const a = result.analysis;
           if (a.analysisData) {
             dispatch(setAnalysisData(a));
-            dispatch(setDeepAnalysis(a.userStories ? a.userStories : null));
+            // setAnalysisDataAction now handles deepAnalysis from work_items
           } else {
             dispatch(setAnalysisData(normalizeAnalysis(a.result ?? a)));
-            dispatch(setDeepAnalysis(a.userStories ?? null));
+            // setAnalysisDataAction now handles deepAnalysis from work_items
           }
         } else if (result?.analysisData || result?.id) {
           // Direct analysis object returned
           dispatch(setAnalysisData(result.analysisData ? result : normalizeAnalysis(result)));
-          dispatch(setDeepAnalysis(result.userStories ?? null));
+          // setAnalysisDataAction now handles deepAnalysis from work_items
         }
       } catch (error) {
         if (controller.signal.aborted) return;
