@@ -454,15 +454,15 @@ const analysisSlice = createSlice({
     setAnalysisDataAction: (state, action: PayloadAction<any>) => {
       console.log(`[setAnalysisData] Setting analysis data:`, action.payload?.id);
 
-      // CRITICAL: Dashboard might pass raw API data OR already-normalized data
-      // Always normalize to ensure correct structure
-      const normalizedData = action.payload ? normalizeAnalysisData(action.payload) : null;
+      // Dashboard already normalizes data before calling this
+      // Don't normalize again - just store it
+      const data = action.payload;
 
       // Set both new and old fields for compatibility
-      state.selectedAnalysisData = normalizedData;
-      state.analysisData = normalizedData;
-      state.deepAnalysis = normalizedData?.userStories ?? null;
-      state.loadedComments = normalizedData?.comments ?? null;
+      state.selectedAnalysisData = data;
+      state.analysisData = data;
+      state.deepAnalysis = data?.userStories ?? null;
+      state.loadedComments = data?.comments ?? null;
     },
 
     // BACKWARD COMPATIBILITY: Dashboard calls setDeepAnalysis for work items

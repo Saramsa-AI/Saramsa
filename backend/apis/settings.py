@@ -455,7 +455,7 @@ REST_FRAMEWORK = {
         'user': os.getenv('THROTTLE_RATE_USER', '120/minute'),
         'anon': os.getenv('THROTTLE_RATE_ANON', '30/minute'),
         'analysis': os.getenv('THROTTLE_RATE_ANALYSIS', '30/hour'),
-        'upload': os.getenv('THROTTLE_RATE_UPLOAD', '60/hour'),
+        'upload': os.getenv('THROTTLE_RATE_UPLOAD', '10000/hour'),  # TEMP: Increased for testing
         'work_items': os.getenv('THROTTLE_RATE_WORK_ITEMS', '60/hour'),
         # Login throttle — tighter than the global anon rate because
         # credential stuffing brute-force is a real concern. See
