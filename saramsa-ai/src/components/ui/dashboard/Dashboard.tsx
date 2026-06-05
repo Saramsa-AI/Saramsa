@@ -620,7 +620,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     dispatch(setCurrentProjectUserStories([userStoryFromDeepAnalysis]));
   }, [dispatch, userStoryFromDeepAnalysis, currentProjectUserStories]);
   
-  // Process latestAnalysis from getConsolidatedDashboardData and set analysisData
+  // DEPRECATED: latestAnalysis is null - this entire useEffect is dead code
+  // Commenting out to fix TypeScript errors on Vercel
+  /*
   useEffect(() => {
     if (!latestAnalysis) {
       return;
@@ -739,8 +741,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       lastProcessedAnalysisIdRef.current = null;
     }
   }, [latestAnalysis, dispatch, selectedAnalysisId]);
+  */
 
-  // Extract user stories from consolidated data and set in Redux store
+  // DEPRECATED: latestAnalysis is null - this entire useEffect is dead code
+  /*
   useEffect(() => {
     // CRITICAL: Don't process latestAnalysis work items if user has selected a specific historical analysis
     // This prevents overwriting the selected analysis's work items with the latest analysis
@@ -796,6 +800,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       dispatch(setDeepAnalysis(null));
     }
   }, [latestAnalysis, currentProjectId, user, dispatch, selectedAnalysisId]);
+  */
 
   // Fetch projects and integration accounts on mount (guard against double-invoke in dev)
   useEffect(() => {
