@@ -871,13 +871,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         const result = await dispatch(fetchAnalysisById({ analysisId: selectedAnalysisId })).unwrap();
         // If the user switched again before this resolved, drop the result.
         if (controller.signal.aborted) return;
-        if (result?.exists !== false && result?.analysis) {
-          const a = result.analysis;
-          // ALWAYS normalize to extract work_items from pipeline_work_items!
-          dispatch(setAnalysisData(normalizeAnalysis(a)));
-          // setAnalysisDataAction now handles deepAnalysis from work_items
-        } else if (result?.analysisData || result?.id) {
-          // Direct analysis object returned
+        // Handle result - normalize to extract work_items from pipeline_work_items
+        if (result) {
           dispatch(setAnalysisData(normalizeAnalysis(result)));
           // setAnalysisDataAction now handles deepAnalysis from work_items
         }
@@ -1031,7 +1026,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     // Prevent fetching for the same project multiple times
     if (lastFetchedProjectRef.current === currentProjectId) return;
     lastFetchedProjectRef.current = currentProjectId;
-    
+
+    // DEPRECATED: getLatestAnalysis returns null - this entire block is dead code
+    /*
     (async () => {
       try {
         const result = await dispatch(getLatestAnalysis(currentProjectId)).unwrap();
@@ -1084,6 +1081,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         console.error('Error fetching latest analysis:', e);
       }
     })();
+    */
   }, [currentProjectId, dispatch]);
 
   // TODO: Re-enable when filters are fully implemented

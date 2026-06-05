@@ -686,11 +686,11 @@ export const setDeepAnalysis = setDeepAnalysisAction;
 export const setLoadedComments = setLoadedCommentsAction;
 
 // Dummy actions for components that haven't been migrated yet (no-ops)
-export const clearAnalysisData = () => ({ type: 'analysis/clearAnalysisData' });
+export const clearAnalysisData = (_params?: any) => ({ type: 'analysis/clearAnalysisData' });
 export const resolveAnalyzingTask = (_params?: any) => ({ type: 'analysis/resolveAnalyzingTask' });
-export const clearError = () => ({ type: 'analysis/clearError' });
+export const clearError = (_params?: any) => ({ type: 'analysis/clearError' });
 export const setTaskIdForEntry = (_params?: any) => ({ type: 'analysis/setTaskIdForEntry' });
-export const replaceInHistory = () => ({ type: 'analysis/replaceInHistory' });
+export const replaceInHistory = (_params?: any) => ({ type: 'analysis/replaceInHistory' });
 
 // Dummy thunks
 export const resumeInFlightTask = createAsyncThunk('analysis/resumeInFlightTask', async (_params?: any) => {
@@ -698,12 +698,12 @@ export const resumeInFlightTask = createAsyncThunk('analysis/resumeInFlightTask'
   return null;
 });
 
-export const getConsolidatedDashboardData = createAsyncThunk('analysis/getConsolidatedDashboardData', async () => {
+export const getConsolidatedDashboardData = createAsyncThunk('analysis/getConsolidatedDashboardData', async (_projectId?: string) => {
   console.warn('[DEPRECATED] getConsolidatedDashboardData called - needs migration');
   return null;
 });
 
-export const getLatestAnalysis = createAsyncThunk('analysis/getLatestAnalysis', async () => {
+export const getLatestAnalysis = createAsyncThunk('analysis/getLatestAnalysis', async (_projectId?: string) => {
   console.warn('[DEPRECATED] getLatestAnalysis called - needs migration');
   return null;
 });
@@ -775,22 +775,22 @@ export const ingestFile = createAsyncThunk<
   }
 });
 
-export const analyzeComments = createAsyncThunk('analysis/analyzeComments', async () => {
+export const analyzeComments = createAsyncThunk('analysis/analyzeComments', async (_params?: any) => {
   console.warn('[DEPRECATED] analyzeComments called - use uploadAndAnalyze instead');
   return null;
 });
 
-export const generateUserStories = createAsyncThunk('analysis/generateUserStories', async () => {
+export const generateUserStories = createAsyncThunk('analysis/generateUserStories', async (_params?: any) => {
   console.warn('[DEPRECATED] generateUserStories called - needs migration');
   return null;
 });
 
-export const submitUserStories = createAsyncThunk('analysis/submitUserStories', async () => {
+export const submitUserStories = createAsyncThunk('analysis/submitUserStories', async (_params?: any) => {
   console.warn('[DEPRECATED] submitUserStories called - needs migration');
   return null;
 });
 
-export const cancelAnalysisTask = createAsyncThunk('analysis/cancelAnalysisTask', async () => {
+export const cancelAnalysisTask = createAsyncThunk('analysis/cancelAnalysisTask', async (_params?: any) => {
   console.warn('[DEPRECATED] cancelAnalysisTask called - needs migration');
   return null;
 });
