@@ -42,11 +42,11 @@ export function PipelineStatusWidget() {
   const [open, setOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const analysisStatus = useSelector(
-    (state: RootState) => state.analysis.analysisStatus
+    (state: RootState) => state.analysis.currentTaskStatus
   );
-  const taskId = useSelector((state: RootState) => state.analysis.taskId);
-  const projectContext = useSelector(
-    (state: RootState) => state.analysis.projectContext
+  const taskId = useSelector((state: RootState) => state.analysis.currentTaskId);
+  const projectId = useSelector(
+    (state: RootState) => state.analysis.projectId
   );
   const currentProject = useSelector(
     (state: RootState) => state.projects.currentProject
@@ -59,16 +59,16 @@ export function PipelineStatusWidget() {
       return;
     }
 
-    const label = projectContext?.project_id
-      ? `Analysis - ${projectContext.project_id.slice(0, 8)}`
+    const label = projectId
+      ? `Analysis - ${projectId.slice(0, 8)}`
       : "Feedback analysis";
 
     const statusMap: Record<string, StageStatus> = {
-      pending: "pending",
-      processing: "running",
-      success: "success",
-      failure: "error",
       idle: "idle",
+      uploading: "pending",
+      analyzing: "running",
+      completed: "success",
+      failed: "error",
     };
 
     const mappedStatus = statusMap[analysisStatus] ?? "idle";
@@ -83,7 +83,7 @@ export function PipelineStatusWidget() {
         label,
         detail: "Sentiment + synthesis pipeline",
         status: mappedStatus,
-        project_id: projectContext?.project_id ?? null,
+        project_id: projectId ?? null,
         updatedAt: Date.now(),
       };
 
@@ -93,7 +93,7 @@ export function PipelineStatusWidget() {
 
       return next.slice(0, 15);
     });
-  }, [analysisStatus, taskId, projectContext?.project_id]);
+  }, [analysisStatus, taskId, projectId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -190,20 +190,21 @@ export function PipelineStatusWidget() {
   
   const overall = useMemo(() => {
     switch (analysisStatus) {
-      case "pending":
-      case "processing":
+      case "uploading":
+      case "analyzing":
         return "running" as StageStatus;
-      case "success":
+      case "completed":
         return "success" as StageStatus;
-      case "failure":
+      case "failed":
         return "error" as StageStatus;
+      case "idle":
       default:
         return "idle" as StageStatus;
     }
   }, [analysisStatus]);
 
   const overallCopy = statusCopy[overall];
-  const activeProjectId = currentProject?.id ?? projectContext?.project_id ?? null;
+  const activeProjectId = currentProject?.id ?? projectId ?? null;
   const filteredApiTasks = activeProjectId
     ? apiTasks.filter((t: TaskItem) => t.project_id === activeProjectId)
     : apiTasks;

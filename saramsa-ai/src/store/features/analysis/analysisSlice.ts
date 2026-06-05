@@ -182,7 +182,7 @@ function normalizeAnalysisData(input: any): AnalysisData {
   } as AnalysisData;
 
   console.log('[normalizeAnalysisData] Normalized ID:', normalized.id);
-  console.log('[normalizeAnalysisData] Work items count:', normalized.work_items?.length || 0);
+  console.log('[normalizeAnalysisData] Work items count:', (normalized as any).work_items?.length || 0);
 
   return normalized;
 }
@@ -310,7 +310,7 @@ export const renameAnalysis = createAsyncThunk<
         name: newName,
       });
 
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
@@ -344,11 +344,11 @@ export const uploadAndAnalyze = createAsyncThunk<
 
       const uploadResponse = await apiRequest('POST', '/ingest/', formData, true);
 
-      if (!uploadResponse.ok) {
+      if (uploadResponse.status < 200 || uploadResponse.status >= 300) {
         throw new Error(`Upload failed: ${uploadResponse.statusText}`);
       }
 
-      const uploadData = await uploadResponse.json();
+      const uploadData = uploadResponse.data;
       console.log(`[upload] File uploaded, analysis ID: ${uploadData.analysis_id}`);
 
       // Step 2: Start analysis
@@ -358,11 +358,11 @@ export const uploadAndAnalyze = createAsyncThunk<
         file_name: file.name,
       });
 
-      if (!analyzeResponse.ok) {
+      if (analyzeResponse.status < 200 || analyzeResponse.status >= 300) {
         throw new Error(`Analysis failed: ${analyzeResponse.statusText}`);
       }
 
-      const analyzeData = await analyzeResponse.json();
+      const analyzeData = analyzeResponse.data;
       console.log(`[upload] Analysis started, task ID: ${analyzeData.task_id}`);
 
       return {
@@ -389,11 +389,11 @@ export const pollTaskStatus = createAsyncThunk<
     try {
       const response = await apiRequest('GET', `/tasks/${taskId}/status/`, {});
 
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         throw new Error(`Failed to poll status`);
       }
 
-      const data = await response.json();
+      const data = response.data;
       return { status: data.status, state: data.state };
     } catch (error: any) {
       console.error('[poll] Error:', error);
@@ -534,8 +534,8 @@ const analysisSlice = createSlice({
 
       // BACKWARD COMPATIBILITY - populate old fields for components not yet migrated
       state.analysisData = normalizedData;
-      state.deepAnalysis = normalizedData?.userStories ?? null;
-      state.loadedComments = normalizedData?.comments ?? null;
+      state.deepAnalysis = (normalizedData as any)?.userStories ?? null;
+      state.loadedComments = (normalizedData as any)?.comments ?? null;
 
       console.log(`[fetchById.fulfilled] Loaded`, normalizedData?.id);
     });

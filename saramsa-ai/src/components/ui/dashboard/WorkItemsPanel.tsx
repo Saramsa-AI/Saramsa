@@ -212,7 +212,7 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
                                 processTemplate: 'Agile',
                                 projectId: projectId || undefined,
                                 projectMetadata: jiraProjectMetadata,
-                              })).unwrap();
+                              })).unwrap() as any;
 
                               // Trigger usage badge refresh after work items generation
                               if (typeof window !== 'undefined') {
@@ -220,13 +220,15 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
                               }
 
                               // Structure the data properly for the UserStories component
-                              const structuredData = {
-                                ...workItemsResult,
-                                work_items: workItemsResult.work_items,
-                                work_items_by_feature: workItemsResult.work_items_by_feature,
-                                summary: workItemsResult.summary,
-                              };
-                              dispatch(setDeepAnalysis(structuredData));
+                              if (workItemsResult && typeof workItemsResult === 'object' && workItemsResult !== null) {
+                                const structuredData = {
+                                  ...workItemsResult,
+                                  work_items: workItemsResult.work_items,
+                                  work_items_by_feature: workItemsResult.work_items_by_feature,
+                                  summary: workItemsResult.summary,
+                                };
+                                dispatch(setDeepAnalysis(structuredData));
+                              }
                             } catch (error) {
                               console.error('Failed to regenerate Jira analysis:', error);
                             }
