@@ -681,21 +681,28 @@ export const UserStoryList = ({
 
   const handleConfirmDelete = async () => {
     const toDelete = [...selectedActions];
-    
+
     try {
       setDeleteLoading(true);
-      
-      // We need to identify which user story these work items belong to
-      // Use the Redux state to find the matching user story
-      const matchingUserStories = currentProjectUserStories.filter(story => 
+
+      // Check if these are pipeline work items (from deepAnalysis) or traditional user story work items
+      const matchingUserStories = currentProjectUserStories.filter(story =>
         story.work_items?.some(item => toDelete.includes(item.id))
       );
-      
+
+      // If no matching user story, these are pipeline work items - just remove them locally
       if (matchingUserStories.length === 0) {
-        alert('Could not find user story containing these work items');
+        console.log('[Delete] Pipeline work items - removing locally');
+        // Remove from selected actions
+        toDelete.forEach((id) => {
+          dispatch(removeActionItem(id));
+          handleActionSelect(id); // Deselect
+        });
+        setDeleteModalOpen(false);
+        setDeleteLoading(false);
         return;
       }
-      
+
       // Use the first matching user story
       const userStoryId = matchingUserStories[0].id;
       

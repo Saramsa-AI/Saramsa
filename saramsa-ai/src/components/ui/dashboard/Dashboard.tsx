@@ -860,16 +860,12 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         if (controller.signal.aborted) return;
         if (result?.exists !== false && result?.analysis) {
           const a = result.analysis;
-          if (a.analysisData) {
-            dispatch(setAnalysisData(a));
-            // setAnalysisDataAction now handles deepAnalysis from work_items
-          } else {
-            dispatch(setAnalysisData(normalizeAnalysis(a.result ?? a)));
-            // setAnalysisDataAction now handles deepAnalysis from work_items
-          }
+          // ALWAYS normalize to extract work_items from pipeline_work_items!
+          dispatch(setAnalysisData(normalizeAnalysis(a)));
+          // setAnalysisDataAction now handles deepAnalysis from work_items
         } else if (result?.analysisData || result?.id) {
           // Direct analysis object returned
-          dispatch(setAnalysisData(result.analysisData ? result : normalizeAnalysis(result)));
+          dispatch(setAnalysisData(normalizeAnalysis(result)));
           // setAnalysisDataAction now handles deepAnalysis from work_items
         }
       } catch (error) {
@@ -1692,8 +1688,11 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         narration: input.narration ?? input.analysisData.narration ?? null,
         work_item_candidates:
           input.work_item_candidates ?? input.analysisData.work_item_candidates ?? null,
-        // CRITICAL: Extract final work items (not just candidates!)
-        work_items: input.work_items ?? input.pipeline_work_items ?? null,
+        // CRITICAL: Extract final work items (not just candidates!) and add id field
+        work_items: (input.work_items ?? input.pipeline_work_items ?? []).map((item: any) => ({
+          ...item,
+          id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
+        })),
         userStories: input.userStories ?? input.user_stories ?? null,
       } as AnalysisData;
 
@@ -1742,8 +1741,11 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         // Cache-priming fields for the user-story-creation endpoint (see other branch).
         narration: input.narration ?? null,
         work_item_candidates: input.work_item_candidates ?? null,
-        // CRITICAL: Extract final work items (not just candidates!)
-        work_items: input.work_items ?? input.pipeline_work_items ?? null,
+        // CRITICAL: Extract final work items (not just candidates!) and add id field
+        work_items: (input.work_items ?? input.pipeline_work_items ?? []).map((item: any) => ({
+          ...item,
+          id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
+        })),
         userStories: input.userStories ?? input.user_stories ?? null,
       } as AnalysisData;
 

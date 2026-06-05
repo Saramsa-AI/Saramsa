@@ -472,10 +472,13 @@ const analysisSlice = createSlice({
       state.analysisData = data;
       // CRITICAL: WorkItemsPanel expects { work_items: [...] }, not just the array!
       if (data?.work_items) {
+        console.log(`[setAnalysisData] ✅ Setting deepAnalysis from work_items (${data.work_items.length} items)`);
         state.deepAnalysis = { work_items: data.work_items };
       } else {
+        console.log(`[setAnalysisData] ⚠️  No work_items, using userStories:`, data?.userStories);
         state.deepAnalysis = data?.userStories ?? null;
       }
+      console.log(`[setAnalysisData] deepAnalysis set to:`, state.deepAnalysis);
       state.loadedComments = data?.comments ?? null;
     },
 
