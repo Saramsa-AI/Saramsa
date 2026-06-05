@@ -866,8 +866,8 @@ export const selectAnalysisDisplayStatus = (state: { analysis: AnalysisState }, 
   return 'Processing...';
 };
 
-// Dummy selectors that aren't critical
-export const selectTaskState = () => null;
-export const selectAnalysisLifecycleState = () => 'idle';
-export const selectIsAnyAnalysisRunning = () => false;
+// Dummy selectors that aren't critical - match expected signatures
+export const selectTaskState = (_state: { analysis: AnalysisState }, _analysisId: string) => null;
+export const selectAnalysisLifecycleState = (_state: { analysis: AnalysisState }, _analysisId: string) => 'idle';
+export const selectIsAnyAnalysisRunning = (_state: { analysis: AnalysisState }) => false;
 export const selectIsGeneratingWorkItems = () => false;
