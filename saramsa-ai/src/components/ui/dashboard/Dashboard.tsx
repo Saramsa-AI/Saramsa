@@ -1689,10 +1689,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         work_item_candidates:
           input.work_item_candidates ?? input.analysisData.work_item_candidates ?? null,
         // CRITICAL: Extract final work items (not just candidates!) and add id field
-        work_items: (input.work_items ?? input.pipeline_work_items ?? []).map((item: any) => ({
-          ...item,
-          id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
-        })),
+        work_items: (input.work_items ?? input.pipeline_work_items ?? []).map((item: any) => {
+          const workItem = {
+            ...item,
+            id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
+          };
+          console.log(`[normalizeAnalysis] Work item ID: ${workItem.id}, Title: ${workItem.title?.substring(0, 30)}`);
+          return workItem;
+        }),
         userStories: input.userStories ?? input.user_stories ?? null,
       } as AnalysisData;
 
@@ -1742,10 +1746,14 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         narration: input.narration ?? null,
         work_item_candidates: input.work_item_candidates ?? null,
         // CRITICAL: Extract final work items (not just candidates!) and add id field
-        work_items: (input.work_items ?? input.pipeline_work_items ?? []).map((item: any) => ({
-          ...item,
-          id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
-        })),
+        work_items: (input.work_items ?? input.pipeline_work_items ?? []).map((item: any) => {
+          const workItem = {
+            ...item,
+            id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
+          };
+          console.log(`[normalizeAnalysis] Work item ID: ${workItem.id}, Title: ${workItem.title?.substring(0, 30)}`);
+          return workItem;
+        }),
         userStories: input.userStories ?? input.user_stories ?? null,
       } as AnalysisData;
 

@@ -76,7 +76,7 @@ export const UserStoryList = ({
 }: UserStoryListProps) => {
   const dispatch = useAppDispatch();
   const router = useRouter();
-  const { selectedActions, actionItems, features, loading, error } = useAppSelector((state) => state.workItems);
+  const { selectedActions, actionItems, features, loading, error, deletedWorkItemIds } = useAppSelector((state) => state.workItems);
   const { loading: analysisLoading, projectContext, analysisData } = useAppSelector((state) => state.analysis);
   const { user, isAuthenticated } = useAppSelector((state) => state.auth);
   const { currentProjectUserStories } = useAppSelector((state) => state.userStories);
@@ -276,13 +276,16 @@ export const UserStoryList = ({
     
     
     if (workItemsToProcess && workItemsToProcess.length > 0) {
-      
+
       // Clear existing action items first to prevent duplicates
       dispatch(clearActionItems());
       dispatch(clearSelectedActions());
-      
+
+      // Filter out permanently deleted work items
+      const activeWorkItems = workItemsToProcess.filter(item => !deletedWorkItemIds.includes(item.id));
+
       // Convert work items to action items and add them
-      workItemsToProcess.forEach((item, index) => {
+      activeWorkItems.forEach((item, index) => {
         const actionItem: ActionItem = {
           id: item.id,
           title: item.title,
@@ -693,13 +696,10 @@ export const UserStoryList = ({
       // If no matching user story, these are pipeline work items - just remove them locally
       if (matchingUserStories.length === 0) {
         console.log('[Delete] Pipeline work items - removing locally');
-        // Remove from selected actions
-        toDelete.forEach((id) => {
-          dispatch(removeActionItem(id));
-          handleActionSelect(id); // Deselect
-        });
-        setDeleteModalOpen(false);
+        // For pipeline work items, just deselect them (they're not persisted to backend)
+        toDelete.forEach((id) => handleActionSelect(id));
         setDeleteLoading(false);
+        // Modal will close automatically
         return;
       }
 
