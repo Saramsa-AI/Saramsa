@@ -1495,7 +1495,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             // Structure the data properly for the UserStories component
             // The UserStoryList expects an array of user stories, so we need to wrap the response
             const structuredData = {
-              ...workItemsResult,
+              ...(workItemsResult || {}),
               work_items: workItemsResult.work_items,
               work_items_by_feature: workItemsResult.work_items_by_feature,
               summary: workItemsResult.summary
@@ -1554,7 +1554,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           if (workItemsResult?.work_items && workItemsResult.work_items.length > 0) {
             // Structure the data properly for the UserStories component
             const structuredData = {
-              ...workItemsResult,
+              ...(workItemsResult || {}),
               work_items: workItemsResult.work_items,
               work_items_by_feature: workItemsResult.work_items_by_feature,
               summary: workItemsResult.summary
@@ -1597,7 +1597,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           if (workItemsResult?.work_items) {
             // Structure the data properly for the UserStories component
             const structuredData = {
-              ...workItemsResult,
+              ...(workItemsResult || {}),
               work_items: workItemsResult.work_items,
               work_items_by_feature: workItemsResult.work_items_by_feature,
               summary: workItemsResult.summary
