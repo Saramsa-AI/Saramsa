@@ -1490,7 +1490,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           }
           
           // Set the generated work items in the store
-          if (workItemsResult.work_items) {
+          if (workItemsResult?.work_items) {
             
             // Structure the data properly for the UserStories component
             // The UserStoryList expects an array of user stories, so we need to wrap the response
@@ -1594,7 +1594,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           }
 
           // Set the generated work items in the store
-          if (workItemsResult.work_items) {
+          if (workItemsResult?.work_items) {
             // Structure the data properly for the UserStories component
             const structuredData = {
               ...workItemsResult,
