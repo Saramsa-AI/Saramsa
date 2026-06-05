@@ -224,7 +224,7 @@ export function SlackChannelPanel({
       }
       dispatch(fetchFeedbackSources({ projectId }));
       dispatch(getLatestAnalysis(projectId));
-      dispatch(fetchAnalysisHistory(projectId));
+      dispatch(fetchAnalysisHistory({ projectId }));
       if (typeof window !== "undefined") {
         const target = document.getElementById("analysis-results-section");
         if (target) {
