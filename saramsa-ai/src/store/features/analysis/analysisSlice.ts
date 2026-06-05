@@ -470,7 +470,7 @@ const analysisSlice = createSlice({
       // Set both new and old fields for compatibility
       state.selectedAnalysisData = data;
       state.analysisData = data;
-      state.deepAnalysis = data?.userStories ?? null;
+      state.deepAnalysis = data?.work_items ?? data?.userStories ?? null;  // CRITICAL: Use work_items!
       state.loadedComments = data?.comments ?? null;
     },
 
