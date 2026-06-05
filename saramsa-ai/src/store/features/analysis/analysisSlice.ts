@@ -687,9 +687,9 @@ export const setLoadedComments = setLoadedCommentsAction;
 
 // Dummy actions for components that haven't been migrated yet (no-ops)
 export const clearAnalysisData = () => ({ type: 'analysis/clearAnalysisData' });
-export const resolveAnalyzingTask = () => ({ type: 'analysis/resolveAnalyzingTask' });
+export const resolveAnalyzingTask = (_params?: any) => ({ type: 'analysis/resolveAnalyzingTask' });
 export const clearError = () => ({ type: 'analysis/clearError' });
-export const setTaskIdForEntry = () => ({ type: 'analysis/setTaskIdForEntry' });
+export const setTaskIdForEntry = (_params?: any) => ({ type: 'analysis/setTaskIdForEntry' });
 export const replaceInHistory = () => ({ type: 'analysis/replaceInHistory' });
 
 // Dummy thunks
