@@ -182,7 +182,7 @@ function normalizeAnalysisData(input: any): AnalysisData {
   } as AnalysisData;
 
   console.log('[normalizeAnalysisData] Normalized ID:', normalized.id);
-  console.log('[normalizeAnalysisData] Work items count:', normalized.work_items?.length || 0);
+  console.log('[normalizeAnalysisData] Work items count:', (normalized as any).work_items?.length || 0);
 
   return normalized;
 }
@@ -310,7 +310,7 @@ export const renameAnalysis = createAsyncThunk<
         name: newName,
       });
 
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
@@ -344,11 +344,11 @@ export const uploadAndAnalyze = createAsyncThunk<
 
       const uploadResponse = await apiRequest('POST', '/ingest/', formData, true);
 
-      if (!uploadResponse.ok) {
+      if (uploadResponse.status < 200 || uploadResponse.status >= 300) {
         throw new Error(`Upload failed: ${uploadResponse.statusText}`);
       }
 
-      const uploadData = await uploadResponse.json();
+      const uploadData = uploadResponse.data;
       console.log(`[upload] File uploaded, analysis ID: ${uploadData.analysis_id}`);
 
       // Step 2: Start analysis
@@ -358,11 +358,11 @@ export const uploadAndAnalyze = createAsyncThunk<
         file_name: file.name,
       });
 
-      if (!analyzeResponse.ok) {
+      if (analyzeResponse.status < 200 || analyzeResponse.status >= 300) {
         throw new Error(`Analysis failed: ${analyzeResponse.statusText}`);
       }
 
-      const analyzeData = await analyzeResponse.json();
+      const analyzeData = analyzeResponse.data;
       console.log(`[upload] Analysis started, task ID: ${analyzeData.task_id}`);
 
       return {
@@ -389,11 +389,11 @@ export const pollTaskStatus = createAsyncThunk<
     try {
       const response = await apiRequest('GET', `/tasks/${taskId}/status/`, {});
 
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         throw new Error(`Failed to poll status`);
       }
 
-      const data = await response.json();
+      const data = response.data;
       return { status: data.status, state: data.state };
     } catch (error: any) {
       console.error('[poll] Error:', error);
@@ -534,8 +534,8 @@ const analysisSlice = createSlice({
 
       // BACKWARD COMPATIBILITY - populate old fields for components not yet migrated
       state.analysisData = normalizedData;
-      state.deepAnalysis = normalizedData?.userStories ?? null;
-      state.loadedComments = normalizedData?.comments ?? null;
+      state.deepAnalysis = (normalizedData as any)?.userStories ?? null;
+      state.loadedComments = (normalizedData as any)?.comments ?? null;
 
       console.log(`[fetchById.fulfilled] Loaded`, normalizedData?.id);
     });
@@ -686,24 +686,24 @@ export const setDeepAnalysis = setDeepAnalysisAction;
 export const setLoadedComments = setLoadedCommentsAction;
 
 // Dummy actions for components that haven't been migrated yet (no-ops)
-export const clearAnalysisData = () => ({ type: 'analysis/clearAnalysisData' });
-export const resolveAnalyzingTask = () => ({ type: 'analysis/resolveAnalyzingTask' });
-export const clearError = () => ({ type: 'analysis/clearError' });
-export const setTaskIdForEntry = () => ({ type: 'analysis/setTaskIdForEntry' });
-export const replaceInHistory = () => ({ type: 'analysis/replaceInHistory' });
+export const clearAnalysisData = (_params?: any) => ({ type: 'analysis/clearAnalysisData' });
+export const resolveAnalyzingTask = (_params?: any) => ({ type: 'analysis/resolveAnalyzingTask' });
+export const clearError = (_params?: any) => ({ type: 'analysis/clearError' });
+export const setTaskIdForEntry = (_params?: any) => ({ type: 'analysis/setTaskIdForEntry' });
+export const replaceInHistory = (_params?: any) => ({ type: 'analysis/replaceInHistory' });
 
 // Dummy thunks
-export const resumeInFlightTask = createAsyncThunk('analysis/resumeInFlightTask', async () => {
+export const resumeInFlightTask = createAsyncThunk('analysis/resumeInFlightTask', async (_params?: any) => {
   console.warn('[DEPRECATED] resumeInFlightTask called - needs migration');
   return null;
 });
 
-export const getConsolidatedDashboardData = createAsyncThunk('analysis/getConsolidatedDashboardData', async () => {
+export const getConsolidatedDashboardData = createAsyncThunk('analysis/getConsolidatedDashboardData', async (_projectId?: string) => {
   console.warn('[DEPRECATED] getConsolidatedDashboardData called - needs migration');
   return null;
 });
 
-export const getLatestAnalysis = createAsyncThunk('analysis/getLatestAnalysis', async () => {
+export const getLatestAnalysis = createAsyncThunk('analysis/getLatestAnalysis', async (_projectId?: string) => {
   console.warn('[DEPRECATED] getLatestAnalysis called - needs migration');
   return null;
 });
@@ -775,22 +775,22 @@ export const ingestFile = createAsyncThunk<
   }
 });
 
-export const analyzeComments = createAsyncThunk('analysis/analyzeComments', async () => {
+export const analyzeComments = createAsyncThunk('analysis/analyzeComments', async (_params?: any) => {
   console.warn('[DEPRECATED] analyzeComments called - use uploadAndAnalyze instead');
   return null;
 });
 
-export const generateUserStories = createAsyncThunk('analysis/generateUserStories', async () => {
+export const generateUserStories = createAsyncThunk('analysis/generateUserStories', async (_params?: any) => {
   console.warn('[DEPRECATED] generateUserStories called - needs migration');
   return null;
 });
 
-export const submitUserStories = createAsyncThunk('analysis/submitUserStories', async () => {
+export const submitUserStories = createAsyncThunk('analysis/submitUserStories', async (_params?: any) => {
   console.warn('[DEPRECATED] submitUserStories called - needs migration');
   return null;
 });
 
-export const cancelAnalysisTask = createAsyncThunk('analysis/cancelAnalysisTask', async () => {
+export const cancelAnalysisTask = createAsyncThunk('analysis/cancelAnalysisTask', async (_params?: any) => {
   console.warn('[DEPRECATED] cancelAnalysisTask called - needs migration');
   return null;
 });
@@ -832,7 +832,7 @@ export const deleteAnalysisRun = createAsyncThunk<
 export const renameAnalysisRun = renameAnalysis;
 
 // Real selectors for UI state
-export const selectIsProjectAnalyzing = (state: { analysis: AnalysisState }) => {
+export const selectIsProjectAnalyzing = (state: { analysis: AnalysisState }, _projectId?: string | null) => {
   // Check if currently uploading or analyzing
   const taskStatus = state.analysis.currentTaskStatus;
   if (taskStatus === 'uploading' || taskStatus === 'analyzing') {
@@ -866,8 +866,8 @@ export const selectAnalysisDisplayStatus = (state: { analysis: AnalysisState }, 
   return 'Processing...';
 };
 
-// Dummy selectors that aren't critical
-export const selectTaskState = () => null;
-export const selectAnalysisLifecycleState = () => 'idle';
-export const selectIsAnyAnalysisRunning = () => false;
-export const selectIsGeneratingWorkItems = () => false;
+// Dummy selectors that aren't critical - match expected signatures
+export const selectTaskState = (_state: { analysis: AnalysisState }, _analysisId: string | null) => null;
+export const selectAnalysisLifecycleState = (_state: { analysis: AnalysisState }, _analysisId: string | null) => 'idle';
+export const selectIsAnyAnalysisRunning = (_state: { analysis: AnalysisState }) => false;
+export const selectIsGeneratingWorkItems = (_state?: { analysis: AnalysisState }) => false;

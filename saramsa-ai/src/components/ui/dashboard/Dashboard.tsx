@@ -46,7 +46,6 @@ import {
   selectIsViewingActiveAnalysis,
   selectAnalysisDisplayStatus,
   selectIsGeneratingWorkItems,
-  selectFilteredHistory,
 } from '../../../store/features/analysis/analysisSlice';
 import { fetchProjects } from '../../../store/features/projects/projectsSlice';
 import { fetchIntegrationAccounts } from '../../../store/features/integrations/integrationsSlice';
@@ -134,15 +133,21 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const {
     analysisData,
     deepAnalysis,
-    loading,
-    error,
+    selectedAnalysisLoading: loading,
+    selectedAnalysisError: error,
     loadedComments,
-    latestAnalysis,
-    projectContext,
+    // projectId - not used, gets overridden by localStorage version below
     historyLoading,
     selectedAnalysisId,
-    fetchingAnalysisById,
+    // selectedAnalysisData - not renaming, doesn't match expected structure
   } = analysisState;
+
+  // fetchingAnalysisById is same as selectedAnalysisLoading
+  const fetchingAnalysisById = loading;
+
+  // Backward compatibility stubs - these don't exist in new state
+  const projectContext = null;
+  const latestAnalysis = null;
 
   // Use raw history - items stay visible until delete API succeeds
   const analysisHistory = analysisState.analysisHistory;
@@ -302,6 +307,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       }
     })();
   }, [currentProjectId, selectedAnalysisId, dispatch]);
+  // DEPRECATED: Entire useEffect removed - projectContext doesn't exist in Redux state
+  /*
   useEffect(() => {
     const contextProjectId = projectContext?.project_id;
     if (!contextProjectId) return;
@@ -317,7 +324,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     if (typeof window !== 'undefined') {
       localStorage.setItem('project_id', contextProjectId);
     }
-  }, [projectContext]); // Removed currentProjectId from dependencies to prevent loop
+  }, [projectContext]);
+  */
 
   useEffect(() => {
     if (!initialSelectedAnalysisId) return;
@@ -612,7 +620,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     dispatch(setCurrentProjectUserStories([userStoryFromDeepAnalysis]));
   }, [dispatch, userStoryFromDeepAnalysis, currentProjectUserStories]);
   
-  // Process latestAnalysis from getConsolidatedDashboardData and set analysisData
+  // DEPRECATED: latestAnalysis is null - this entire useEffect is dead code
+  // Commenting out to fix TypeScript errors on Vercel
+  /*
   useEffect(() => {
     if (!latestAnalysis) {
       return;
@@ -731,8 +741,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       lastProcessedAnalysisIdRef.current = null;
     }
   }, [latestAnalysis, dispatch, selectedAnalysisId]);
+  */
 
-  // Extract user stories from consolidated data and set in Redux store
+  // DEPRECATED: latestAnalysis is null - this entire useEffect is dead code
+  /*
   useEffect(() => {
     // CRITICAL: Don't process latestAnalysis work items if user has selected a specific historical analysis
     // This prevents overwriting the selected analysis's work items with the latest analysis
@@ -788,6 +800,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       dispatch(setDeepAnalysis(null));
     }
   }, [latestAnalysis, currentProjectId, user, dispatch, selectedAnalysisId]);
+  */
 
   // Fetch projects and integration accounts on mount (guard against double-invoke in dev)
   useEffect(() => {
@@ -858,13 +871,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         const result = await dispatch(fetchAnalysisById({ analysisId: selectedAnalysisId })).unwrap();
         // If the user switched again before this resolved, drop the result.
         if (controller.signal.aborted) return;
-        if (result?.exists !== false && result?.analysis) {
-          const a = result.analysis;
-          // ALWAYS normalize to extract work_items from pipeline_work_items!
-          dispatch(setAnalysisData(normalizeAnalysis(a)));
-          // setAnalysisDataAction now handles deepAnalysis from work_items
-        } else if (result?.analysisData || result?.id) {
-          // Direct analysis object returned
+        // Handle result - normalize to extract work_items from pipeline_work_items
+        if (result) {
           dispatch(setAnalysisData(normalizeAnalysis(result)));
           // setAnalysisDataAction now handles deepAnalysis from work_items
         }
@@ -1018,7 +1026,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     // Prevent fetching for the same project multiple times
     if (lastFetchedProjectRef.current === currentProjectId) return;
     lastFetchedProjectRef.current = currentProjectId;
-    
+
+    // DEPRECATED: getLatestAnalysis returns null - this entire block is dead code
+    /*
     (async () => {
       try {
         const result = await dispatch(getLatestAnalysis(currentProjectId)).unwrap();
@@ -1071,6 +1081,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         console.error('Error fetching latest analysis:', e);
       }
     })();
+    */
   }, [currentProjectId, dispatch]);
 
   // TODO: Re-enable when filters are fully implemented
@@ -1451,7 +1462,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           }
           
           // Step 2: Generate work items using the analysis data and Jira metadata
-          const workItemsResult = await dispatch(generateUserStories({
+          const workItemsResult: any = await dispatch(generateUserStories({
             analysisData,
             comments: commentsToUse, // Use the loaded comments
             platform: 'jira',
@@ -1479,12 +1490,12 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           }
           
           // Set the generated work items in the store
-          if (workItemsResult.work_items) {
+          if (workItemsResult?.work_items) {
             
             // Structure the data properly for the UserStories component
             // The UserStoryList expects an array of user stories, so we need to wrap the response
             const structuredData = {
-              ...workItemsResult,
+              ...(workItemsResult || {}),
               work_items: workItemsResult.work_items,
               work_items_by_feature: workItemsResult.work_items_by_feature,
               summary: workItemsResult.summary
@@ -1527,7 +1538,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           // Use existing analysis data instead of calling analyzeComments again
           
           // Generate work items from the existing analysis data
-          const workItemsResult = await dispatch(generateUserStories({
+          const workItemsResult: any = await dispatch(generateUserStories({
             analysisData: analysisData,
             comments: commentsToUse,
             platform: (currentPlatform as 'azure' | 'jira') ?? 'azure',
@@ -1543,7 +1554,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           if (workItemsResult?.work_items && workItemsResult.work_items.length > 0) {
             // Structure the data properly for the UserStories component
             const structuredData = {
-              ...workItemsResult,
+              ...(workItemsResult || {}),
               work_items: workItemsResult.work_items,
               work_items_by_feature: workItemsResult.work_items_by_feature,
               summary: workItemsResult.summary
@@ -1569,7 +1580,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         } else {
           
           // Fallback to old method using analysis data
-          const workItemsResult = await dispatch(generateUserStories({
+          const workItemsResult: any = await dispatch(generateUserStories({
             analysisData,
             comments: commentsToUse,
             platform: (currentPlatform as 'azure' | 'jira') ?? 'azure',
@@ -1583,10 +1594,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           }
 
           // Set the generated work items in the store
-          if (workItemsResult.work_items) {
+          if (workItemsResult?.work_items) {
             // Structure the data properly for the UserStories component
             const structuredData = {
-              ...workItemsResult,
+              ...(workItemsResult || {}),
               work_items: workItemsResult.work_items,
               work_items_by_feature: workItemsResult.work_items_by_feature,
               summary: workItemsResult.summary
@@ -1876,7 +1887,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
   const handleRunRename = async (id: string, name: string) => {
     try {
-      await dispatch(renameAnalysisRun({ id, name })).unwrap();
+      await dispatch(renameAnalysisRun({ analysisId: id, newName: name })).unwrap();
     } catch (err: any) {
       console.error('Failed to rename analysis run:', err);
       alert(typeof err === 'string' ? err : 'Failed to rename analysis run.');

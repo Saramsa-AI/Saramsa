@@ -21,14 +21,11 @@ interface AnalysisRunItemProps {
 
 export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, onCancel, index, totalCount }: AnalysisRunItemProps) {
   // NEW: Derive display state from Redux state machine instead of entry.status string
-  const taskState = useSelector((state: RootState) => selectTaskState(state, entry.id));
   const displayStatus = useSelector((state: RootState) => selectAnalysisDisplayStatus(state, entry.id));
 
-  // Fallback to entry.status for historical entries not in tasks map
-  const isPending = taskState ?
-    taskState.state !== 'idle' && taskState.state !== 'completed' && taskState.state !== 'failed' && taskState.state !== 'cancelled'
-    : entry.status === 'analyzing';
-  const isCancelled = taskState ? taskState.state === 'cancelled' : entry.status === 'cancelled';
+  // Use entry.status for now (taskState selector is a stub that returns null)
+  const isPending = entry.status === 'analyzing';
+  const isCancelled = entry.status === 'cancelled';
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);

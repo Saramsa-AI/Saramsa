@@ -77,7 +77,7 @@ export const UserStoryList = ({
   const dispatch = useAppDispatch();
   const router = useRouter();
   const { selectedActions, actionItems, features, loading, error, deletedWorkItemIds } = useAppSelector((state) => state.workItems);
-  const { loading: analysisLoading, projectContext, analysisData } = useAppSelector((state) => state.analysis);
+  const { selectedAnalysisLoading: analysisLoading, projectId: projectContextId, analysisData } = useAppSelector((state) => state.analysis);
   const { user, isAuthenticated } = useAppSelector((state) => state.auth);
   const { currentProjectUserStories } = useAppSelector((state) => state.userStories);
   const { projects } = useAppSelector((state) => state.projects);
@@ -92,7 +92,7 @@ export const UserStoryList = ({
   const hasPlatformIntegration = currentProject?.externalLinks?.some(
     (link: any) => link.provider === platform
   ) || false;
-  const isDraftFromContext = projectContext?.is_draft === true || projectContext?.config_state === 'unconfigured';
+  const isDraftFromContext = (currentProject as any)?.is_draft === true || (currentProject as any)?.config_state === 'unconfigured';
   const isDraftProject = isDraftFromContext || (!hasIntegrations && projectId) || (!hasPlatformIntegration && projectId);
   const canManageAdminActions =
     !!projectId && (
@@ -463,10 +463,10 @@ export const UserStoryList = ({
           processTemplate: 'Agile',
           time: new Date().toISOString()
         })
-      ).unwrap();
+      ).unwrap() as any;
 
       // Check if the submission was actually successful
-      if (result.success) {
+      if (result && result.success) {
         // Clear selection after successful submission
         dispatch(clearSelectedActions());
         setPushQueueItems([]);

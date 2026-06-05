@@ -125,7 +125,7 @@ export function SlackChannelPanel({
     const intervalMs = 2000;
 
     while (Date.now() - startedAt < timeoutMs) {
-      const payload = await dispatch(pollTaskStatus(taskId)).unwrap();
+      const payload: any = await dispatch(pollTaskStatus({ taskId })).unwrap();
       const status = payload?.status;
       if (status === "SUCCESS" || status === "PARTIAL") {
         return { ok: true, result: payload?.result };
@@ -193,7 +193,7 @@ export function SlackChannelPanel({
         let loaded = false;
         for (let attempt = 0; attempt < 5; attempt += 1) {
           try {
-            await dispatch(fetchAnalysisById(newInsightId)).unwrap();
+            await dispatch(fetchAnalysisById({ analysisId: newInsightId })).unwrap();
             loaded = true;
             break;
           } catch {
@@ -224,7 +224,7 @@ export function SlackChannelPanel({
       }
       dispatch(fetchFeedbackSources({ projectId }));
       dispatch(getLatestAnalysis(projectId));
-      dispatch(fetchAnalysisHistory(projectId));
+      dispatch(fetchAnalysisHistory({ projectId }));
       if (typeof window !== "undefined") {
         const target = document.getElementById("analysis-results-section");
         if (target) {
