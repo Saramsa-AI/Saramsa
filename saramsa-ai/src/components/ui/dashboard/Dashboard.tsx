@@ -1462,7 +1462,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           }
           
           // Step 2: Generate work items using the analysis data and Jira metadata
-          const workItemsResult = await dispatch(generateUserStories({
+          const workItemsResult: any = await dispatch(generateUserStories({
             analysisData,
             comments: commentsToUse, // Use the loaded comments
             platform: 'jira',
@@ -1538,7 +1538,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
           // Use existing analysis data instead of calling analyzeComments again
           
           // Generate work items from the existing analysis data
-          const workItemsResult = await dispatch(generateUserStories({
+          const workItemsResult: any = await dispatch(generateUserStories({
             analysisData: analysisData,
             comments: commentsToUse,
             platform: (currentPlatform as 'azure' | 'jira') ?? 'azure',
@@ -1580,7 +1580,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         } else {
           
           // Fallback to old method using analysis data
-          const workItemsResult = await dispatch(generateUserStories({
+          const workItemsResult: any = await dispatch(generateUserStories({
             analysisData,
             comments: commentsToUse,
             platform: (currentPlatform as 'azure' | 'jira') ?? 'azure',
