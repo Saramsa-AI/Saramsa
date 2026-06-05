@@ -470,7 +470,12 @@ const analysisSlice = createSlice({
       // Set both new and old fields for compatibility
       state.selectedAnalysisData = data;
       state.analysisData = data;
-      state.deepAnalysis = data?.work_items ?? data?.userStories ?? null;  // CRITICAL: Use work_items!
+      // CRITICAL: WorkItemsPanel expects { work_items: [...] }, not just the array!
+      if (data?.work_items) {
+        state.deepAnalysis = { work_items: data.work_items };
+      } else {
+        state.deepAnalysis = data?.userStories ?? null;
+      }
       state.loadedComments = data?.comments ?? null;
     },
 
