@@ -693,7 +693,7 @@ export const setTaskIdForEntry = (_params?: any) => ({ type: 'analysis/setTaskId
 export const replaceInHistory = () => ({ type: 'analysis/replaceInHistory' });
 
 // Dummy thunks
-export const resumeInFlightTask = createAsyncThunk('analysis/resumeInFlightTask', async () => {
+export const resumeInFlightTask = createAsyncThunk('analysis/resumeInFlightTask', async (_params?: any) => {
   console.warn('[DEPRECATED] resumeInFlightTask called - needs migration');
   return null;
 });
