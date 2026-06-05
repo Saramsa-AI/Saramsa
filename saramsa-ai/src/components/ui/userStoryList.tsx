@@ -282,7 +282,10 @@ export const UserStoryList = ({
       dispatch(clearSelectedActions());
 
       // Filter out permanently deleted work items
+      console.log('[UserStoryList] Processing work items:', workItemsToProcess.length);
+      console.log('[UserStoryList] Deleted IDs:', deletedWorkItemIds);
       const activeWorkItems = workItemsToProcess.filter(item => !deletedWorkItemIds.includes(item.id));
+      console.log('[UserStoryList] Active work items after filter:', activeWorkItems.length);
 
       // Convert work items to action items and add them
       activeWorkItems.forEach((item, index) => {
