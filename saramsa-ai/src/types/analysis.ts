@@ -11,6 +11,11 @@ export type FeatureSentiment = {
   sentiment: SentimentBreakdown;
   keywords: string[];
   comment_count: number;
+  sample_comments?: {
+    positive?: string[];
+    negative?: string[];
+    neutral?: string[];
+  };
 };
 
 export type EmojiAnalysis = {
