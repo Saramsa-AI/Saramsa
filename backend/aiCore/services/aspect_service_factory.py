@@ -6,12 +6,7 @@ Selects aspect classification method based on ASPECT_METHOD environment variable
   ASPECT_METHOD=llm        -> LLMAspectService (Azure OpenAI, one call/comment, concurrent) [DEFAULT]
   ASPECT_METHOD=ensemble   -> EnsembleAspectService (NLI + Embedding + Keywords)
   ASPECT_METHOD=nli        -> ZeroShotAspectService (NLI only)
-  ASPECT_METHOD=similarity -> SimilarityAspectService (legacy, embedding only)
-
-Default is `llm`: the CPU NLI/ensemble path runs one cross-encoder pass per
-(comment x aspect) pair and times out on real uploads (GPU disabled). The LLM
-path classifies each comment against all aspects in one call, concurrently.
-Set ASPECT_METHOD=ensemble to fall back to the local-model path.
+  ASPECT_METHOD=similarity -> SimilarityAspectService (embedding only)
 """
 
 import os

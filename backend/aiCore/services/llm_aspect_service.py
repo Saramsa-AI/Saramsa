@@ -1,24 +1,13 @@
 """
-LLM Aspect Classification Service
+LLM Aspect Classification Service.
 
-Classifies each comment against a fixed aspect list using a single Azure OpenAI
-call per comment, fired concurrently. Drop-in replacement for the NLI/ensemble
-aspect services: same `classify_aspects()` signature and same return format
-(list of {comment_id, comment_text, matched_aspects, aspect_scores} in input
-order).
+Classifies each comment against a fixed aspect list with one Azure OpenAI call
+per comment, fired concurrently. Drop-in for the other aspect services: same
+`classify_aspects()` signature and return format
+({comment_id, comment_text, matched_aspects, aspect_scores}) in input order.
 
-Why this exists: the NLI/ensemble path runs one cross-encoder forward pass per
-(comment x aspect) pair on CPU (~1 pair/sec), which times out on real uploads.
-An LLM classifies a comment against all aspects in one pass, so cost/latency is
-O(comments) instead of O(comments x aspects), and it handles dynamic per-project
-taxonomies with no retraining.
-
-Selected via ASPECT_METHOD=llm (see aspect_service_factory).
-
-Sentiment is intentionally NOT done here — the pipeline's LocalSentimentService
-handles aspect-relative sentiment as a separate step. Keeping this service to
-aspects-only makes it a clean drop-in. (LLM-produced per-aspect sentiment is a
-larger, separate change.)
+Selected via ASPECT_METHOD=llm. Aspects only — sentiment is a separate pipeline
+step (LocalSentimentService).
 """
 
 import os
@@ -32,8 +21,7 @@ from aiCore.services.openai_client import get_azure_client, get_azure_deployment
 
 logger = logging.getLogger(__name__)
 
-# Confidence -> pseudo-score mapping. Downstream mostly uses matched_aspects;
-# aspect_scores is used for sorting/display, so exact values matter less than ordering.
+# Maps LLM confidence to aspect_scores; ordering matters more than exact values.
 _CONFIDENCE_SCORE = {"high": 0.90, "medium": 0.72, "low": 0.55}
 
 
@@ -65,7 +53,6 @@ class LLMAspectService:
             self.deployment, self.concurrency, self.max_aspects, self.reasoning_effort,
         )
 
-    # ---- public API (matches ZeroShot/Ensemble/Similarity services) ----
     def classify_aspects(
         self,
         comments: List[str],
@@ -82,8 +69,7 @@ class LLMAspectService:
             # No taxonomy -> nothing maps. Preserve length/order.
             return [self._empty_result(i, c, aspects) for i, c in enumerate(comments)]
 
-        # Canonical aspect labels + a lowercase lookup so we can validate/repair
-        # whatever the model returns (drop hallucinated labels, fix casing).
+        # Lowercase lookup to validate/repair model output (drop hallucinations, fix casing).
         canonical = list(dict.fromkeys(a for a in aspects if a and a.strip()))
         lookup = {a.lower().strip(): a for a in canonical}
 
@@ -110,10 +96,8 @@ class LLMAspectService:
                 try:
                     results[idx] = fut.result()
                 except Exception as e:
-                    # Loud failure: do NOT swallow into UNMAPPED. Silently converting a
-                    # failed call to "no aspects" would hide an outage (bad key / Azure
-                    # down) as a fake "100% unmapped" success. A comment that still
-                    # errors after retries aborts the whole run.
+                    # Loud failure: don't swallow into UNMAPPED, or an outage (bad key /
+                    # Azure down) would look like a "100% unmapped" success.
                     raise RuntimeError(
                         f"LLM aspect classification failed on comment {idx}: {e}"
                     ) from e
@@ -125,12 +109,8 @@ class LLMAspectService:
                     except Exception:
                         pass
                 if is_cancelled and done % 10 == 0 and is_cancelled():
-                    # Best-effort: stop accepting more results; outstanding futures
-                    # finish but we bail out fast.
                     raise TaskCancelled("Cancelled during LLM aspect classification")
 
-        # comment_id was assigned inline as each future completed; with loud-failure
-        # semantics every index is set here (or we already raised above).
         elapsed = time.time() - t0
         mapped = sum(1 for r in results if r and r["matched_aspects"] and r["matched_aspects"] != ["UNMAPPED"])
         logger.info(
@@ -140,7 +120,6 @@ class LLMAspectService:
         )
         return results  # type: ignore[return-value]
 
-    # ---- internals ----
     def _classify_one(
         self, client, comment: str, canonical: List[str], lookup: Dict[str, str]
     ) -> Dict[str, Any]:
