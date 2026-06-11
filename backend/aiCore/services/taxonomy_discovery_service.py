@@ -26,6 +26,7 @@ from openai import BadRequestError
 
 from aiCore.services.openai_client import get_azure_client, get_azure_deployment_name
 from aiCore.services.embedding_api_service import get_api_embedding_service
+from aiCore.services.feedback_extraction_service import get_feedback_extraction_service
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class TaxonomyDiscoveryService:
     """Cluster-based full-corpus aspect discovery.
 
     Config (env):
-      DISCOVERY_DISTILL           "on" to LLM-distill each comment before embedding (default off)
+      DISCOVERY_QUALIFY           "on" to LLM extract-and-qualify + filter non-feedback (default on)
       DISCOVERY_UMAP_NEIGHBORS    UMAP n_neighbors (default 15)
       DISCOVERY_UMAP_COMPONENTS   UMAP target dims (default 10)
       DISCOVERY_MIN_CLUSTER_SIZE  HDBSCAN min_cluster_size (default 5)
@@ -49,7 +50,7 @@ class TaxonomyDiscoveryService:
 
     def __init__(self):
         self.deployment = get_azure_deployment_name()
-        self.distill = os.getenv("DISCOVERY_DISTILL", "off").strip().lower() in ("on", "true", "1")
+        self.qualify = os.getenv("DISCOVERY_QUALIFY", "on").strip().lower() in ("on", "true", "1")
         self.umap_neighbors = int(os.getenv("DISCOVERY_UMAP_NEIGHBORS", "15"))
         self.umap_components = int(os.getenv("DISCOVERY_UMAP_COMPONENTS", "10"))
         self.min_cluster_size = int(os.getenv("DISCOVERY_MIN_CLUSTER_SIZE", "5"))
@@ -62,8 +63,8 @@ class TaxonomyDiscoveryService:
         self.request_timeout = float(os.getenv("DISCOVERY_REQUEST_TIMEOUT", "60"))
         self.max_retries = int(os.getenv("DISCOVERY_MAX_RETRIES", "4"))
         logger.info(
-            "TaxonomyDiscoveryService initialized: distill=%s umap(n=%d,d=%d) min_cluster=%d max_aspects=%d",
-            self.distill, self.umap_neighbors, self.umap_components, self.min_cluster_size, self.max_aspects,
+            "TaxonomyDiscoveryService initialized: qualify=%s umap(n=%d,d=%d) min_cluster=%d max_aspects=%d",
+            self.qualify, self.umap_neighbors, self.umap_components, self.min_cluster_size, self.max_aspects,
         )
 
     # ---- public API (matches AspectSuggestionService) ----
@@ -71,24 +72,40 @@ class TaxonomyDiscoveryService:
         if not comments:
             raise ValueError("Comments list cannot be empty")
 
-        clean = [c for c in comments if c and c.strip()]
-        if not clean:
+        raw = [c for c in comments if c and c.strip()]
+        if not raw:
             raise ValueError("No non-empty comments to discover from")
 
-        # Small corpus: clustering is unreliable below a threshold; the whole set is
-        # already small enough to induce over directly (still full-corpus).
-        if len(clean) < self.min_for_cluster:
-            logger.info("Discovery: %d comments < %d -> direct induction (no clustering)", len(clean), self.min_for_cluster)
-            result = self._induce_directly(clean, company_name)
-            result.update({"total_comments": len(comments), "method": "direct", "distilled": False, "n_clusters": 0, "n_outliers": 0})
+        # Universal front door: LLM extract-and-qualify cleans any format (review, ticket
+        # thread, survey...) and filters non-feedback (acknowledgments / system / empty).
+        # Customer-agnostic — no per-format rules. Clustering/labeling then run on the
+        # distilled, signal-only content.
+        n_filtered = 0
+        if self.qualify:
+            qualified = get_feedback_extraction_service().qualify(raw)
+            work = [q["core_content"] for q in qualified if q["has_signal"]]
+            n_filtered = len(raw) - len(work)
+            if not work:
+                raise ValueError(
+                    f"No substantive feedback found: all {len(raw)} items were "
+                    "acknowledgments / system messages / empty."
+                )
+        else:
+            work = raw
+
+        # Small corpus: clustering is unreliable below a threshold; induce directly.
+        if len(work) < self.min_for_cluster:
+            logger.info("Discovery: %d signal items < %d -> direct induction", len(work), self.min_for_cluster)
+            result = self._induce_directly(work, company_name)
+            result.update({"total_comments": len(comments), "n_signal": len(work),
+                            "n_filtered": n_filtered, "method": "direct", "n_clusters": 0, "n_outliers": 0})
             return result
 
-        texts = self._prepare(clean)
-        vectors = get_api_embedding_service().embed(texts)
+        vectors = get_api_embedding_service().embed(work)
         reduced = self._reduce(vectors)
         labels = self._cluster(reduced)
 
-        # Group comment indices by cluster label (-1 = outliers).
+        # Group indices by cluster label (-1 = outliers).
         groups: Dict[int, List[int]] = defaultdict(list)
         for idx, lab in enumerate(labels):
             groups[int(lab)].append(idx)
@@ -97,34 +114,36 @@ class TaxonomyDiscoveryService:
         for lab, members in groups.items():
             if lab == -1:
                 continue
-            sample = self._sample([clean[i] for i in members], self.label_sample)
+            sample = self._sample([work[i] for i in members], self.label_sample)
             aspect = self._label_cluster(sample, company_name)
             if aspect:
                 candidates.append(aspect)
 
         outliers = groups.get(-1, [])
         if len(outliers) >= self.outlier_min:
-            outlier_sample = self._sample([clean[i] for i in outliers], self.label_sample * 2)
+            outlier_sample = self._sample([work[i] for i in outliers], self.label_sample * 2)
             candidates.extend(self._mine_outliers(outlier_sample, company_name))
 
         if not candidates:
             # Clustering produced nothing usable -> fall back to direct induction.
             logger.warning("Discovery: clustering produced no labeled aspects -> direct induction fallback")
-            result = self._induce_directly(clean, company_name)
-            result.update({"total_comments": len(comments), "method": "direct_fallback", "distilled": self.distill, "n_clusters": 0, "n_outliers": len(outliers)})
+            result = self._induce_directly(work, company_name)
+            result.update({"total_comments": len(comments), "n_signal": len(work),
+                            "n_filtered": n_filtered, "method": "direct_fallback", "n_clusters": 0, "n_outliers": len(outliers)})
             return result
 
-        refined = self._refine(candidates, clean, company_name)
+        refined = self._refine(candidates, work, company_name)
         refined.update({
             "total_comments": len(comments),
+            "n_signal": len(work),
+            "n_filtered": n_filtered,
             "method": "cluster",
-            "distilled": self.distill,
             "n_clusters": len([k for k in groups if k != -1]),
             "n_outliers": len(outliers),
         })
         logger.info(
-            "Discovery complete: domain='%s' aspects=%d clusters=%d outliers=%d",
-            refined["identified_domain"], len(refined["suggested_aspects"]), refined["n_clusters"], len(outliers),
+            "Discovery complete: domain='%s' aspects=%d clusters=%d outliers=%d filtered=%d",
+            refined["identified_domain"], len(refined["suggested_aspects"]), refined["n_clusters"], len(outliers), n_filtered,
         )
         return refined
 
@@ -138,25 +157,6 @@ class TaxonomyDiscoveryService:
         return await loop.run_in_executor(None, lambda: self.discover(comments, company_name=company_name))
 
     # ---- pipeline steps ----
-    def _prepare(self, comments: List[str]) -> List[str]:
-        """Distill each comment to its core issue (optional), else pass through."""
-        if not self.distill:
-            return comments
-        return [self._distill_one(c) for c in comments]
-
-    def _distill_one(self, comment: str) -> str:
-        system = (
-            "Reduce the customer feedback to its single core issue/topic in <=12 words. "
-            "Keep the user's own terminology. Respond as JSON: {\"issue\": \"...\"}."
-        )
-        try:
-            data = self._llm_json(system, comment)
-            issue = str(data.get("issue", "")).strip()
-            return issue or comment
-        except Exception as e:
-            logger.warning("Distill failed for one comment, using raw text: %s", e)
-            return comment
-
     def _reduce(self, vectors: List[List[float]]):
         import numpy as np
         import umap

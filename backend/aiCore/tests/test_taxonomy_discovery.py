@@ -80,11 +80,19 @@ def _fake_client():
     return _Client()
 
 
+class _PassthroughQualify:
+    """Qualify stub: keep every comment as signal (clustering tests focus on clustering)."""
+    def qualify(self, comments, is_cancelled=None):
+        return [{"index": i, "core_content": c, "kind": "feedback", "has_signal": True}
+                for i, c in enumerate(comments)]
+
+
 def _patched():
     class _Az:
         def get_client(self): return _fake_client()
     return [
         patch.object(mod, "get_api_embedding_service", lambda: _fake_embeddings()),
+        patch.object(mod, "get_feedback_extraction_service", lambda: _PassthroughQualify()),
         patch.object(mod, "get_azure_client", lambda: _Az()),
     ]
 
