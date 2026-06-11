@@ -13,9 +13,12 @@ step (LocalSentimentService).
 import os
 import json
 import time
+import random
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional
+
+from openai import BadRequestError
 
 from aiCore.services.openai_client import get_azure_client, get_azure_deployment_name
 
@@ -23,6 +26,11 @@ logger = logging.getLogger(__name__)
 
 # Maps LLM confidence to aspect_scores; ordering matters more than exact values.
 _CONFIDENCE_SCORE = {"high": 0.90, "medium": 0.72, "low": 0.55}
+
+
+def _norm(s: Any) -> str:
+    """Normalize an aspect label for matching: casefold + collapse whitespace."""
+    return " ".join(str(s).lower().split())
 
 
 class TaskCancelled(Exception):
@@ -38,6 +46,7 @@ class LLMAspectService:
       LLM_ASPECT_MAX_RETRIES   retries per comment on transient error (default 4)
       LLM_ASPECT_REASONING     reasoning_effort: minimal|low|medium|high (default low)
       LLM_ASPECT_MAX_TOKENS    max_completion_tokens (default 2000; reasoning model needs headroom)
+      LLM_ASPECT_REQUEST_TIMEOUT  per-call timeout in seconds (default 60)
     """
 
     def __init__(self):
@@ -47,6 +56,8 @@ class LLMAspectService:
         self.max_retries = int(os.getenv("LLM_ASPECT_MAX_RETRIES", "4"))
         self.reasoning_effort = os.getenv("LLM_ASPECT_REASONING", "low").strip().lower()
         self.max_tokens = int(os.getenv("LLM_ASPECT_MAX_TOKENS", "2000"))
+        self.request_timeout = float(os.getenv("LLM_ASPECT_REQUEST_TIMEOUT", "60"))
+        self.MODEL_NAME = f"llm:{self.deployment}"  # for local_processing_service model_info
         logger.info(
             "LLMAspectService initialized: deployment=%s concurrency=%d max_aspects=%d "
             "reasoning=%s",
@@ -69,9 +80,10 @@ class LLMAspectService:
             # No taxonomy -> nothing maps. Preserve length/order.
             return [self._empty_result(i, c, aspects) for i, c in enumerate(comments)]
 
-        # Lowercase lookup to validate/repair model output (drop hallucinations, fix casing).
+        # Normalized exact-match lookup (casefold + whitespace-collapse) to map model
+        # output back to canonical labels; anything that doesn't match is dropped.
         canonical = list(dict.fromkeys(a for a in aspects if a and a.strip()))
-        lookup = {a.lower().strip(): a for a in canonical}
+        lookup = {_norm(a): a for a in canonical}
 
         logger.info(
             "LLM aspect classification: %d comments x %d aspects (run: %s, concurrency=%d)",
@@ -97,7 +109,9 @@ class LLMAspectService:
                     results[idx] = fut.result()
                 except Exception as e:
                     # Loud failure: don't swallow into UNMAPPED, or an outage (bad key /
-                    # Azure down) would look like a "100% unmapped" success.
+                    # Azure down) would look like a "100% unmapped" success. Cancel queued
+                    # futures so the abort doesn't drain the whole batch first.
+                    pool.shutdown(wait=False, cancel_futures=True)
                     raise RuntimeError(
                         f"LLM aspect classification failed on comment {idx}: {e}"
                     ) from e
@@ -109,6 +123,7 @@ class LLMAspectService:
                     except Exception:
                         pass
                 if is_cancelled and done % 10 == 0 and is_cancelled():
+                    pool.shutdown(wait=False, cancel_futures=True)
                     raise TaskCancelled("Cancelled during LLM aspect classification")
 
         elapsed = time.time() - t0
@@ -128,6 +143,10 @@ class LLMAspectService:
             return self._empty_result(0, comment, canonical)
 
         messages = self._build_messages(text, canonical)
+        # Per-call timeout + max_retries=0 so this loop is the only retrier (the SDK
+        # otherwise adds its own retries and a 600s default timeout, compounding hangs).
+        call = client.with_options(timeout=self.request_timeout, max_retries=0)
+        reasoning = self.reasoning_effort  # local copy; never mutate the shared singleton
         last_err = None
         for attempt in range(self.max_retries + 1):
             try:
@@ -137,25 +156,25 @@ class LLMAspectService:
                     max_completion_tokens=self.max_tokens,
                     response_format={"type": "json_object"},
                 )
-                if self.reasoning_effort:
-                    kwargs["reasoning_effort"] = self.reasoning_effort
-                resp = client.chat.completions.create(**kwargs)
+                if reasoning:
+                    kwargs["reasoning_effort"] = reasoning
+                resp = call.chat.completions.create(**kwargs)
                 content = resp.choices[0].message.content or "{}"
                 return self._parse(content, comment, canonical, lookup)
-            except TypeError as e:
-                # reasoning_effort unsupported for this api/model -> retry without it
-                if "reasoning_effort" in str(e):
-                    self.reasoning_effort = ""
+            except (TypeError, BadRequestError) as e:
+                # reasoning_effort unsupported for this model/api -> drop it and retry once
+                if reasoning and "reasoning_effort" in str(e).lower():
+                    reasoning = ""
                     continue
                 last_err = e
                 break
             except Exception as e:
                 last_err = e
                 msg = str(e).lower()
-                # Backoff on rate limit / transient; otherwise stop early
+                # Backoff with jitter on rate limit / transient; otherwise stop early
                 transient = any(s in msg for s in ("429", "rate limit", "timeout", "temporar", "503", "500", "overload"))
                 if attempt < self.max_retries and transient:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2 ** attempt + random.uniform(0, 1))
                     continue
                 break
         raise RuntimeError(f"LLM classify failed after retries: {last_err}")
@@ -196,14 +215,7 @@ class LLMAspectService:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            raw = str(item.get("aspect", "")).lower().strip()
-            label = lookup.get(raw)
-            if label is None:
-                # tolerate minor variations: substring match against a canonical label
-                for k, v in lookup.items():
-                    if raw and (raw in k or k in raw):
-                        label = v
-                        break
+            label = lookup.get(_norm(item.get("aspect", "")))
             if label is None or label in matched_aspects:
                 continue  # drop hallucinated / duplicate
             conf = str(item.get("confidence", "medium")).lower().strip()
