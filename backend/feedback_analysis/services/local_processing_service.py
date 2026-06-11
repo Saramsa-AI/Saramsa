@@ -291,8 +291,11 @@ class LocalProcessingService:
         3-class downstream counts — honest, vs a forced positive/negative.
         """
         def to_result(label: str) -> SentimentResult:
+            # NONE (no opinion) -> NEUTRAL for the 3-class downstream. confidence is a
+            # STRING ("HIGH"/"MEDIUM"/"LOW") per the contract — downstream calls .upper()
+            # on the confidence-distribution key, so a float would crash insights views.
             s = label if label in ("POSITIVE", "NEGATIVE", "NEUTRAL") else "NEUTRAL"
-            return SentimentResult(sentiment=s, confidence=1.0, raw_scores={}, processing_time=0.0)
+            return SentimentResult(sentiment=s, confidence="HIGH", raw_scores={}, processing_time=0.0)
 
         combined: List[AspectMatch] = []
         for r in similarity_results:
