@@ -153,7 +153,7 @@ class TaskService:
 
         def _regenerate_taxonomy(input_comments, mapping_rate=None):
             import asyncio
-            from feedback_analysis.services.aspect_suggestion_service import AspectSuggestionService
+            from feedback_analysis.services.aspect_discovery_factory import get_aspect_discovery_service
             from feedback_analysis.services.taxonomy_service import get_taxonomy_service
 
             taxonomy_service = get_taxonomy_service()
@@ -185,7 +185,7 @@ class TaskService:
                 if not partial:
                     return None
 
-            suggestion_service = AspectSuggestionService()
+            suggestion_service = get_aspect_discovery_service()
             result = asyncio.run(suggestion_service.suggest_aspects(
                 comments=input_comments,
                 company_name=company_name,

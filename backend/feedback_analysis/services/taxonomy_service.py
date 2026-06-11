@@ -16,7 +16,7 @@ from django.db import transaction
 
 from ..repositories import ProjectTaxonomyRepository
 from ..models import Taxonomy
-from .aspect_suggestion_service import get_aspect_suggestion_service
+from .aspect_discovery_factory import get_aspect_discovery_service
 from asgiref.sync import async_to_sync
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ class TaxonomyService:
         if comments is None:
             logger.warning("No active taxonomy found and no comments provided for bootstrap")
             return None
-        aspect_service = get_aspect_suggestion_service()
+        aspect_service = get_aspect_discovery_service()
         aspect_result = async_to_sync(aspect_service.suggest_aspects)(comments)
         suggested_aspects = aspect_result.get("suggested_aspects", [])
         return self.create_initial_taxonomy(project_id, suggested_aspects, source="gpt")
