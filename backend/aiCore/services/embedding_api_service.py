@@ -10,6 +10,7 @@ deployment is read from AZURE_OPENAI_EMBEDDING_DEPLOYMENT.
 """
 
 import os
+import re
 import time
 import random
 import logging
@@ -28,18 +29,18 @@ class ApiEmbeddingService:
     Config (env):
       AZURE_OPENAI_EMBEDDING_DEPLOYMENT  deployment name (default text-embedding-3-small)
       EMBEDDING_DIMENSIONS               Matryoshka truncation, e.g. 1024 (default: native)
-      EMBEDDING_BATCH_SIZE               inputs per request (default 256)
+      EMBEDDING_BATCH_SIZE               inputs per request (default 64; smaller eases tight quotas)
       EMBEDDING_REQUEST_TIMEOUT          per-call seconds (default 60)
-      EMBEDDING_MAX_RETRIES              transient retries (default 4)
+      EMBEDDING_MAX_RETRIES              transient retries (default 5; honors Retry-After)
     """
 
     def __init__(self):
         self.deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
         dims = os.getenv("EMBEDDING_DIMENSIONS")
         self.dimensions: Optional[int] = int(dims) if dims else None
-        self.batch_size = int(os.getenv("EMBEDDING_BATCH_SIZE", "256"))
+        self.batch_size = int(os.getenv("EMBEDDING_BATCH_SIZE", "64"))
         self.request_timeout = float(os.getenv("EMBEDDING_REQUEST_TIMEOUT", "60"))
-        self.max_retries = int(os.getenv("EMBEDDING_MAX_RETRIES", "4"))
+        self.max_retries = int(os.getenv("EMBEDDING_MAX_RETRIES", "5"))
         logger.info(
             "ApiEmbeddingService initialized: deployment=%s dimensions=%s batch=%d",
             self.deployment, self.dimensions or "native", self.batch_size,
@@ -83,10 +84,27 @@ class ApiEmbeddingService:
                 msg = str(e).lower()
                 transient = any(s in msg for s in ("429", "rate limit", "timeout", "temporar", "503", "500", "overload"))
                 if attempt < self.max_retries and transient:
-                    time.sleep(2 ** attempt + random.uniform(0, 1))
+                    wait = self._retry_after(e)
+                    if wait is None:
+                        wait = 2 ** attempt + random.uniform(0, 1)
+                    time.sleep(min(wait + 1, 65))  # honor Retry-After (Azure often asks 60s), capped
                     continue
                 break
         raise RuntimeError(f"Embedding request failed after retries: {last_err}")
+
+    @staticmethod
+    def _retry_after(e) -> Optional[float]:
+        """Seconds the API asked us to wait (Retry-After header or message), else None."""
+        resp = getattr(e, "response", None)
+        if resp is not None and hasattr(resp, "headers"):
+            ra = resp.headers.get("retry-after")
+            if ra:
+                try:
+                    return float(ra)
+                except ValueError:
+                    pass
+        m = re.search(r"retry after (\d+)", str(e).lower())
+        return float(m.group(1)) if m else None
 
 
 _api_embedding_service = None
