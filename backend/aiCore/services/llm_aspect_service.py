@@ -100,7 +100,7 @@ class LLMAspectService:
 
         with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
             future_to_idx = {
-                pool.submit(self._classify_one, client, comments[i], canonical, lookup): i
+                pool.submit(self._classify_one, client, i, comments[i], canonical, lookup): i
                 for i in range(len(comments))
             }
             for fut in as_completed(future_to_idx):
@@ -115,7 +115,6 @@ class LLMAspectService:
                     raise RuntimeError(
                         f"LLM aspect classification failed on comment {idx}: {e}"
                     ) from e
-                results[idx]["comment_id"] = idx
                 done += 1
                 if on_progress and done % 25 == 0:
                     try:
@@ -136,11 +135,11 @@ class LLMAspectService:
         return results  # type: ignore[return-value]
 
     def _classify_one(
-        self, client, comment: str, canonical: List[str], lookup: Dict[str, str]
+        self, client, idx: int, comment: str, canonical: List[str], lookup: Dict[str, str]
     ) -> Dict[str, Any]:
         text = (comment or "").strip()
         if not text:
-            return self._empty_result(0, comment, canonical)
+            return self._empty_result(idx, comment, canonical)
 
         messages = self._build_messages(text, canonical)
         # Per-call timeout + max_retries=0 so this loop is the only retrier (the SDK
@@ -160,7 +159,7 @@ class LLMAspectService:
                     kwargs["reasoning_effort"] = reasoning
                 resp = call.chat.completions.create(**kwargs)
                 content = resp.choices[0].message.content or "{}"
-                return self._parse(content, comment, canonical, lookup)
+                return self._parse(content, idx, comment, canonical, lookup)
             except (TypeError, BadRequestError) as e:
                 # reasoning_effort unsupported for this model/api -> drop it and retry once
                 if reasoning and "reasoning_effort" in str(e).lower():
@@ -202,7 +201,7 @@ class LLMAspectService:
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
     def _parse(
-        self, content: str, comment: str, canonical: List[str], lookup: Dict[str, str]
+        self, content: str, idx: int, comment: str, canonical: List[str], lookup: Dict[str, str]
     ) -> Dict[str, Any]:
         matched_aspects: List[str] = []
         aspect_scores = {a: 0.0 for a in canonical}
@@ -226,7 +225,7 @@ class LLMAspectService:
                 break
 
         return {
-            "comment_id": 0,
+            "comment_id": idx,
             "comment_text": comment,
             "matched_aspects": matched_aspects if matched_aspects else ["UNMAPPED"],
             "aspect_scores": aspect_scores,
