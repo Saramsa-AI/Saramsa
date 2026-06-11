@@ -38,4 +38,4 @@ EXPOSE 8000
 #     deploy is marked failed and the OLD container keeps serving. Safer
 #     than the old behavior where a broken migration silently shipped.
 #   - we use `exec` so gunicorn becomes PID 1, receiving signals properly
-CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn --bind=0.0.0.0:8000 --timeout 600 --workers 2 --access-logfile - --error-logfile - --log-level info apis.wsgi:application"]
+CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn --bind=0.0.0.0:8000 --timeout 120 --workers 2 --worker-class gthread --threads 8 --access-logfile - --error-logfile - --log-level info apis.wsgi:application"]
