@@ -60,6 +60,6 @@ def get_aspect_service():
         from aiCore.services.llm_aspect_service import get_llm_aspect_service
         return get_llm_aspect_service()
     else:
-        logger.warning(f"Unknown ASPECT_METHOD='{method}', falling back to llm")
-        from aiCore.services.llm_aspect_service import get_llm_aspect_service
-        return get_llm_aspect_service()
+        raise ValueError(
+            f"Invalid ASPECT_METHOD='{method}'. Valid values: llm (default), ensemble, nli, similarity."
+        )

@@ -109,9 +109,15 @@ class LLMAspectService:
                 idx = future_to_idx[fut]
                 try:
                     results[idx] = fut.result()
-                except Exception as e:  # never let one comment kill the whole run
-                    logger.warning("LLM aspect classify failed for comment %d: %s", idx, e)
-                    results[idx] = self._empty_result(idx, comments[idx], canonical)
+                except Exception as e:
+                    # Loud failure: do NOT swallow into UNMAPPED. Silently converting a
+                    # failed call to "no aspects" would hide an outage (bad key / Azure
+                    # down) as a fake "100% unmapped" success. A comment that still
+                    # errors after retries aborts the whole run.
+                    raise RuntimeError(
+                        f"LLM aspect classification failed on comment {idx}: {e}"
+                    ) from e
+                results[idx]["comment_id"] = idx
                 done += 1
                 if on_progress and done % 25 == 0:
                     try:
@@ -123,13 +129,8 @@ class LLMAspectService:
                     # finish but we bail out fast.
                     raise TaskCancelled("Cancelled during LLM aspect classification")
 
-        # Fill comment_id (input order is guaranteed by index assignment above)
-        for i, r in enumerate(results):
-            if r is None:
-                results[i] = self._empty_result(i, comments[i], canonical)
-            else:
-                r["comment_id"] = i
-
+        # comment_id was assigned inline as each future completed; with loud-failure
+        # semantics every index is set here (or we already raised above).
         elapsed = time.time() - t0
         mapped = sum(1 for r in results if r and r["matched_aspects"] and r["matched_aspects"] != ["UNMAPPED"])
         logger.info(
