@@ -282,6 +282,16 @@ CELERY_TASK_PUBLISH_RETRY_POLICY = {
     'interval_max': 1,
 }
 
+# Reliability: ack a task only AFTER it finishes (not on pickup), so a worker that
+# dies mid-task doesn't silently lose the job — the broker re-delivers it. The task
+# is idempotent (TaskService skips an analysis that already has saved results), so a
+# re-delivery doesn't re-charge LLM calls or duplicate data. reject_on_worker_lost
+# makes re-delivery happen even on a hard kill (OOM/SIGKILL), not just graceful exit.
+# Safe because task_time_limit (35m) < broker visibility_timeout (60m): a long task is
+# killed before it could be re-delivered, so no concurrent double-execution.
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 if not DATABASE_URL:
     raise RuntimeError(

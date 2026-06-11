@@ -369,6 +369,14 @@ class AnalysisRepository:
             logger.error(f"Error saving analysis data: {e}")
             return None
 
+    def analysis_has_result(self, analysis_id: str) -> bool:
+        """True if this analysis already has saved results — the durable 'done' signal
+        for the task-re-delivery idempotency guard (see TaskService)."""
+        obj = Analysis.objects.filter(id=str(analysis_id)).only("result").first()
+        if not obj or not isinstance(obj.result, dict):
+            return False
+        return bool(obj.result.get("features") or obj.result.get("insights"))
+
     def update_project_last_analysis(self, project_id: str, analysis_id: str) -> bool:
         updated = Project.objects.filter(id=str(project_id)).update(last_analysis_id=str(analysis_id), updated_at=timezone.now())
         return updated > 0
