@@ -213,6 +213,17 @@ if _redis_ssl_cert_reqs_env not in _redis_ssl_cert_map:
 _redis_ssl_cert_reqs = _redis_ssl_cert_map[_redis_ssl_cert_reqs_env]
 _redis_ssl_cert_reqs_url = _redis_ssl_cert_reqs_env
 
+# Redis transport resilience (broker + result backend). Bounds a Redis blip to
+# seconds instead of kombu's 120s default / the OS-default ~135s hang. Small-scale
+# tuned (~50-100 customers); mirrors Azure Cache for Redis guidance.
+_REDIS_TRANSPORT_RESILIENCE = {
+    'socket_timeout': 5,
+    'socket_connect_timeout': 5,
+    'socket_keepalive': True,
+    'retry_on_timeout': True,
+    'health_check_interval': 30,
+}
+
 # Add SSL certificate requirements to Redis URLs for Azure Redis
 if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
     # Append ssl_cert_reqs parameter to URL if not already present
@@ -223,9 +234,10 @@ if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
         os.environ['CELERY_BROKER_URL'] = CELERY_BROKER_URL
     CELERY_BROKER_TRANSPORT_OPTIONS = {
         'ssl_cert_reqs': _redis_ssl_cert_reqs,
+        **_REDIS_TRANSPORT_RESILIENCE,
     }
 else:
-    CELERY_BROKER_TRANSPORT_OPTIONS = {}
+    CELERY_BROKER_TRANSPORT_OPTIONS = dict(_REDIS_TRANSPORT_RESILIENCE)
 
 if CELERY_RESULT_BACKEND and CELERY_RESULT_BACKEND.startswith('rediss://'):
     # Append ssl_cert_reqs parameter to URL if not already present
@@ -236,14 +248,26 @@ if CELERY_RESULT_BACKEND and CELERY_RESULT_BACKEND.startswith('rediss://'):
         os.environ['CELERY_RESULT_BACKEND'] = CELERY_RESULT_BACKEND
     CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
         'ssl_cert_reqs': _redis_ssl_cert_reqs,
+        **_REDIS_TRANSPORT_RESILIENCE,
+        'retry_policy': {'timeout': 5.0},
     }
 else:
-    CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {}
+    CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = dict(_REDIS_TRANSPORT_RESILIENCE)
 
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
+
+# Bound task dispatch (.delay()/apply_async) so a broker blip fails fast in the
+# web request instead of hanging on publish.
+CELERY_TASK_PUBLISH_RETRY = True
+CELERY_TASK_PUBLISH_RETRY_POLICY = {
+    'max_retries': 2,
+    'interval_start': 0,
+    'interval_step': 0.5,
+    'interval_max': 1,
+}
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 if not DATABASE_URL:
