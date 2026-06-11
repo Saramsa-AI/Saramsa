@@ -308,16 +308,20 @@ if not _database_host.endswith(".neon.tech") and not _test_db_bypass:
 DATABASES = {
     "default": dj_database_url.parse(
         DATABASE_URL,
-        conn_max_age=int(os.getenv("DB_CONN_MAX_AGE", "600")),
+        # CONN_MAX_AGE=0 (connect/close per request): Neon's PgBouncer pooler already
+        # owns connection reuse, so persistent Django connections add little — but they
+        # DO go stale across Neon's scale-to-zero suspends. 0 removes that failure mode
+        # entirely; the per-request connect is cheap because it hits PgBouncer, not the
+        # compute. Override via DB_CONN_MAX_AGE if persistent connections are ever wanted.
+        conn_max_age=int(os.getenv("DB_CONN_MAX_AGE", "0")),
         ssl_require=_as_bool(os.getenv("DB_SSL_REQUIRE", "true")),
     )
 }
-# These are PER-DATABASE options (a top-level CONN_HEALTH_CHECKS is a no-op).
-#  - CONN_HEALTH_CHECKS: with Neon's scale-to-zero + CONN_MAX_AGE>0, a reused
-#    connection can go stale during idle; ping + reconnect before a request so the
-#    first request after idle doesn't fail with "server closed the connection".
-#  - DISABLE_SERVER_SIDE_CURSORS: required with Neon's PgBouncer (transaction-pooling
-#    mode), where server-side cursors break across pooled connections.
+# Per-database options (a top-level CONN_HEALTH_CHECKS is a no-op).
+#  - CONN_HEALTH_CHECKS: ping + reconnect a stale reused connection. Only relevant if
+#    DB_CONN_MAX_AGE>0; harmless at 0. Kept as a safe default for that override.
+#  - DISABLE_SERVER_SIDE_CURSORS: required with PgBouncer transaction-pooling mode
+#    (server-side cursors break across pooled connections) — independent of conn age.
 DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
 
