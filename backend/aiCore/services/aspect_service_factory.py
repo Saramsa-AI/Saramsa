@@ -6,6 +6,7 @@ Selects aspect classification method based on ASPECT_METHOD environment variable
   ASPECT_METHOD=ensemble   -> EnsembleAspectService (NLI + Embedding + Keywords, best quality)
   ASPECT_METHOD=nli        -> ZeroShotAspectService (default, NLI only)
   ASPECT_METHOD=similarity -> SimilarityAspectService (legacy, embedding only)
+  ASPECT_METHOD=llm        -> LLMAspectService (Azure OpenAI, one call/comment, concurrent)
 """
 
 import os
@@ -49,6 +50,10 @@ def get_aspect_service():
         logger.info("Using cosine-similarity aspect classification (ASPECT_METHOD=similarity)")
         from aiCore.services.similarity_aspect_service import get_similarity_aspect_service
         return get_similarity_aspect_service()
+    elif method == "llm":
+        logger.info("Using LLM aspect classification (ASPECT_METHOD=llm)")
+        from aiCore.services.llm_aspect_service import get_llm_aspect_service
+        return get_llm_aspect_service()
     else:
         logger.warning(f"Unknown ASPECT_METHOD='{method}', defaulting to ensemble")
         return get_aspect_service()  # Recurse with default
