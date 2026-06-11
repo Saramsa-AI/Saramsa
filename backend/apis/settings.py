@@ -312,11 +312,17 @@ DATABASES = {
         ssl_require=_as_bool(os.getenv("DB_SSL_REQUIRE", "true")),
     )
 }
+# These are PER-DATABASE options (a top-level CONN_HEALTH_CHECKS is a no-op).
+#  - CONN_HEALTH_CHECKS: with Neon's scale-to-zero + CONN_MAX_AGE>0, a reused
+#    connection can go stale during idle; ping + reconnect before a request so the
+#    first request after idle doesn't fail with "server closed the connection".
+#  - DISABLE_SERVER_SIDE_CURSORS: required with Neon's PgBouncer (transaction-pooling
+#    mode), where server-side cursors break across pooled connections.
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
+DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
 
 # Neon best-practice: use the *-pooler.* hostname in DATABASE_URL so PgBouncer
-# handles connection reuse.  CONN_HEALTH_CHECKS avoids handing a stale pooled
-# connection to a request (Django 4.1+).
-CONN_HEALTH_CHECKS = True
+# handles connection reuse.
 if "-pooler." not in _database_host:
     import warnings
     warnings.warn(
