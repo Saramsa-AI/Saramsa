@@ -3,10 +3,15 @@ Aspect Service Factory
 
 Selects aspect classification method based on ASPECT_METHOD environment variable.
 
-  ASPECT_METHOD=ensemble   -> EnsembleAspectService (NLI + Embedding + Keywords, best quality)
-  ASPECT_METHOD=nli        -> ZeroShotAspectService (default, NLI only)
+  ASPECT_METHOD=llm        -> LLMAspectService (Azure OpenAI, one call/comment, concurrent) [DEFAULT]
+  ASPECT_METHOD=ensemble   -> EnsembleAspectService (NLI + Embedding + Keywords)
+  ASPECT_METHOD=nli        -> ZeroShotAspectService (NLI only)
   ASPECT_METHOD=similarity -> SimilarityAspectService (legacy, embedding only)
-  ASPECT_METHOD=llm        -> LLMAspectService (Azure OpenAI, one call/comment, concurrent)
+
+Default is `llm`: the CPU NLI/ensemble path runs one cross-encoder pass per
+(comment x aspect) pair and times out on real uploads (GPU disabled). The LLM
+path classifies each comment against all aspects in one call, concurrently.
+Set ASPECT_METHOD=ensemble to fall back to the local-model path.
 """
 
 import os
@@ -19,7 +24,7 @@ _ensemble_service = None
 
 def get_aspect_service():
     """Return the configured aspect classification service singleton."""
-    method = os.getenv("ASPECT_METHOD", "ensemble").strip().lower()
+    method = os.getenv("ASPECT_METHOD", "llm").strip().lower()
 
     if method == "ensemble":
         logger.info("Using ensemble aspect classification (ASPECT_METHOD=ensemble)")
@@ -55,5 +60,6 @@ def get_aspect_service():
         from aiCore.services.llm_aspect_service import get_llm_aspect_service
         return get_llm_aspect_service()
     else:
-        logger.warning(f"Unknown ASPECT_METHOD='{method}', defaulting to ensemble")
-        return get_aspect_service()  # Recurse with default
+        logger.warning(f"Unknown ASPECT_METHOD='{method}', falling back to llm")
+        from aiCore.services.llm_aspect_service import get_llm_aspect_service
+        return get_llm_aspect_service()
