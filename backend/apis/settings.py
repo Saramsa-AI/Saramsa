@@ -213,9 +213,12 @@ if _redis_ssl_cert_reqs_env not in _redis_ssl_cert_map:
 _redis_ssl_cert_reqs = _redis_ssl_cert_map[_redis_ssl_cert_reqs_env]
 _redis_ssl_cert_reqs_url = _redis_ssl_cert_reqs_env
 
-# Redis transport resilience (broker + result backend). Bounds a Redis blip to
-# seconds instead of kombu's 120s default / the OS-default ~135s hang. Small-scale
-# tuned (~50-100 customers); mirrors Azure Cache for Redis guidance.
+# Redis BROKER transport resilience — kombu honors these transport options, bounding
+# a blip to seconds instead of the OS-default ~135s hang. Small-scale tuned
+# (~50-100 customers); mirrors Azure Cache for Redis guidance.
+# NOTE: the result BACKEND ignores socket options here — Celery's RedisBackend reads
+# the dedicated CELERY_REDIS_* keys (set below); only retry_policy is read from its
+# transport options.
 _REDIS_TRANSPORT_RESILIENCE = {
     'socket_timeout': 5,
     'socket_connect_timeout': 5,
@@ -246,13 +249,23 @@ if CELERY_RESULT_BACKEND and CELERY_RESULT_BACKEND.startswith('rediss://'):
         CELERY_RESULT_BACKEND = f"{CELERY_RESULT_BACKEND}{separator}ssl_cert_reqs={_redis_ssl_cert_reqs_url}"
         # Update environment variable for celery.py
         os.environ['CELERY_RESULT_BACKEND'] = CELERY_RESULT_BACKEND
+    # Socket timeouts here would be IGNORED by RedisBackend (see CELERY_REDIS_* below);
+    # only retry_policy is honored from result-backend transport options.
     CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
         'ssl_cert_reqs': _redis_ssl_cert_reqs,
-        **_REDIS_TRANSPORT_RESILIENCE,
-        'retry_policy': {'timeout': 5.0},
+        'retry_policy': {'max_retries': 1, 'timeout': 5.0},
     }
 else:
-    CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = dict(_REDIS_TRANSPORT_RESILIENCE)
+    CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {'retry_policy': {'max_retries': 1, 'timeout': 5.0}}
+
+# Result-backend socket resilience — Celery's RedisBackend reads these dedicated
+# keys (NOT result_backend_transport_options). Without them a result read on a
+# vanished Redis blocks at the OS default (~135s).
+CELERY_REDIS_SOCKET_TIMEOUT = 5
+CELERY_REDIS_SOCKET_CONNECT_TIMEOUT = 5
+CELERY_REDIS_RETRY_ON_TIMEOUT = True
+CELERY_REDIS_SOCKET_KEEPALIVE = True
+CELERY_REDIS_BACKEND_HEALTH_CHECK_INTERVAL = 30
 
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
@@ -263,7 +276,7 @@ CELERY_TIMEZONE = 'UTC'
 # web request instead of hanging on publish.
 CELERY_TASK_PUBLISH_RETRY = True
 CELERY_TASK_PUBLISH_RETRY_POLICY = {
-    'max_retries': 2,
+    'max_retries': 1,  # 2 attempts; worst-case publish ~10s, not ~16s
     'interval_start': 0,
     'interval_step': 0.5,
     'interval_max': 1,
