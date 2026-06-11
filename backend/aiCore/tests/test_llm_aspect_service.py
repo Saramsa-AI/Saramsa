@@ -173,6 +173,34 @@ def test_empty_and_blank_inputs():
     assert [x["comment_id"] for x in r] == [0, 1]
 
 
+def test_sentiment_extracted():
+    aspects = ["Login", "Billing"]
+
+    def handler(kwargs):
+        return _resp(json.dumps({
+            "matched": [{"aspect": "Login", "confidence": "high", "sentiment": "negative"}],
+            "overall_sentiment": "negative",
+        }))
+
+    with _patched(handler):
+        r = LLMAspectService().classify_aspects(["cannot log in, totally broken"], aspects)
+    assert r[0]["overall_sentiment"] == "NEGATIVE"
+    assert r[0]["aspect_sentiments"] == {"Login": "NEGATIVE"}
+
+
+def test_sentiment_none_when_absent_or_operational():
+    aspects = ["Access"]
+
+    def handler(kwargs):
+        # model omits sentiment (operational text) -> per-aspect NONE, overall default NEUTRAL
+        return _resp(json.dumps({"matched": [{"aspect": "Access", "confidence": "high"}]}))
+
+    with _patched(handler):
+        r = LLMAspectService().classify_aspects(["we updated the access list"], aspects)
+    assert r[0]["aspect_sentiments"] == {"Access": "NONE"}
+    assert r[0]["overall_sentiment"] == "NEUTRAL"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

@@ -6,8 +6,9 @@ per comment, fired concurrently. Drop-in for the other aspect services: same
 `classify_aspects()` signature and return format
 ({comment_id, comment_text, matched_aspects, aspect_scores}) in input order.
 
-Selected via ASPECT_METHOD=llm. Aspects only — sentiment is a separate pipeline
-step (LocalSentimentService).
+Selected via ASPECT_METHOD=llm. One call per comment returns matched aspects AND
+sentiment (overall + per-aspect), with "NONE" when the text carries no opinion —
+so the pipeline can replace the local BERT sentiment model.
 """
 
 import os
@@ -31,6 +32,22 @@ _CONFIDENCE_SCORE = {"high": 0.90, "medium": 0.72, "low": 0.55}
 def _norm(s: Any) -> str:
     """Normalize an aspect label for matching: casefold + collapse whitespace."""
     return " ".join(str(s).lower().split())
+
+
+def _norm_sentiment(s: Any) -> str:
+    """Normalize a sentiment value to POSITIVE / NEGATIVE / NEUTRAL / NONE.
+
+    NONE = no opinion (factual/operational text). Kept distinct from NEUTRAL so the
+    pipeline can tell 'mild opinion' from 'no opinion at all'.
+    """
+    v = str(s).lower().strip()
+    if v.startswith("pos"):
+        return "POSITIVE"
+    if v.startswith("neg"):
+        return "NEGATIVE"
+    if v.startswith("neu"):
+        return "NEUTRAL"
+    return "NONE"
 
 
 class TaskCancelled(Exception):
@@ -190,13 +207,20 @@ class LLMAspectService:
             f"3. Return at most {self.max_aspects} categories, the most relevant first.\n"
             "4. If no category clearly applies, return an empty list.\n"
             "5. For each chosen category give a confidence: \"high\", \"medium\", or \"low\".\n"
+            "6. For each chosen category give the sentiment the comment expresses ABOUT that "
+            "category: \"positive\", \"negative\", \"neutral\", or \"none\". Use \"none\" when the "
+            "text is factual/operational with no opinion (e.g. a status update, a request, or an "
+            "acknowledgment) — do NOT invent sentiment that isn't there.\n"
+            "7. Give an overall sentiment for the whole comment (same four values).\n"
             "Respond with STRICT JSON only, no prose."
         )
         user = (
             f"Aspect categories:\n{numbered}\n\n"
             f"Feedback comment:\n\"\"\"\n{text}\n\"\"\"\n\n"
             "Return JSON exactly in this shape:\n"
-            '{"matched": [{"aspect": "<exact category name>", "confidence": "high|medium|low"}]}'
+            '{"matched": [{"aspect": "<exact category name>", "confidence": "high|medium|low", '
+            '"sentiment": "positive|negative|neutral|none"}], '
+            '"overall_sentiment": "positive|negative|neutral|none"}'
         )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -205,9 +229,13 @@ class LLMAspectService:
     ) -> Dict[str, Any]:
         matched_aspects: List[str] = []
         aspect_scores = {a: 0.0 for a in canonical}
+        aspect_sentiments: Dict[str, str] = {}
+        overall_sentiment = "NEUTRAL"
         try:
             data = json.loads(content)
             items = data.get("matched", []) if isinstance(data, dict) else []
+            if isinstance(data, dict) and data.get("overall_sentiment") is not None:
+                overall_sentiment = _norm_sentiment(data.get("overall_sentiment"))
         except Exception:
             items = []
 
@@ -221,6 +249,7 @@ class LLMAspectService:
             score = _CONFIDENCE_SCORE.get(conf, 0.72)
             matched_aspects.append(label)
             aspect_scores[label] = max(aspect_scores[label], score)
+            aspect_sentiments[label] = _norm_sentiment(item.get("sentiment"))
             if len(matched_aspects) >= self.max_aspects:
                 break
 
@@ -229,6 +258,8 @@ class LLMAspectService:
             "comment_text": comment,
             "matched_aspects": matched_aspects if matched_aspects else ["UNMAPPED"],
             "aspect_scores": aspect_scores,
+            "overall_sentiment": overall_sentiment,
+            "aspect_sentiments": aspect_sentiments,
         }
 
     @staticmethod
@@ -238,6 +269,8 @@ class LLMAspectService:
             "comment_text": comment,
             "matched_aspects": ["UNMAPPED"],
             "aspect_scores": {a: 0.0 for a in canonical},
+            "overall_sentiment": "NONE",
+            "aspect_sentiments": {},
         }
 
 

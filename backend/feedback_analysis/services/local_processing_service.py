@@ -8,6 +8,7 @@ Orchestrates the local ML pipeline:
   4. Lean GPT-5-mini synthesis (aggregates + evidence samples only)
 """
 
+import os
 import logging
 import time
 import re
@@ -220,16 +221,25 @@ class LocalProcessingService:
         for i, result in enumerate(similarity_results):
             result["comment_text"] = comments[i]
 
-        # Step 2: Aspect-relative sentiment
-        # 2a. Get comment-level sentiment for overall counts
-        with phase("sentiment_comment_level", n_items=len(stripped_comments)):
-            comment_sentiments = self.sentiment_service.classify_batch(stripped_comments)
-
-        # 2b. Compute aspect-relative sentiment (sentence-level, uses stripped text internally)
-        with phase("sentiment_aspect_relative", n_items=len(similarity_results)):
-            combined_matches = self._compute_aspect_relative_sentiment(
-                similarity_results, comment_sentiments, aspects, stripped_comments
-            )
+        # Step 2: sentiment. When the aspect service produced sentiment in the same LLM call
+        # (USE_LLM_SENTIMENT), use it directly — no local BERT model, no sentence-splitting,
+        # and "no opinion" is honestly NEUTRAL instead of a forced/wrong label.
+        use_llm_sentiment = (
+            os.getenv("USE_LLM_SENTIMENT", "off").strip().lower() in ("on", "true", "1")
+            and similarity_results and "overall_sentiment" in similarity_results[0]
+        )
+        if use_llm_sentiment:
+            with phase("sentiment_llm", n_items=len(similarity_results)):
+                combined_matches = self._apply_llm_sentiment(similarity_results)
+        else:
+            # 2a. Get comment-level sentiment for overall counts (local BERT model)
+            with phase("sentiment_comment_level", n_items=len(stripped_comments)):
+                comment_sentiments = self.sentiment_service.classify_batch(stripped_comments)
+            # 2b. Compute aspect-relative sentiment (sentence-level, uses stripped text internally)
+            with phase("sentiment_aspect_relative", n_items=len(similarity_results)):
+                combined_matches = self._compute_aspect_relative_sentiment(
+                    similarity_results, comment_sentiments, aspects, stripped_comments
+                )
 
         # Step 3: aggregate + keywords (now uses per-aspect sentiment)
         with phase("aggregate_stats", n_aspects=len(aspects)):
@@ -303,6 +313,38 @@ class LocalProcessingService:
         sentences = _SENTENCE_RE.split(text)
         sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 5]
         return sentences if sentences else [text]
+
+    def _apply_llm_sentiment(self, similarity_results: List[Dict[str, Any]]) -> List[AspectMatch]:
+        """Build combined matches from sentiment the LLM produced in the aspect call.
+
+        No local model and no sentence-splitting: the LLM already judged sentiment per
+        aspect + overall. "NONE" (no opinion / operational text) maps to NEUTRAL for the
+        3-class downstream counts — honest, vs a forced positive/negative.
+        """
+        def to_result(label: str) -> SentimentResult:
+            s = label if label in ("POSITIVE", "NEGATIVE", "NEUTRAL") else "NEUTRAL"
+            return SentimentResult(sentiment=s, confidence=1.0, raw_scores={}, processing_time=0.0)
+
+        combined: List[AspectMatch] = []
+        for r in similarity_results:
+            matched = r["matched_aspects"]
+            overall_label = r.get("overall_sentiment", "NEUTRAL")
+            asp_sent = r.get("aspect_sentiments", {}) or {}
+            aspect_sentiments: Dict[str, AspectSentiment] = {}
+            for a in matched:
+                if a == "UNMAPPED":
+                    continue
+                res = to_result(asp_sent.get(a, overall_label))
+                aspect_sentiments[a] = AspectSentiment(
+                    aspect=a, sentiment=res.sentiment, confidence=res.confidence,
+                    source_sentence=r["comment_text"], raw_scores=res.raw_scores,
+                )
+            combined.append(AspectMatch(
+                comment_id=r["comment_id"], comment_text=r["comment_text"],
+                matched_aspects=matched, aspect_scores=r["aspect_scores"],
+                comment_sentiment=to_result(overall_label), aspect_sentiments=aspect_sentiments,
+            ))
+        return combined
 
     def _compute_aspect_relative_sentiment(
         self,
