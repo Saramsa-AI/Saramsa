@@ -326,11 +326,21 @@ class TaskService:
             # endpoint can reuse them instead of paying for a second GPT call.
             'narration': pipeline_result.narration,
             'work_item_candidates': pipeline_result.work_item_candidates,
+            # Surface comments that failed classification (partial run) so the UX
+            # can show "Partially Completed" instead of silently dropping them.
+            'failed_comments': pipeline_result.failed_comments,
+            'failed_count': len(pipeline_result.failed_comments),
+            'partial': bool(pipeline_result.failed_comments),
         }
-        
+
         # Save using analysis service
         analysis_service = get_analysis_service()
         saved_result = analysis_service.save_analysis_data(insight_data)
+        # save_analysis_data marks the row "completed"; downgrade to the explicit
+        # partial state when some comments failed (durable; surfaced by the UX).
+        if pipeline_result.failed_comments:
+            from feedback_analysis.models import Analysis
+            analysis_service.mark_analysis_status(analysis_id, Analysis.STATUS_PARTIALLY_COMPLETED)
         
         if saved_result:
             logger.info(f"✅ Local ML analysis saved to PostgreSQL with ID: {saved_result.get('id')}")

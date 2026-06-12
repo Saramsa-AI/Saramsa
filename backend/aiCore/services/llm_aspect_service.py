@@ -75,6 +75,10 @@ class LLMAspectService:
         self.reasoning_effort = os.getenv("LLM_ASPECT_REASONING", "low").strip().lower()
         self.max_tokens = int(os.getenv("LLM_ASPECT_MAX_TOKENS", "2000"))
         self.request_timeout = float(os.getenv("LLM_ASPECT_REQUEST_TIMEOUT", "60"))
+        # Tolerate isolated per-comment failures (keep the successful ones, surface
+        # the failures); only abort the whole run if more than this fraction fails
+        # (a systemic outage). The circuit breaker also forces an abort.
+        self.max_failure_rate = float(os.getenv("LLM_PARTIAL_MAX_FAILURE_RATE", "0.5"))
         self.MODEL_NAME = f"llm:{self.deployment}"  # for local_processing_service model_info
         logger.info(
             "LLMAspectService initialized: deployment=%s concurrency=%d max_aspects=%d "
@@ -116,6 +120,7 @@ class LLMAspectService:
         if is_cancelled and is_cancelled():
             raise TaskCancelled("Cancelled before LLM aspect classification started")
 
+        failures: List[Dict[str, Any]] = []
         with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
             future_to_idx = {
                 pool.submit(self._classify_one, client, i, comments[i], canonical, lookup): i
@@ -125,14 +130,20 @@ class LLMAspectService:
                 idx = future_to_idx[fut]
                 try:
                     results[idx] = fut.result()
-                except Exception as e:
-                    # Loud failure: don't swallow into UNMAPPED, or an outage (bad key /
-                    # Azure down) would look like a "100% unmapped" success. Cancel queued
-                    # futures so the abort doesn't drain the whole batch first.
+                except CircuitOpenError as e:
+                    # Systemic outage (breaker open) -> fail loud, abort the whole run.
                     pool.shutdown(wait=False, cancel_futures=True)
                     raise RuntimeError(
-                        f"LLM aspect classification failed on comment {idx}: {e}"
+                        f"LLM aspect classification aborted — Azure OpenAI circuit open: {e}"
                     ) from e
+                except TaskCancelled:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
+                except Exception as e:
+                    # Isolated failure: mark this comment errored (NOT fake UNMAPPED)
+                    # and keep going so the successful comments aren't thrown away.
+                    failures.append({"index": idx, "error": str(e)[:500]})
+                    results[idx] = self._error_result(idx, comments[idx], canonical, e)
                 done += 1
                 if on_progress and done % 25 == 0:
                     try:
@@ -142,6 +153,20 @@ class LLMAspectService:
                 if is_cancelled and done % 10 == 0 and is_cancelled():
                     pool.shutdown(wait=False, cancel_futures=True)
                     raise TaskCancelled("Cancelled during LLM aspect classification")
+
+        # Systemic-failure guard: if too much failed (without the breaker tripping),
+        # treat it as an outage and fail loud rather than return a misleading result.
+        if failures and (len(failures) / len(comments)) > self.max_failure_rate:
+            raise RuntimeError(
+                f"LLM aspect classification failed for {len(failures)}/{len(comments)} "
+                f"({len(failures) / len(comments):.0%}) comments — exceeds the "
+                f"{self.max_failure_rate:.0%} threshold; treating as a systemic failure"
+            )
+        if failures:
+            logger.warning(
+                "LLM aspect classification PARTIAL: %d/%d comments failed (kept the rest)",
+                len(failures), len(comments),
+            )
 
         elapsed = time.time() - t0
         mapped = sum(1 for r in results if r and r["matched_aspects"] and r["matched_aspects"] != ["UNMAPPED"])
@@ -279,6 +304,21 @@ class LLMAspectService:
             "aspect_scores": {a: 0.0 for a in canonical},
             "overall_sentiment": "NONE",
             "aspect_sentiments": {},
+        }
+
+    @staticmethod
+    def _error_result(idx: int, comment: str, canonical: List[str], error: Any) -> Dict[str, Any]:
+        # An errored comment: NOT UNMAPPED (which means "classified, no aspect matched").
+        # `errored` lets the pipeline exclude it from stats and surface it as a failure.
+        return {
+            "comment_id": idx,
+            "comment_text": comment,
+            "matched_aspects": [],
+            "aspect_scores": {a: 0.0 for a in canonical},
+            "overall_sentiment": "NONE",
+            "aspect_sentiments": {},
+            "errored": True,
+            "error": str(error)[:500],
         }
 
 

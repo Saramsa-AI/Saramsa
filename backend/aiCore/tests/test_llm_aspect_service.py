@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from aiCore.services import llm_aspect_service as mod
 from aiCore.services.llm_aspect_service import LLMAspectService
+from aiCore.services.circuit_breaker import azure_openai_breaker
 
 
 # ---- fake Azure client ----
@@ -131,7 +132,8 @@ def test_max_aspects_cap():
     assert len(r[0]["matched_aspects"]) == 3
 
 
-def test_loud_failure_raises_not_unmapped():
+def test_systemic_failure_aborts():
+    """When everything fails (outage), fail loud — don't return a misleading result."""
     aspects = ["Billing"]
 
     def handler(kwargs):
@@ -139,13 +141,59 @@ def test_loud_failure_raises_not_unmapped():
 
     svc = LLMAspectService()
     svc.max_retries = 0
+    azure_openai_breaker.reset()
     raised = False
     try:
         with _patched(handler):
-            svc.classify_aspects(["x", "y"], aspects)
+            svc.classify_aspects(["x", "y"], aspects)  # 2/2 = 100% > threshold
     except RuntimeError:
         raised = True
-    assert raised, "a failed call must abort the run, not return UNMAPPED"
+    assert raised, "a fully-failed run must abort, not return UNMAPPED"
+
+
+def test_isolated_failure_is_partial_not_abort():
+    """A few failures (< threshold) keep the successful comments and mark the
+    failed ones errored (NOT fake UNMAPPED) instead of aborting the whole run."""
+    aspects = ["Billing"]
+
+    def handler(kwargs):
+        if _comment_of(kwargs) == "bad":
+            raise RuntimeError("boom")
+        return _resp(json.dumps({"matched": [{"aspect": "Billing", "confidence": "high"}]}))
+
+    svc = LLMAspectService()
+    svc.max_retries = 0
+    azure_openai_breaker.reset()
+    with _patched(handler):
+        r = svc.classify_aspects(["good1", "good2", "good3", "bad"], aspects)  # 1/4 = 25%
+
+    assert len(r) == 4
+    assert r[3]["errored"] is True
+    assert r[3]["matched_aspects"] == []            # errored != UNMAPPED
+    assert r[0]["matched_aspects"] == ["Billing"]   # successful comments kept
+    assert not r[0].get("errored")
+
+
+def test_failure_above_threshold_aborts():
+    """Majority failure (> threshold) is treated as systemic and aborts loud."""
+    aspects = ["Billing"]
+
+    def handler(kwargs):
+        if _comment_of(kwargs).startswith("bad"):
+            raise RuntimeError("boom")
+        return _resp(json.dumps({"matched": [{"aspect": "Billing", "confidence": "high"}]}))
+
+    svc = LLMAspectService()
+    svc.max_retries = 0
+    svc.max_failure_rate = 0.5
+    azure_openai_breaker.reset()
+    raised = False
+    try:
+        with _patched(handler):
+            svc.classify_aspects(["good", "bad1", "bad2"], aspects)  # 2/3 = 67% > 50%
+    except RuntimeError:
+        raised = True
+    assert raised
 
 
 def test_malformed_json_is_unmapped_not_crash():
