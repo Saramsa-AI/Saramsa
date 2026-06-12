@@ -100,6 +100,9 @@ class TaskService:
             from .analysis_service import get_analysis_service
             # force_regenerate (a user-initiated retrigger) intentionally bypasses
             # the guard so a failed/partial analysis can be reprocessed in place.
+            # Tradeoff: if the broker re-delivers a forced task (worker died after
+            # the work but before ack), it reprocesses again — a bounded, rare
+            # extra run, acceptable for an explicit user-initiated retrigger.
             if not force_regenerate and get_analysis_service().analysis_has_result(analysis_id):
                 logger.info(f"♻️ Analysis {analysis_id} already complete — skipping re-delivered task (idempotent)")
                 return {"insight_id": analysis_id, "project_id": project_id, "status": "already_complete"}

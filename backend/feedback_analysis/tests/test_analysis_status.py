@@ -139,6 +139,10 @@ class RetriggerViewTest(TestCase):
         self.assertTrue(args[7])                  # force_regenerate=True
         # status flipped back to in_progress, findable by the new task id
         self.assertEqual(self.repo.get_status_by_task_id("task-r")["status"], "in_progress")
+        # the new task is registered for the owner so TaskStatusView lets them poll it
+        from apis.infrastructure.cache_service import get_cache_service
+        tasks = get_cache_service().get("tasks:u-r", default=[])
+        self.assertTrue(any(t.get("task_id") == "task-r" for t in tasks))
 
     def test_retrigger_unknown_analysis_returns_404(self):
         self.assertEqual(self._post("nope").status_code, 404)

@@ -445,6 +445,7 @@ class RetriggerAnalysisView(APIView):
         from feedback_analysis.services.analysis_service import get_analysis_service
         from feedback_analysis.services.task_service import process_feedback_task
         from feedback_analysis.models import Analysis
+        from billing.quota import check_quota, record_usage, QuotaExceeded
 
         user_id_str = str(getattr(request.user, "id", "") or "")
         analysis_service = get_analysis_service()
@@ -466,9 +467,18 @@ class RetriggerAnalysisView(APIView):
         project_id = doc.get("projectId") or doc.get("project_id")
         company_name = doc.get("company_name")
         dimensions = doc.get("dimensions") or []
+        project_org_id = doc.get("organizationId") or doc.get("organization_id")
         # The task builds the row id as insight_{analysis_id}; use the bare id the
         # run originally used (stored in the payload), falling back to the URL value.
         bare_analysis_id = doc.get("analysis_id") or analysis_id
+
+        # A retrigger re-runs the full (paid) LLM pipeline, so it is quota-gated and
+        # metered exactly like any other analysis — consistent with the other
+        # enqueue paths and prevents an over-quota user from bypassing limits here.
+        try:
+            check_quota(user_id_str, "analysis", organization_id=project_org_id)
+        except QuotaExceeded as exc:
+            return StandardResponse.error(title="Quota exceeded", detail=str(exc), status_code=429, instance=request.path)
 
         try:
             task = process_feedback_task.delay(
@@ -486,12 +496,39 @@ class RetriggerAnalysisView(APIView):
             )
 
         cache = get_cache_service()
+        started_at = datetime.now().isoformat()
         if cache:
-            cache.set(f"task_start:{task.id}", datetime.now().isoformat(), ttl=3600)
+            cache.set(f"task_start:{task.id}", started_at, ttl=3600)
+            # Register in the per-user task list so the owner can poll status
+            # (TaskStatusView gates on this list). Mirrors the other enqueue paths.
+            try:
+                tasks_key = f"tasks:{user_id_str}"
+                existing = cache.get(tasks_key, default=[])
+                if not isinstance(existing, list):
+                    existing = []
+                existing = [t for t in existing if t.get("task_id") != task.id]
+                existing.insert(0, {
+                    "task_id": task.id,
+                    "analysis_id": bare_analysis_id,
+                    "project_id": project_id,
+                    "started_at": started_at,
+                    "comment_count": len(comments),
+                    "retrigger": True,
+                })
+                cache.set(tasks_key, existing[:15], ttl=86400)
+            except Exception as e:
+                logger.warning(f"Failed to record retrigger task history: {e}")
+
         analysis_service.mark_analysis_status(
             bare_analysis_id, Analysis.STATUS_IN_PROGRESS,
             task_id=task.id, project_id=project_id, user_id=user_id_str,
         )
+
+        # Meter the re-run (fails gracefully if the quota system is unavailable).
+        try:
+            record_usage(user_id_str, "analysis", organization_id=project_org_id)
+        except Exception as e:
+            logger.warning(f"Failed to record retrigger usage: {e}")
 
         return StandardResponse.success(
             data={"task_id": task.id, "analysis_id": bare_analysis_id},
