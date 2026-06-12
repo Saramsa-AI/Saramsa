@@ -14,6 +14,7 @@ import {
   type Project 
 } from '@/store/features/projects/projectsSlice';
 import { fetchIntegrationAccounts } from '@/store/features/integrations/integrationsSlice';
+import { getProviderLabel, type WorkProvider } from '@/lib/providers';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { 
@@ -25,6 +26,7 @@ import {
   Users,
   AlertCircle,
   ExternalLink,
+  Cloud,
   Loader2,
   ChevronDown,
   ArrowRight
@@ -37,7 +39,6 @@ import { EditProjectModal } from '@/components/ui/dashboard/EditProjectModal';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/useAuth';
 import { Building2 } from 'lucide-react';
-import { getProviderLabel, type WorkProvider } from '@/lib/providers';
 
 interface ProjectDashboardProps {
   onNavigateToAnalysis?: () => void;
@@ -135,8 +136,9 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
 
   const handleImportProject = (provider: WorkProvider) => {
     const hasIntegration = accounts.some(acc => acc.provider === provider && acc.status === 'active');
-    
+
     if (!hasIntegration) {
+      // Show error and redirect to settings
       alert(`No ${getProviderLabel(provider)} integration found. Please go to Settings > Integrations to connect your account.`);
       return;
     }
@@ -196,6 +198,22 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     } finally {
       setDeletingProjectId(null);
     }
+  };
+
+  const getProviderBadge = (provider: WorkProvider) => {
+    const name = getProviderLabel(provider);
+    const IconComponent = provider === 'azure' ? Cloud : null;
+
+    return (
+      <div className="inline-flex items-center gap-1 px-2 py-1 bg-saramsa-brand text-white text-xs rounded-full">
+        {IconComponent ? (
+          <IconComponent className="w-3 h-3" />
+        ) : (
+          <span className="font-bold">{name.charAt(0)}</span>
+        )}
+        {name}
+      </div>
+    );
   };
 
   if (loading && projects.length === 0) {
@@ -350,7 +368,7 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
             {accounts.length === 0 && (
               <div className="mt-6 p-4 bg-secondary/80 dark:bg-secondary/60 rounded-2xl max-w-md mx-auto border border-border/60">
                 <p className="text-sm text-muted-foreground">
-                  Tip: Connect your Azure DevOps, Jira, or Asana accounts in{' '}
+                  Tip: Connect your Azure DevOps or Jira accounts in{' '}
                   <a href="/settings" className="underline hover:no-underline">
                     Settings {'>'} Integrations
                   </a>{' '}
@@ -431,3 +449,5 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     </div>
   );
 }
+
+

@@ -96,6 +96,14 @@ export default function ProjectDashboardPage() {
       setProject(foundProject);
       dispatch(setCurrentProject(foundProject));
 
+      // Store in localStorage for compatibility with existing components
+      if (typeof window !== "undefined") {
+        localStorage.setItem("project_id", projectId);
+        if (foundProject.name) {
+          localStorage.setItem("selected_project_name", foundProject.name);
+        }
+      }
+
       // Clear previous analysis data when switching projects
       dispatch(clearAnalysisData());
       dispatch(clearCurrentProjectUserStories());
