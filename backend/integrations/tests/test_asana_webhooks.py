@@ -411,6 +411,43 @@ class AsanaApplyEventTest(AsanaWebhookTestBase):
         other_insight.refresh_from_db()
         self.assertEqual(other_insight.payload.get("title"), "Other org insight")
 
+    def test_apply_event_skips_when_mapping_belongs_to_different_project(self):
+        """An event in proj1's webhook must not mutate an Insight mapped to a
+        sibling project that shares the same org-level Asana integration."""
+        sibling_project = Project.objects.create(
+            id="proj-sibling", organization=self.org, user=self.user, name="Sibling"
+        )
+        sibling_insight = Insight.objects.create(
+            id="ins-sibling",
+            project=sibling_project,
+            user=self.user,
+            payload={"title": "Sibling insight"},
+        )
+        AsanaTaskMapping.objects.create(
+            id="atm-sibling",
+            organization=self.org,
+            insight=sibling_insight,
+            integration=self.integration,
+            asana_task_gid="task-sibling",
+            asana_project_gid="ap-sibling",
+        )
+
+        with patch("integrations.services.asana_service.httpx.request") as mock_request:
+            result = self.svc.apply_event(
+                saramsa_project_id="proj1",
+                event={
+                    "action": "changed",
+                    "resource": {"gid": "task-sibling", "resource_type": "task"},
+                    "change": {"field": "name", "action": "changed"},
+                    "created_at": "2026-05-09T00:00:00.000Z",
+                },
+            )
+            mock_request.assert_not_called()
+
+        self.assertEqual(result.get("reason"), "project-mismatch")
+        sibling_insight.refresh_from_db()
+        self.assertEqual(sibling_insight.payload.get("title"), "Sibling insight")
+
 
 @override_settings(ASANA_WEBHOOK_TARGET_URL="https://saramsa.example.com/api/integrations/asana/webhook")
 class AsanaSubscribeWebhookTest(AsanaWebhookTestBase):

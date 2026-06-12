@@ -27,6 +27,7 @@ from urllib.parse import urlencode
 
 import httpx
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone as dj_timezone
 
 from feedback_analysis.models import Insight
@@ -94,7 +95,21 @@ class AsanaService:
         2. Mapping points at deleted task (404) → search by custom field.
         3. Search hit → adopt the task, persist mapping.
         4. Search miss → POST /tasks, persist mapping.
+
+        Concurrent pushes of the *same* insight are serialized with a row
+        lock: without it, two requests could both miss the mapping+search and
+        both POST a task — the unique constraint would reject the second
+        mapping, but the duplicate remote task would already exist. The lock
+        is held across the Asana HTTP round-trips; contention is per-insight
+        and negligible at this scale.
         """
+        with transaction.atomic():
+            # Lock only the insight row (of=("self",)); the join to project is
+            # not locked. select_for_update is a no-op on sqlite (tests).
+            Insight.objects.select_for_update(of=("self",)).filter(id=insight_id).first()
+            return self._push_insight_locked(insight_id=insight_id)
+
+    def _push_insight_locked(self, *, insight_id: str) -> Dict[str, Any]:
         insight = Insight.objects.select_related("project").filter(id=insight_id).first()
         if not insight:
             raise ValueError(f"Insight {insight_id} not found")
@@ -318,6 +333,12 @@ class AsanaService:
         ).first()
         if not mapping:
             return {"action": "skipped", "reason": "untracked-task"}
+
+        # The webhook is bound to one Saramsa project; only reconcile a mapping
+        # whose insight belongs to that project, even though several projects
+        # may share one org-level integration.
+        if str(mapping.insight.project_id) != str(saramsa_project_id):
+            return {"action": "skipped", "reason": "project-mismatch"}
 
         try:
             current = self._fetch_task(pat_token, asana_task_gid)
