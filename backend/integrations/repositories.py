@@ -443,6 +443,14 @@ class IntegrationsRepository:
         item = IntegrationAccount.objects.filter(id=account_id).first()
         return _integration_to_dict(item) if item else None
 
+    def get_account_organization_id(self, account_id: str) -> Optional[str]:
+        """Return the owning organization id for an account, or None if absent."""
+        record = IntegrationAccount.objects.filter(id=str(account_id)).values("organization_id").first()
+        if not record:
+            return None
+        org_id = record.get("organization_id")
+        return str(org_id) if org_id else None
+
     def get_integration_account(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if organization_id is not None:
             qs = IntegrationAccount.objects.filter(id=account_id, organization_id=str(organization_id))

@@ -586,6 +586,69 @@ class ProjectPermissionAndIntegrationRbacTest(TestCase):
         self.assertFalse(IntegrationAccount.objects.filter(id=slack_account.id).exists())
         self.assertFalse(FeedbackSource.objects.filter(id=created["id"]).exists())
 
+    def test_member_cannot_delete_account_without_active_org_context(self) -> None:
+        # A non-admin who owns the account must still be blocked: authorization
+        # is derived from the account's org, not the caller's active org.
+        account = IntegrationAccount.objects.create(
+            id="ia-member-owned",
+            user=self.member_user,
+            organization_id="org-1",
+            provider="azure",
+            type="integration_account",
+            account_name="Azure",
+            credentials={"tokenEncrypted": "x"},
+            config={},
+            is_active=True,
+        )
+        with self.assertRaisesMessage(ValueError, "Only workspace admins can manage integrations."):
+            IntegrationService().delete_integration_account(
+                self.member_user.id,
+                account.id,
+                organization_id=None,
+            )
+        self.assertTrue(IntegrationAccount.objects.filter(id=account.id).exists())
+
+    def test_outsider_cannot_delete_other_orgs_account(self) -> None:
+        # A user from another org cannot delete an account even if they pass no
+        # org context: the account's own org is resolved and membership enforced.
+        account = IntegrationAccount.objects.create(
+            id="ia-cross-org",
+            user=self.admin_user,
+            organization_id="org-1",
+            provider="azure",
+            type="integration_account",
+            account_name="Azure",
+            credentials={"tokenEncrypted": "x"},
+            config={},
+            is_active=True,
+        )
+        with self.assertRaisesMessage(ValueError, "You do not have access to this organization."):
+            IntegrationService().delete_integration_account(
+                self.outsider_user.id,
+                account.id,
+                organization_id=None,
+            )
+        self.assertTrue(IntegrationAccount.objects.filter(id=account.id).exists())
+
+    def test_outsider_cannot_test_other_orgs_connection(self) -> None:
+        account = IntegrationAccount.objects.create(
+            id="ia-cross-org-test",
+            user=self.admin_user,
+            organization_id="org-1",
+            provider="azure",
+            type="integration_account",
+            account_name="Azure",
+            credentials={"tokenEncrypted": "x"},
+            config={},
+            is_active=True,
+        )
+        with self.assertRaisesMessage(ValueError, "You do not have access to this organization."):
+            IntegrationService().test_integration_connection(
+                self.outsider_user.id,
+                account.id,
+                organization_id=None,
+            )
+
     def test_slack_sync_task_uses_workspace_context_and_internal_updates(self) -> None:
         source = {
             "id": "source-task",

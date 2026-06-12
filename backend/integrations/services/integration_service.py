@@ -31,6 +31,21 @@ class IntegrationService:
             raise ValueError("Only workspace admins can manage integrations.")
         return membership
 
+    def _require_account_admin(self, user_id: str, account_id: str) -> Optional[str]:
+        """Authorize access to an existing account by its OWN organization.
+
+        Resolves the account's owning organization and requires the caller be an
+        admin of that organization. Returns the account's organization id, or
+        None if the account does not exist. Deriving the org from the account
+        (rather than the caller's active org) closes the gap where a missing
+        active-org context skipped the admin check.
+        """
+        account_org_id = self.integrations_repo.get_account_organization_id(account_id)
+        if not account_org_id:
+            return None
+        self._require_org_admin(account_org_id, user_id)
+        return account_org_id
+
     def _get_active_organization_id_for_user(self, user_id: str) -> Optional[str]:
         user = self.organization_service.user_repo.get_by_id(str(user_id))
         if not user:
@@ -348,21 +363,22 @@ class IntegrationService:
             Test result with success status and details
         """
         try:
-            # Get the integration account
-            if organization_id:
-                self._require_org_admin(str(organization_id), str(user_id))
-            account = self.integrations_repo.get_integration_account(user_id, account_id, organization_id=organization_id)
+            # Authorize against the account's own organization, then load it.
+            account_org_id = self._require_account_admin(user_id, account_id)
+            if not account_org_id:
+                raise ValueError("Integration account not found")
+            account = self.integrations_repo.get_integration_account(user_id, account_id, organization_id=account_org_id)
             if not account:
                 raise ValueError("Integration account not found")
-            
+
             provider = account.get('provider')
             credentials = account.get('credentials', {})
             metadata = account.get('metadata', {})
-            
+
             # Decrypt credentials
             from .encryption_service import get_encryption_service
             encryption_service = get_encryption_service()
-            
+
             if provider == 'azure':
                 organization = metadata.get('organization')
                 encrypted_pat = credentials.get('tokenEncrypted')
@@ -395,12 +411,13 @@ class IntegrationService:
             True if deleted successfully, False if not found
         """
         try:
-            if organization_id:
-                self._require_org_admin(str(organization_id), str(user_id))
+            account_org_id = self._require_account_admin(user_id, account_id)
+            if not account_org_id:
+                return False
             account = self.integrations_repo.get_integration_account(
                 user_id,
                 account_id,
-                organization_id=organization_id,
+                organization_id=account_org_id,
             )
             if not account:
                 return False
@@ -411,7 +428,7 @@ class IntegrationService:
             return self.integrations_repo.delete_integration_account(
                 user_id,
                 account_id,
-                organization_id=organization_id,
+                organization_id=account_org_id,
             )
         except Exception as e:
             logger.error(f"Error deleting integration account {account_id}: {e}")
@@ -431,14 +448,15 @@ class IntegrationService:
             List of external projects
         """
         try:
-            if organization_id:
-                self._require_org_admin(str(organization_id), str(user_id))
-            # Check if accountId is provided - if so, fetch credentials from database
+            # Account-scoped path authorizes against the account's own org.
             account_id = kwargs.get('accountId')
             if account_id:
                 return self.get_external_projects_by_account(user_id, account_id, organization_id=organization_id)
-            
-            # Otherwise, use provided credentials directly
+
+            # Direct-credentials path (pre-save): gate on the caller's active org.
+            if organization_id:
+                self._require_org_admin(str(organization_id), str(user_id))
+
             if provider == 'azure':
                 organization = kwargs.get('organization')
                 pat_token = kwargs.get('pat_token')
@@ -473,10 +491,12 @@ class IntegrationService:
             List of external projects
         """
         try:
-            if organization_id:
-                self._require_org_admin(str(organization_id), str(user_id))
-            # Get the integration account
-            account = self.integrations_repo.get_integration_account(user_id, account_id, organization_id=organization_id)
+            # Authorize against the account's own organization, then load it.
+            account_org_id = self._require_account_admin(user_id, account_id)
+            if not account_org_id:
+                logger.error(f"Integration account {account_id} not found for user {user_id}")
+                raise ValueError("Integration account not found")
+            account = self.integrations_repo.get_integration_account(user_id, account_id, organization_id=account_org_id)
             if not account:
                 logger.error(f"Integration account {account_id} not found for user {user_id}")
                 raise ValueError("Integration account not found")
