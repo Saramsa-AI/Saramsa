@@ -29,6 +29,12 @@ fi
 echo "Applying migrations with advisory lock protection..."
 python manage.py migrate_safe
 
+# Best-effort: shorten Linux TCP retransmit so a vanished Redis (ungraceful close)
+# is detected in ~1 min instead of ~13-15 min. Azure Cache for Redis recommends this.
+# Non-privileged hosts (e.g. App Service) may reject it — fine, the client-side socket
+# timeouts already bound the hang to seconds.
+sysctl -w net.ipv4.tcp_retries2=5 2>/dev/null || echo "note: could not set tcp_retries2 (non-privileged host); client socket timeouts still apply"
+
 # Start Gunicorn
 echo "Starting Gunicorn from: $(pwd)"
-exec gunicorn --bind=0.0.0.0:8000 --timeout 600 --workers 2 --access-logfile - --error-logfile - --log-level info apis.wsgi:application
+exec gunicorn --bind=0.0.0.0:8000 --timeout 600 --workers 2 --worker-class gthread --threads 8 --access-logfile - --error-logfile - --log-level info apis.wsgi:application

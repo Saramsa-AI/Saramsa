@@ -422,7 +422,8 @@ class FeedbackFileUploadView(APIView):
         # is wrapped with @async_to_sync which puts us inside a running
         # event loop, so every sync ORM call needs to go through
         # sync_to_async to avoid "You cannot call this from an async context".
-        from ..services import get_taxonomy_service, get_aspect_suggestion_service
+        from ..services import get_taxonomy_service
+        from ..services.aspect_discovery_factory import get_aspect_discovery_service
         taxonomy_service = get_taxonomy_service()
         taxonomy = await sync_to_async(
             taxonomy_service.get_active_taxonomy, thread_sensitive=True
@@ -445,7 +446,7 @@ class FeedbackFileUploadView(APIView):
                     "suggested_aspects": list(seed_aspects),
                 }
             else:
-                aspect_service = get_aspect_suggestion_service()
+                aspect_service = get_aspect_discovery_service()
                 aspect_suggestions = await aspect_service.suggest_aspects(original_comments)
                 logger.info(
                     f"Aspect suggestions generated: domain='{aspect_suggestions['identified_domain']}', "

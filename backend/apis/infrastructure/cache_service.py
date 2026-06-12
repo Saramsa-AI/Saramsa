@@ -19,10 +19,29 @@ logger = logging.getLogger(__name__)
 # Try to import Redis
 try:
     import redis
+    from redis.retry import Retry
+    from redis.backoff import ExponentialBackoff
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
     logger.error("Redis dependency is not installed.")
+
+
+def _resilience_kwargs() -> dict:
+    """Client timeouts + bounded retry so a Redis blip fails in seconds, not the
+    OS-default ~135s. Tuned for small scale (~50-100 customers). Follows Azure
+    Cache for Redis connection-resilience guidance: 5s connect, <5s command,
+    keepalive under the 10-min idle reaper, and a single retry (fail fast, not
+    the durability-oriented 25-retry default)."""
+    return dict(
+        socket_connect_timeout=5,
+        socket_timeout=3,
+        socket_keepalive=True,
+        health_check_interval=30,
+        max_connections=30,
+        retry=Retry(ExponentialBackoff(cap=2, base=0.25), 1),
+        retry_on_error=[redis.exceptions.ConnectionError, redis.exceptions.TimeoutError],
+    )
 
 class CacheService:
     """
@@ -79,7 +98,8 @@ class CacheService:
                     ssl_cert_reqs=ssl.CERT_NONE,  # Controlled globally in Django settings transport opts
                     ssl_ca_certs=None,
                     ssl_certfile=None,
-                    ssl_keyfile=None
+                    ssl_keyfile=None,
+                    **_resilience_kwargs(),
                 )
                 logger.info("Connecting to Azure Redis (SSL)...")
             else:
@@ -89,7 +109,8 @@ class CacheService:
 
                 self.redis_client = redis.from_url(
                     redis_url,
-                    decode_responses=True
+                    decode_responses=True,
+                    **_resilience_kwargs(),
                 )
                 logger.info("Connecting to local Redis (non-SSL)...")
 

@@ -62,7 +62,19 @@ class TaskService:
             raise ValueError(f"Too many comments for one analysis (max {max_comments})")
         if task_id:
             cache.set(f"pipeline_health:{task_id}", health.to_dict(), ttl=3600)
-        
+
+        # Idempotency guard: if this analysis already has saved results, a previous run
+        # finished it. With acks_late the broker re-delivers a task whose worker died
+        # after the save but before acking — skip re-doing the (paid) LLM work and the
+        # duplicate write instead of re-charging it.
+        try:
+            from .analysis_service import get_analysis_service
+            if get_analysis_service().analysis_has_result(analysis_id):
+                logger.info(f"♻️ Analysis {analysis_id} already complete — skipping re-delivered task (idempotent)")
+                return {"insight_id": analysis_id, "project_id": project_id, "status": "already_complete"}
+        except Exception as e:
+            logger.warning(f"Idempotency guard check failed (proceeding): {e}")
+
         try:
             # Choose processing method based on configuration
             if self._use_local_pipeline:
@@ -153,7 +165,7 @@ class TaskService:
 
         def _regenerate_taxonomy(input_comments, mapping_rate=None):
             import asyncio
-            from feedback_analysis.services.aspect_suggestion_service import AspectSuggestionService
+            from feedback_analysis.services.aspect_discovery_factory import get_aspect_discovery_service
             from feedback_analysis.services.taxonomy_service import get_taxonomy_service
 
             taxonomy_service = get_taxonomy_service()
@@ -185,7 +197,7 @@ class TaskService:
                 if not partial:
                     return None
 
-            suggestion_service = AspectSuggestionService()
+            suggestion_service = get_aspect_discovery_service()
             result = asyncio.run(suggestion_service.suggest_aspects(
                 comments=input_comments,
                 company_name=company_name,

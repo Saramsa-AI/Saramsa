@@ -17,8 +17,7 @@ from typing import Any, Dict, List, TypedDict
 logger = logging.getLogger(__name__)
 
 try:
-    # Prefer the canonical sentiment result used by the local sentiment service.
-    from aiCore.services.local_sentiment_service import SentimentResult as _LocalSentimentResult
+    from aiCore.services.sentiment_types import SentimentResult as _LocalSentimentResult
 except ImportError:
     logger.debug("Could not import SentimentResult from aiCore; using local fallback")
     _LocalSentimentResult = None

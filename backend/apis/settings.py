@@ -213,6 +213,20 @@ if _redis_ssl_cert_reqs_env not in _redis_ssl_cert_map:
 _redis_ssl_cert_reqs = _redis_ssl_cert_map[_redis_ssl_cert_reqs_env]
 _redis_ssl_cert_reqs_url = _redis_ssl_cert_reqs_env
 
+# Redis BROKER transport resilience — kombu honors these transport options, bounding
+# a blip to seconds instead of the OS-default ~135s hang. Small-scale tuned
+# (~50-100 customers); mirrors Azure Cache for Redis guidance.
+# NOTE: the result BACKEND ignores socket options here — Celery's RedisBackend reads
+# the dedicated CELERY_REDIS_* keys (set below); only retry_policy is read from its
+# transport options.
+_REDIS_TRANSPORT_RESILIENCE = {
+    'socket_timeout': 5,
+    'socket_connect_timeout': 5,
+    'socket_keepalive': True,
+    'retry_on_timeout': True,
+    'health_check_interval': 30,
+}
+
 # Add SSL certificate requirements to Redis URLs for Azure Redis
 if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
     # Append ssl_cert_reqs parameter to URL if not already present
@@ -223,9 +237,10 @@ if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
         os.environ['CELERY_BROKER_URL'] = CELERY_BROKER_URL
     CELERY_BROKER_TRANSPORT_OPTIONS = {
         'ssl_cert_reqs': _redis_ssl_cert_reqs,
+        **_REDIS_TRANSPORT_RESILIENCE,
     }
 else:
-    CELERY_BROKER_TRANSPORT_OPTIONS = {}
+    CELERY_BROKER_TRANSPORT_OPTIONS = dict(_REDIS_TRANSPORT_RESILIENCE)
 
 if CELERY_RESULT_BACKEND and CELERY_RESULT_BACKEND.startswith('rediss://'):
     # Append ssl_cert_reqs parameter to URL if not already present
@@ -234,16 +249,48 @@ if CELERY_RESULT_BACKEND and CELERY_RESULT_BACKEND.startswith('rediss://'):
         CELERY_RESULT_BACKEND = f"{CELERY_RESULT_BACKEND}{separator}ssl_cert_reqs={_redis_ssl_cert_reqs_url}"
         # Update environment variable for celery.py
         os.environ['CELERY_RESULT_BACKEND'] = CELERY_RESULT_BACKEND
+    # Socket timeouts here would be IGNORED by RedisBackend (see CELERY_REDIS_* below);
+    # only retry_policy is honored from result-backend transport options.
     CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
         'ssl_cert_reqs': _redis_ssl_cert_reqs,
+        'retry_policy': {'max_retries': 1, 'timeout': 5.0},
     }
 else:
-    CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {}
+    CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {'retry_policy': {'max_retries': 1, 'timeout': 5.0}}
+
+# Result-backend socket resilience — Celery's RedisBackend reads these dedicated
+# keys (NOT result_backend_transport_options). Without them a result read on a
+# vanished Redis blocks at the OS default (~135s).
+CELERY_REDIS_SOCKET_TIMEOUT = 5
+CELERY_REDIS_SOCKET_CONNECT_TIMEOUT = 5
+CELERY_REDIS_RETRY_ON_TIMEOUT = True
+CELERY_REDIS_SOCKET_KEEPALIVE = True
+CELERY_REDIS_BACKEND_HEALTH_CHECK_INTERVAL = 30
 
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
+
+# Bound task dispatch (.delay()/apply_async) so a broker blip fails fast in the
+# web request instead of hanging on publish.
+CELERY_TASK_PUBLISH_RETRY = True
+CELERY_TASK_PUBLISH_RETRY_POLICY = {
+    'max_retries': 1,  # 2 attempts; worst-case publish ~10s, not ~16s
+    'interval_start': 0,
+    'interval_step': 0.5,
+    'interval_max': 1,
+}
+
+# Reliability: ack a task only AFTER it finishes (not on pickup), so a worker that
+# dies mid-task doesn't silently lose the job — the broker re-delivers it. The task
+# is idempotent (TaskService skips an analysis that already has saved results), so a
+# re-delivery doesn't re-charge LLM calls or duplicate data. reject_on_worker_lost
+# makes re-delivery happen even on a hard kill (OOM/SIGKILL), not just graceful exit.
+# Safe because task_time_limit (35m) < broker visibility_timeout (60m): a long task is
+# killed before it could be re-delivered, so no concurrent double-execution.
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 if not DATABASE_URL:
@@ -261,15 +308,25 @@ if not _database_host.endswith(".neon.tech") and not _test_db_bypass:
 DATABASES = {
     "default": dj_database_url.parse(
         DATABASE_URL,
-        conn_max_age=int(os.getenv("DB_CONN_MAX_AGE", "600")),
+        # CONN_MAX_AGE=0 (connect/close per request): Neon's PgBouncer pooler already
+        # owns connection reuse, so persistent Django connections add little — but they
+        # DO go stale across Neon's scale-to-zero suspends. 0 removes that failure mode
+        # entirely; the per-request connect is cheap because it hits PgBouncer, not the
+        # compute. Override via DB_CONN_MAX_AGE if persistent connections are ever wanted.
+        conn_max_age=int(os.getenv("DB_CONN_MAX_AGE", "0")),
         ssl_require=_as_bool(os.getenv("DB_SSL_REQUIRE", "true")),
     )
 }
+# Per-database options (a top-level CONN_HEALTH_CHECKS is a no-op).
+#  - CONN_HEALTH_CHECKS: ping + reconnect a stale reused connection. Only relevant if
+#    DB_CONN_MAX_AGE>0; harmless at 0. Kept as a safe default for that override.
+#  - DISABLE_SERVER_SIDE_CURSORS: required with PgBouncer transaction-pooling mode
+#    (server-side cursors break across pooled connections) — independent of conn age.
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
+DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
 
 # Neon best-practice: use the *-pooler.* hostname in DATABASE_URL so PgBouncer
-# handles connection reuse.  CONN_HEALTH_CHECKS avoids handing a stale pooled
-# connection to a request (Django 4.1+).
-CONN_HEALTH_CHECKS = True
+# handles connection reuse.
 if "-pooler." not in _database_host:
     import warnings
     warnings.warn(

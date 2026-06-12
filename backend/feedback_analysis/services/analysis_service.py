@@ -312,6 +312,14 @@ class AnalysisService:
             logger.error(f"Error saving analysis data: {e}", exc_info=True)
             return None
     
+    def analysis_has_result(self, analysis_id: str) -> bool:
+        """Idempotency check: has this analysis already been processed and saved?"""
+        try:
+            return self.analysis_repo.analysis_has_result(analysis_id)
+        except Exception as e:
+            logger.warning(f"analysis_has_result check failed (treating as not complete): {e}")
+            return False
+
     def update_project_last_analysis(self, project_id: str, analysis_id: str) -> bool:
         """Update project's last analysis."""
         try:

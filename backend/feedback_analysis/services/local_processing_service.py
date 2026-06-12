@@ -8,27 +8,21 @@ Orchestrates the local ML pipeline:
   4. Lean GPT-5-mini synthesis (aggregates + evidence samples only)
 """
 
+import os
 import logging
 import time
 import re
-import numpy as np
 from typing import List, Dict, Any, Tuple, Optional, Callable
 from dataclasses import dataclass, field
 from collections import defaultdict
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from aiCore.services.aspect_service_factory import get_aspect_service
-from aiCore.services.embedding_service import EmbeddingService
-from aiCore.services.local_sentiment_service import LocalSentimentService, SentimentResult
+from aiCore.services.sentiment_types import SentimentResult
 from apis.infrastructure.phase_logger import phase, reset_pipeline_summary, emit_pipeline_summary
 from .narration_service import get_narration_service
 
 logger = logging.getLogger(__name__)
-
-# Sentence splitting regex: split on . ! ? followed by space or end-of-string,
-# but not on abbreviations like "Mr." or "e.g."
-_SENTENCE_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z])|(?<=[.!?])$')
 
 # Common English stopwords for keyword extraction (expanded for feedback domain)
 _STOPWORDS = frozenset({
@@ -137,9 +131,7 @@ class LocalProcessingService:
 
     def __init__(self):
         self.aspect_service = get_aspect_service()
-        self.embedding_service = EmbeddingService()
-        self.sentiment_service = LocalSentimentService()
-        logger.info("LocalProcessingService initialized with aspect classification + aspect-relative sentiment")
+        logger.info("LocalProcessingService initialized (LLM aspect + sentiment, no local models)")
 
     def process_comments(self, comments: List[str], aspects: List[str],
                          company_name: str = "Company", run_id: str = None,
@@ -220,16 +212,10 @@ class LocalProcessingService:
         for i, result in enumerate(similarity_results):
             result["comment_text"] = comments[i]
 
-        # Step 2: Aspect-relative sentiment
-        # 2a. Get comment-level sentiment for overall counts
-        with phase("sentiment_comment_level", n_items=len(stripped_comments)):
-            comment_sentiments = self.sentiment_service.classify_batch(stripped_comments)
-
-        # 2b. Compute aspect-relative sentiment (sentence-level, uses stripped text internally)
-        with phase("sentiment_aspect_relative", n_items=len(similarity_results)):
-            combined_matches = self._compute_aspect_relative_sentiment(
-                similarity_results, comment_sentiments, aspects, stripped_comments
-            )
+        # Step 2: sentiment — produced by the LLM in the same aspect call (overall +
+        # per-aspect, with "NONE" for no opinion). No local model, no sentence-splitting.
+        with phase("sentiment_llm", n_items=len(similarity_results)):
+            combined_matches = self._apply_llm_sentiment(similarity_results)
 
         # Step 3: aggregate + keywords (now uses per-aspect sentiment)
         with phase("aggregate_stats", n_aspects=len(aspects)):
@@ -257,9 +243,9 @@ class LocalProcessingService:
             aggregated_stats=aggregated_stats,
             processing_time=processing_time,
             model_info={
-                "aspect_model": getattr(self.aspect_service, 'MODEL_NAME', 'ensemble'),
-                "sentiment_model": getattr(self.sentiment_service, 'MODEL_NAME', 'distilbert'),
-                "processing_method": "local_ml_pipeline_aspect_sentiment",
+                "aspect_model": getattr(self.aspect_service, 'MODEL_NAME', 'llm'),
+                "sentiment_model": getattr(self.aspect_service, 'MODEL_NAME', 'llm'),
+                "processing_method": "llm_aspect_sentiment_pipeline",
             },
             insights=insights,
             features=features,
@@ -297,130 +283,40 @@ class LocalProcessingService:
         # Return text after the bracket + newline
         return text[bracket_end + 2:].strip()
 
-    @staticmethod
-    def _split_sentences(text: str) -> List[str]:
-        """Split text into sentences. Returns [text] if only one sentence."""
-        sentences = _SENTENCE_RE.split(text)
-        sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 5]
-        return sentences if sentences else [text]
+    def _apply_llm_sentiment(self, similarity_results: List[Dict[str, Any]]) -> List[AspectMatch]:
+        """Build combined matches from sentiment the LLM produced in the aspect call.
 
-    def _compute_aspect_relative_sentiment(
-        self,
-        similarity_results: List[Dict[str, Any]],
-        comment_sentiments: List[SentimentResult],
-        aspects: List[str],
-        stripped_comments: List[str],
-    ) -> List[AspectMatch]:
+        No local model and no sentence-splitting: the LLM already judged sentiment per
+        aspect + overall. "NONE" (no opinion / operational text) maps to NEUTRAL for the
+        3-class downstream counts — honest, vs a forced positive/negative.
         """
-        For each comment, find the best-matching sentence per assigned aspect
-        and run sentiment on that sentence instead of the whole comment.
+        def to_result(label: str) -> SentimentResult:
+            # NONE (no opinion) -> NEUTRAL for the 3-class downstream. confidence is a
+            # STRING ("HIGH"/"MEDIUM"/"LOW") per the contract — downstream calls .upper()
+            # on the confidence-distribution key, so a float would crash insights views.
+            s = label if label in ("POSITIVE", "NEGATIVE", "NEUTRAL") else "NEUTRAL"
+            return SentimentResult(sentiment=s, confidence="HIGH", raw_scores={}, processing_time=0.0)
 
-        For single-sentence comments, uses the comment-level sentiment directly.
-
-        Args:
-            similarity_results: NLI/aspect classification results (comment_text has original with brackets)
-            comment_sentiments: Sentiment for stripped comments (already computed on stripped text)
-            aspects: List of aspect names
-            stripped_comments: Comments with bracket metadata removed (used for sentence splitting)
-        """
-        embedding_service = self.embedding_service
-
-        # Pre-compute aspect embeddings once
-        aspect_embeddings = embedding_service.get_embeddings(aspects)
-        aspect_to_idx = {a: i for i, a in enumerate(aspects)}
-
-        # Collect all sentences that need sentiment (deduplicated)
-        # Use stripped_comments for sentence splitting (no bracket noise)
-        sentence_set: Dict[str, None] = {}  # ordered set via dict
-        comment_sentence_map: List[Tuple[List[str], bool]] = []  # (sentences, is_multi)
-
-        for stripped_comment in stripped_comments:
-            sentences = self._split_sentences(stripped_comment)
-            is_multi = len(sentences) > 1
-            comment_sentence_map.append((sentences, is_multi))
-            if is_multi:
-                for s in sentences:
-                    sentence_set[s] = None
-
-        # Batch-embed and batch-sentiment all unique sentences
-        unique_sentences = list(sentence_set.keys())
-        sentence_sentiment_map: Dict[str, SentimentResult] = {}
-        sentence_embedding_map: Dict[str, np.ndarray] = {}
-
-        if unique_sentences:
-            logger.info(f"Aspect-relative sentiment: {len(unique_sentences)} unique sentences from multi-sentence comments")
-            sent_embeddings = embedding_service.get_embeddings(unique_sentences)
-            sent_sentiments = self.sentiment_service.classify_batch(unique_sentences)
-            for i, s in enumerate(unique_sentences):
-                sentence_sentiment_map[s] = sent_sentiments[i]
-                sentence_embedding_map[s] = sent_embeddings[i]
-
-        # Build AspectMatch objects with per-aspect sentiment
-        combined_matches = []
-        for idx, (sim_result, comment_sentiment) in enumerate(zip(similarity_results, comment_sentiments)):
-            sentences, is_multi = comment_sentence_map[idx]
-            matched_aspects = sim_result["matched_aspects"]
-
+        combined: List[AspectMatch] = []
+        for r in similarity_results:
+            matched = r["matched_aspects"]
+            overall_label = r.get("overall_sentiment", "NEUTRAL")
+            asp_sent = r.get("aspect_sentiments", {}) or {}
             aspect_sentiments: Dict[str, AspectSentiment] = {}
-
-            if not is_multi or not matched_aspects:
-                # Single sentence or unmapped: use comment-level sentiment for all aspects
-                for aspect in matched_aspects:
-                    aspect_sentiments[aspect] = AspectSentiment(
-                        aspect=aspect,
-                        sentiment=comment_sentiment.sentiment,
-                        confidence=comment_sentiment.confidence,
-                        source_sentence=sim_result["comment_text"],
-                        raw_scores=comment_sentiment.raw_scores,
-                    )
-            else:
-                # Multi-sentence: find best sentence per aspect
-                sent_embs = np.array([sentence_embedding_map[s] for s in sentences])
-
-                for aspect in matched_aspects:
-                    a_idx = aspect_to_idx.get(aspect)
-                    if a_idx is None:
-                        # Aspect not in original list (shouldn't happen)
-                        aspect_sentiments[aspect] = AspectSentiment(
-                            aspect=aspect,
-                            sentiment=comment_sentiment.sentiment,
-                            confidence=comment_sentiment.confidence,
-                            source_sentence=sim_result["comment_text"],
-                            raw_scores=comment_sentiment.raw_scores,
-                        )
-                        continue
-
-                    # Cosine similarity between each sentence and this aspect
-                    aspect_emb = aspect_embeddings[a_idx].reshape(1, -1)
-                    sims = cosine_similarity(sent_embs, aspect_emb).flatten()
-                    best_sent_idx = int(np.argmax(sims))
-                    best_sentence = sentences[best_sent_idx]
-
-                    sent_sentiment = sentence_sentiment_map[best_sentence]
-                    aspect_sentiments[aspect] = AspectSentiment(
-                        aspect=aspect,
-                        sentiment=sent_sentiment.sentiment,
-                        confidence=sent_sentiment.confidence,
-                        source_sentence=best_sentence,
-                        raw_scores=sent_sentiment.raw_scores,
-                    )
-
-            combined_matches.append(AspectMatch(
-                comment_id=sim_result["comment_id"],
-                comment_text=sim_result["comment_text"],
-                matched_aspects=matched_aspects,
-                aspect_scores=sim_result["aspect_scores"],
-                comment_sentiment=comment_sentiment,
-                aspect_sentiments=aspect_sentiments,
+            for a in matched:
+                if a == "UNMAPPED":
+                    continue
+                res = to_result(asp_sent.get(a, overall_label))
+                aspect_sentiments[a] = AspectSentiment(
+                    aspect=a, sentiment=res.sentiment, confidence=res.confidence,
+                    source_sentence=r["comment_text"], raw_scores=res.raw_scores,
+                )
+            combined.append(AspectMatch(
+                comment_id=r["comment_id"], comment_text=r["comment_text"],
+                matched_aspects=matched, aspect_scores=r["aspect_scores"],
+                comment_sentiment=to_result(overall_label), aspect_sentiments=aspect_sentiments,
             ))
-
-        multi_count = sum(1 for _, is_multi in comment_sentence_map if is_multi)
-        logger.info(
-            f"Aspect-relative sentiment complete: {multi_count}/{len(similarity_results)} "
-            f"multi-sentence comments processed"
-        )
-
-        return combined_matches
+        return combined
 
     # ------------------------------------------------------------------
     # Aggregation + keyword extraction
