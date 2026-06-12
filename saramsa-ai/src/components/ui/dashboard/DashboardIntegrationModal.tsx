@@ -1,35 +1,50 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { IntegrationConfigDrawer } from "./IntegrationConfigDrawer";
 import { IntegrationPlatformSelectorModal } from "@/components/ui/integrations/IntegrationPlatformSelectorModal";
+import type { WorkProvider } from "@/lib/providers";
 
 interface DashboardIntegrationModalProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
+  initialPlatform?: WorkProvider | null;
 }
 
 export function DashboardIntegrationModal({
   isOpen,
   onClose,
   projectId,
+  initialPlatform = null,
 }: DashboardIntegrationModalProps) {
-  void projectId;
-  const [selectedPlatform, setSelectedPlatform] = useState<'azure' | 'jira' | null>(null);
+  const [selectedPlatform, setSelectedPlatform] = useState<WorkProvider | null>(null);
+  const allowPlatformSelection = !initialPlatform;
 
-  const handlePlatformSelect = (platform: 'azure' | 'jira') => {
-    setSelectedPlatform(platform);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('selected_platform', platform);
+  useEffect(() => {
+    if (!isOpen) {
+      setSelectedPlatform(null);
+      return;
     }
+
+    if (initialPlatform) {
+      setSelectedPlatform(initialPlatform);
+    }
+  }, [isOpen, initialPlatform]);
+
+  const handlePlatformSelect = (platform: WorkProvider) => {
+    setSelectedPlatform(platform);
   };
 
   const handleBackToSelector = () => {
+    if (!allowPlatformSelection) {
+      onClose();
+      return;
+    }
     setSelectedPlatform(null);
   };
 
-  const handleConfigComplete = () => {
+  const handleConfigComplete = (_projectId?: string) => {
     setSelectedPlatform(null);
     onClose();
   };
@@ -42,17 +57,19 @@ export function DashboardIntegrationModal({
   return (
     <>
       <IntegrationPlatformSelectorModal
-        isOpen={isOpen && !selectedPlatform}
+        isOpen={isOpen && allowPlatformSelection && !selectedPlatform}
         onClose={handleClose}
         onPlatformSelect={handlePlatformSelect}
       />
 
       <IntegrationConfigDrawer
         platform={selectedPlatform}
+        projectId={projectId}
         open={isOpen && !!selectedPlatform}
         onClose={handleClose}
         onBackToSelector={handleBackToSelector}
         onConfigured={handleConfigComplete}
+        allowPlatformSelection={allowPlatformSelection}
       />
     </>
   );

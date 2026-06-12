@@ -14,6 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from apis.core.response import StandardResponse
 from apis.core.error_handlers import handle_service_errors
 
+from ..models import IntegrationAccount
 from ..services import get_integration_service
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,14 @@ def _get_active_organization_id(request):
     return None
 
 
+def _get_account_organization_id(account_id):
+    record = IntegrationAccount.objects.filter(id=account_id).values('organization_id').first()
+    if not record:
+        return None
+    organization_id = record.get('organization_id')
+    return str(organization_id) if organization_id else None
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 @handle_service_errors
@@ -34,10 +43,16 @@ def get_integration_accounts(request):
     user_id = request.user.id
     organization_id = _get_active_organization_id(request)
     logger.info(f"Getting integration accounts for user_id: {user_id}")
-    
+
+    if not organization_id:
+        return StandardResponse.success(
+            data={'accounts': []},
+            message="Integration accounts retrieved successfully"
+        )
+
     integration_service = get_integration_service()
     accounts = integration_service.get_integration_accounts_by_user(user_id, organization_id=organization_id)
-    
+
     return StandardResponse.success(
         data={'accounts': accounts},
         message="Integration accounts retrieved successfully"
@@ -176,14 +191,104 @@ def create_jira_integration(request):
         )
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@handle_service_errors
+def create_asana_integration(request):
+    """Create Asana integration account via PAT."""
+    user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
+    data = request.data
+
+    pat_token = data.get('pat_token', '').strip()
+    workspace_gid = data.get('workspace_gid', '').strip()
+    workspace_name = data.get('workspace_name', '').strip()
+
+    if not organization_id or not pat_token or not workspace_gid:
+        return StandardResponse.validation_error(
+            detail='Active organization, PAT token, and workspace GID are required',
+            errors=[
+                {"field": "organization_id", "message": "Active organization is required."} if not organization_id else None,
+                {"field": "pat_token", "message": "This field is required."} if not pat_token else None,
+                {"field": "workspace_gid", "message": "This field is required."} if not workspace_gid else None,
+            ],
+            instance=request.path,
+        )
+
+    try:
+        integration_service = get_integration_service()
+        account = integration_service.create_asana_integration(
+            user_id, organization_id, pat_token, workspace_gid, workspace_name,
+        )
+        return StandardResponse.created(
+            data={'account': account},
+            message='Asana integration configured successfully',
+        )
+    except ValueError as e:
+        return StandardResponse.error(
+            title="Connection test failed",
+            detail=str(e),
+            status_code=400,
+            error_type="connection-test-failed",
+            instance=request.path,
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@handle_service_errors
+def create_linear_integration(request):
+    """Create Linear integration account via personal API key."""
+    user_id = request.user.id
+    organization_id = _get_active_organization_id(request)
+    data = request.data
+
+    api_key = data.get('api_key', '').strip()
+    workspace_name = data.get('workspace_name', '').strip()
+
+    if not organization_id or not api_key:
+        return StandardResponse.validation_error(
+            detail='Active organization and API key are required',
+            errors=[
+                {"field": "organization_id", "message": "Active organization is required."} if not organization_id else None,
+                {"field": "api_key", "message": "This field is required."} if not api_key else None,
+            ],
+            instance=request.path,
+        )
+
+    try:
+        integration_service = get_integration_service()
+        account = integration_service.create_linear_integration(
+            user_id, organization_id, api_key, workspace_name,
+        )
+        return StandardResponse.created(
+            data={'account': account},
+            message='Linear integration configured successfully',
+        )
+    except ValueError as e:
+        return StandardResponse.error(
+            title="Connection test failed",
+            detail=str(e),
+            status_code=400,
+            error_type="connection-test-failed",
+            instance=request.path,
+        )
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 @handle_service_errors
 def test_integration_connection(request, account_id):
     """Test connection for an existing integration account."""
     user_id = request.user.id
-    organization_id = _get_active_organization_id(request)
-    
+    organization_id = _get_account_organization_id(account_id)
+
+    if not organization_id:
+        return StandardResponse.not_found(
+            detail='Integration account not found',
+            instance=request.path
+        )
+
     try:
         integration_service = get_integration_service()
         test_result = integration_service.test_integration_connection(user_id, account_id, organization_id=organization_id)
@@ -215,11 +320,17 @@ def test_integration_connection(request, account_id):
 def delete_integration_account(request, account_id):
     """Delete an integration account."""
     user_id = request.user.id
-    organization_id = _get_active_organization_id(request)
-    
+    organization_id = _get_account_organization_id(account_id)
+
+    if not organization_id:
+        return StandardResponse.not_found(
+            detail='Integration account not found',
+            instance=request.path
+        )
+
     integration_service = get_integration_service()
     success = integration_service.delete_integration_account(user_id, account_id, organization_id=organization_id)
-    
+
     if success:
         return StandardResponse.success(
             data={},

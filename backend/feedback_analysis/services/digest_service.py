@@ -61,8 +61,39 @@ def gather_project_stats(project: Project, since: datetime, until: datetime) -> 
 
 
 def gather_user_digest(user: UserAccount, since: datetime, until: datetime) -> dict[str, Any]:
-    """Build the full digest payload for one user."""
-    projects = Project.objects.filter(user=user, status="active")
+    """Build the full digest payload for one user.
+
+    Scoped to the user's currently-active organization. Without this
+    scope, a user who belongs to multiple workspaces would get a single
+    digest that mixes activity across orgs.
+    """
+    profile = getattr(user, "profile", {}) or {}
+    active_org_id = (
+        profile.get("active_organization_id") if isinstance(profile, dict) else None
+    )
+    if not active_org_id:
+        # Without an active workspace we can't safely build a single
+        # digest — emitting unfiltered would mix every workspace the
+        # user has ever joined into one email. Send an empty payload
+        # in the same shape callers expect.
+        return {
+            "user_id": user.id,
+            "email": user.email,
+            "first_name": user.first_name or (user.email.split("@", 1)[0] if user.email else ""),
+            "period_start": since.isoformat(),
+            "period_end": until.isoformat(),
+            "totals": {
+                "analyses_completed": 0,
+                "insights_generated": 0,
+                "files_uploaded": 0,
+                "work_items_created": 0,
+                "work_items_approved": 0,
+            },
+            "projects": [],
+        }
+    projects = Project.objects.filter(
+        user=user, status="active", organization_id=active_org_id
+    )
     project_stats = []
     totals = {
         "analyses_completed": 0,

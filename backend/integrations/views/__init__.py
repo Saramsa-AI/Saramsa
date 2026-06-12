@@ -11,6 +11,8 @@ from .integration_views import (
     get_integration_accounts,
     create_azure_integration,
     create_jira_integration,
+    create_asana_integration,
+    create_linear_integration,
     test_integration_connection,
     delete_integration_account,
 )
@@ -26,8 +28,13 @@ from .project_views import (
 from .external_views import (
     get_azure_projects,
     get_jira_projects,
+    get_asana_workspaces,
+    get_asana_projects,
+    get_linear_projects,
     get_dashboard_azure_projects,
     get_dashboard_jira_projects,
+    get_dashboard_asana_projects,
+    get_dashboard_linear_projects,
     get_external_projects,
     check_external_project,
 )
@@ -43,12 +50,18 @@ from .source_views import (
     feedback_source_detail,
     feedback_source_sync_now,
 )
+from .asana_views import (
+    configure_asana_target,
+    push_insight_to_asana,
+)
 
 __all__ = [
     # Integration views
     'get_integration_accounts',
     'create_azure_integration',
     'create_jira_integration',
+    'create_asana_integration',
+    'create_linear_integration',
     'test_integration_connection',
     'delete_integration_account',
     # Project views
@@ -62,8 +75,13 @@ __all__ = [
     # External views
     'get_azure_projects',
     'get_jira_projects',
+    'get_asana_workspaces',
+    'get_asana_projects',
+    'get_linear_projects',
     'get_dashboard_azure_projects',
     'get_dashboard_jira_projects',
+    'get_dashboard_asana_projects',
+    'get_dashboard_linear_projects',
     'get_external_projects',
     'check_external_project',
     # Slack views
@@ -76,4 +94,7 @@ __all__ = [
     'list_feedback_sources',
     'feedback_source_detail',
     'feedback_source_sync_now',
+    # Asana views
+    'configure_asana_target',
+    'push_insight_to_asana',
 ]

@@ -91,6 +91,17 @@ def _get_project_id_from_request(request, view):
                 if project_id:
                     return project_id
 
+    insight_id = kwargs.get('insight_id') or data.get('insight_id')
+    if insight_id:
+        from feedback_analysis.models import Insight
+        project_id = (
+            Insight.objects.filter(id=str(insight_id))
+            .values_list('project_id', flat=True)
+            .first()
+        )
+        if project_id:
+            return str(project_id)
+
     return None
 
 

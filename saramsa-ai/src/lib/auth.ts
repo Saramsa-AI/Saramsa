@@ -70,6 +70,11 @@ export const LOGIN_PATH = '/login';
 // to add their key here (instead of in 3 different cleanup handlers).
 // Tokens (`sa_access_token`, `sa_refresh_token`) are handled separately
 // by clearTokens(); `sa_user` by setStoredUser(null).
+//
+// Asana and Linear are intentionally absent: those integrations don't
+// cache credentials or selections in localStorage (the dedicated API
+// endpoints / Redux store carry that state). If a future asana_* or
+// linear_* localStorage write is added, list its key here.
 const AUTH_ADJACENT_LOCALSTORAGE_KEYS = [
   'project_id',
   'selected_platform',

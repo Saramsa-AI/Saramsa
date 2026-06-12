@@ -1,12 +1,13 @@
 """Celery tasks for the integrations app.
 
-Currently houses background-maintenance work for organization invites.
-Discovered automatically by celery via `app.autodiscover_tasks()` in
+Background-maintenance work for organization invites. Discovered
+automatically by celery via `app.autodiscover_tasks()` in
 `apis/infrastructure/celery.py` because `integrations` is in
 INSTALLED_APPS.
 """
 
 import logging
+
 from celery import shared_task
 from django.utils import timezone
 

@@ -9,23 +9,23 @@ import {
 } from '@/store/features/integrations/integrationsSlice';
 import { importProjectFromExternal } from '@/store/features/projects/projectsSlice';
 import { motion } from 'framer-motion';
-import { 
-  X, 
-  Search, 
-  Cloud, 
-  ExternalLink, 
-  Loader2, 
-  CheckCircle, 
+import {
+  X,
+  Search,
+  Cloud,
+  CheckSquare,
+  ExternalLink,
+  Loader2,
+  CheckCircle,
   AlertCircle,
   ArrowRight,
-  Calendar,
-  Users
+  Users,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
 interface ImportProjectModalProps {
-  provider: 'azure' | 'jira';
+  provider: 'azure' | 'jira' | 'asana' | 'linear';
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -102,6 +102,20 @@ export function ImportProjectModal({ provider, onClose, onSuccess }: ImportProje
           color: 'bg-secondary/70 border border-border/60',
           icon: <span className="text-foreground font-bold">J</span>,
           baseUrl: 'https://atlassian.net'
+        };
+      case 'asana':
+        return {
+          name: 'Asana',
+          color: 'bg-secondary/70 border border-border/60',
+          icon: <CheckSquare className="w-5 h-5 text-foreground" />,
+          baseUrl: 'https://app.asana.com'
+        };
+      case 'linear':
+        return {
+          name: 'Linear',
+          color: 'bg-secondary/70 border border-border/60',
+          icon: <span className="text-foreground font-bold">L</span>,
+          baseUrl: 'https://linear.app'
         };
     }
   };
@@ -367,5 +381,4 @@ export function ImportProjectModal({ provider, onClose, onSuccess }: ImportProje
     </motion.div>
   );
 }
-
 

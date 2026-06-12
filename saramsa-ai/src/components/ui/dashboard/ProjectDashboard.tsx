@@ -14,6 +14,7 @@ import {
   type Project 
 } from '@/store/features/projects/projectsSlice';
 import { fetchIntegrationAccounts } from '@/store/features/integrations/integrationsSlice';
+import { getProviderLabel, type WorkProvider } from '@/lib/providers';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { 
@@ -59,7 +60,7 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<'azure' | 'jira' | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<WorkProvider | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [syncingProjectId, setSyncingProjectId] = useState<string | null>(null);
@@ -81,7 +82,7 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
   const handleCreateProject = async (
     name: string, 
     description?: string, 
-    externalLink?: { provider: 'azure' | 'jira', accountId: string, projectId: string, projectName: string, projectUrl?: string, projectKey?: string }
+    externalLink?: { provider: WorkProvider, accountId: string, projectId: string, projectName: string, projectUrl?: string, projectKey?: string }
   ) => {
     try {
       let result;
@@ -133,12 +134,12 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     setShowCreateModal(true);
   };
 
-  const handleImportProject = (provider: 'azure' | 'jira') => {
+  const handleImportProject = (provider: WorkProvider) => {
     const hasIntegration = accounts.some(acc => acc.provider === provider && acc.status === 'active');
-    
+
     if (!hasIntegration) {
       // Show error and redirect to settings
-      alert(`No ${provider === 'azure' ? 'Azure DevOps' : 'Jira'} integration found. Please go to Settings > Integrations to connect your account.`);
+      alert(`No ${getProviderLabel(provider)} integration found. Please go to Settings > Integrations to connect your account.`);
       return;
     }
     
@@ -163,13 +164,13 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     }
   };
 
-  const handleSyncProject = async (project: Project, provider: 'azure' | 'jira') => {
+  const handleSyncProject = async (project: Project, provider: WorkProvider) => {
     try {
       setSyncingProjectId(project.id);
       await dispatch(syncProjectWithExternal({ projectId: project.id, provider })).unwrap();
       // Refresh projects to get updated data
       await dispatch(fetchProjects());
-      alert(`Successfully synced "${project.name}" with ${provider === 'azure' ? 'Azure DevOps' : 'Jira'}`);
+      alert(`Successfully synced "${project.name}" with ${getProviderLabel(provider)}`);
     } catch (err: any) {
       console.error('Failed to sync project:', err);
       alert(err?.message || 'Failed to sync project. Please try again.');
@@ -199,20 +200,16 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     }
   };
 
-  const getProviderBadge = (provider: 'azure' | 'jira') => {
-    const config = {
-      azure: { name: 'Azure DevOps', color: 'bg-saramsa-brand', IconComponent: Cloud },
-      jira: { name: 'Jira', color: 'bg-saramsa-brand', IconComponent: null }
-    };
-    
-    const { name, color, IconComponent } = config[provider];
-    
+  const getProviderBadge = (provider: WorkProvider) => {
+    const name = getProviderLabel(provider);
+    const IconComponent = provider === 'azure' ? Cloud : null;
+
     return (
-      <div className={`inline-flex items-center gap-1 px-2 py-1 ${color} text-white text-xs rounded-full`}>
+      <div className="inline-flex items-center gap-1 px-2 py-1 bg-saramsa-brand text-white text-xs rounded-full">
         {IconComponent ? (
           <IconComponent className="w-3 h-3" />
         ) : (
-          <span className="font-bold">J</span>
+          <span className="font-bold">{name.charAt(0)}</span>
         )}
         {name}
       </div>

@@ -10,6 +10,7 @@ import { Label } from './label';
 import { Badge } from './badge';
 import { Card, CardContent } from './card';
 import { Checkbox } from './checkbox';
+import { getProviderLabel, type WorkProvider } from '@/lib/providers';
 
 interface UserStory {
   id: string;
@@ -29,7 +30,7 @@ interface UserStoriesEditorProps {
   userStories: UserStory[];
   onSave: (stories: UserStory[]) => void;
   onPushToITSM: (stories: UserStory[]) => void;
-  platform: 'azure' | 'jira';
+  platform: WorkProvider;
   isLoading?: boolean;
 }
 
@@ -44,6 +45,8 @@ export function UserStoriesEditor({
   const [selectedStories, setSelectedStories] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
+
+  const platformLabel = getProviderLabel(platform);
 
   useEffect(() => {
     setEditingStories([...userStories]);
@@ -175,7 +178,7 @@ export function UserStoriesEditor({
             User Stories Editor
           </h2>
           <p className="text-sm text-muted-foreground dark:text-muted-foreground">
-            Edit and manage user stories before pushing to {platform === 'azure' ? 'Azure DevOps' : 'Jira'}
+            Edit and manage user stories before pushing to {platformLabel}
           </p>
         </div>
         
@@ -228,7 +231,7 @@ export function UserStoriesEditor({
             className="bg-gradient-to-r from-saramsa-gradient-from to-saramsa-gradient-to text-white"
           >
             <Send className="w-4 h-4 mr-2" />
-            Push to {platform === 'azure' ? 'Azure DevOps' : 'Jira'} ({selectedStories.size})
+            Push to {platformLabel} ({selectedStories.size})
           </Button>
         )}
       </div>
@@ -395,5 +398,3 @@ export function UserStoriesEditor({
     </div>
   );
 }
-
-

@@ -2,11 +2,12 @@
 
 import { BaseModal } from "@/components/ui/modals/BaseModal";
 import { DashboardPlatformSelection } from "@/components/ui/dashboard/DashboardPlatformSelection";
+import type { WorkProvider } from "@/lib/providers";
 
 interface IntegrationPlatformSelectorModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onPlatformSelect: (platform: "azure" | "jira") => void;
+  onPlatformSelect: (platform: WorkProvider) => void;
 }
 
 export function IntegrationPlatformSelectorModal({
@@ -19,7 +20,7 @@ export function IntegrationPlatformSelectorModal({
       isOpen={isOpen}
       onClose={onClose}
       title="Configure Integration"
-      description="Connect your project to Azure DevOps or Jira to push work items"
+      description="Connect your project to Azure DevOps, Jira, Asana, or Linear to push work items"
       size="md"
       className="max-h-[90vh] overflow-y-auto"
     >
@@ -30,4 +31,3 @@ export function IntegrationPlatformSelectorModal({
     </BaseModal>
   );
 }
-
