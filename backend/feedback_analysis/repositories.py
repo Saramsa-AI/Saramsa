@@ -49,6 +49,10 @@ def _doc_from_analysis(obj: Analysis) -> Dict[str, Any]:
             "analysis_type": obj.analysis_type,
             "quarter": obj.quarter,
             "display_number": obj.display_number,  # Permanent sequence number for UI
+            "status": obj.status,
+            "error": obj.error,
+            "task_id": obj.task_id,
+            "completed_at": obj.completed_at.isoformat() if obj.completed_at else None,
             "result": obj.result or {},
             "comments": obj.comments or [],
             "dimensions": obj.dimensions or [],
@@ -361,6 +365,8 @@ class AnalysisRepository:
                     "comments": analysis_data.get("comments") or analysis_data.get("original_comments") or analysis_data.get("feedback") or [],
                     "dimensions": analysis_data.get("dimensions") or [],
                     "payload": analysis_data,
+                    "status": Analysis.STATUS_COMPLETED,
+                    "completed_at": timezone.now(),
                     "updated_at": timezone.now(),
                 },
             )
@@ -368,6 +374,57 @@ class AnalysisRepository:
         except Exception as e:
             logger.error(f"Error saving analysis data: {e}")
             return None
+
+    def mark_analysis_status(
+        self,
+        analysis_id: str,
+        status: str,
+        *,
+        task_id: Optional[str] = None,
+        error: Optional[str] = None,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Durably upsert the analysis lifecycle status.
+
+        Creates a stub row when none exists yet so a terminal state (notably a
+        failure that happens before any result is saved) is recorded in Neon and
+        survives Redis eviction. Only the listed fields are written, so updating
+        an existing row never clobbers its result/payload.
+        """
+        defaults: Dict[str, Any] = {"status": status, "updated_at": timezone.now()}
+        if task_id:
+            defaults["task_id"] = str(task_id)
+        if error is not None:
+            defaults["error"] = str(error)[:2000]
+        if project_id:
+            defaults["project_id"] = str(project_id)
+        if user_id:
+            defaults["user_id"] = str(user_id)
+        if status in Analysis.TERMINAL_STATUSES:
+            defaults["completed_at"] = timezone.now()
+        try:
+            Analysis.objects.update_or_create(id=str(analysis_id), defaults=defaults)
+        except Exception as e:
+            # Status tracking must never mask the real task outcome.
+            logger.error(f"Error marking analysis {analysis_id} status={status}: {e}")
+
+    def get_status_by_task_id(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Durable lifecycle status for a Celery task id, or None if no row exists."""
+        obj = (
+            Analysis.objects.filter(task_id=str(task_id))
+            .only("id", "status", "error", "completed_at")
+            .order_by("-created_at")
+            .first()
+        )
+        if not obj:
+            return None
+        return {
+            "id": str(obj.id),
+            "status": obj.status,
+            "error": obj.error,
+            "completed_at": obj.completed_at.isoformat() if obj.completed_at else None,
+        }
 
     def analysis_has_result(self, analysis_id: str) -> bool:
         """True if this analysis already has saved results — the durable 'done' signal

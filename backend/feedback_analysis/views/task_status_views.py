@@ -54,6 +54,16 @@ class TaskStatusView(APIView):
                 "status": "CANCELLED",
                 "ready": True,
             }, True
+
+        # When Celery reports PENDING/STARTED it may simply have evicted the
+        # result of a task that actually finished, which would otherwise read
+        # "RUNNING" forever (the stuck-banner bug). Trust the durable Neon
+        # status if it recorded a terminal outcome.
+        if res.status in ("PENDING", "STARTED"):
+            durable = self._durable_status(task_id)
+            if durable is not None:
+                return durable, True
+
         pipeline_health = cache.get(f"pipeline_health:{task_id}") if cache else None
         elapsed = None
         if started_at:
@@ -100,6 +110,28 @@ class TaskStatusView(APIView):
             response_data["pipeline_health"] = pipeline_health
         terminal = response_data.get("ready", False) or response_data["status"] in ("SUCCESS", "PARTIAL", "FAILED")
         return response_data, terminal
+
+    def _durable_status(self, task_id):
+        """Map a durable Neon terminal status to the endpoint vocabulary, or None
+        if there is no row yet or it is still in progress (let RUNNING stand)."""
+        try:
+            from feedback_analysis.services.analysis_service import get_analysis_service
+            row = get_analysis_service().get_status_by_task_id(task_id)
+        except Exception:
+            return None
+        if not row:
+            return None
+        status = (row.get("status") or "").lower()
+        if status in ("completed", "successful"):
+            return {"task_id": task_id, "status": "SUCCESS", "ready": True}
+        if status == "failed":
+            return {
+                "task_id": task_id,
+                "status": "FAILED",
+                "ready": True,
+                "error": row.get("error") or "Analysis failed",
+            }
+        return None
 
     def _user_owns_task(self, request, task_id):
         user_id = getattr(request.user, "id", None)

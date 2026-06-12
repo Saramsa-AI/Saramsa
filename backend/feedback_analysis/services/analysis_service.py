@@ -320,6 +320,18 @@ class AnalysisService:
             logger.warning(f"analysis_has_result check failed (treating as not complete): {e}")
             return False
 
+    def mark_analysis_status(self, analysis_id: str, status: str, **kwargs) -> None:
+        """Durably record an analysis lifecycle status in Neon (see repository)."""
+        self.analysis_repo.mark_analysis_status(analysis_id, status, **kwargs)
+
+    def get_status_by_task_id(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Durable lifecycle status for a Celery task id, or None."""
+        try:
+            return self.analysis_repo.get_status_by_task_id(task_id)
+        except Exception as e:
+            logger.warning(f"get_status_by_task_id failed for {task_id}: {e}")
+            return None
+
     def update_project_last_analysis(self, project_id: str, analysis_id: str) -> bool:
         """Update project's last analysis."""
         try:

@@ -11,6 +11,24 @@ class TimestampedModel(models.Model):
 
 
 class Analysis(TimestampedModel):
+    # Durable lifecycle status. The live cache (Redis) reflects the finer
+    # states for polling; this column is the durable record so a terminal
+    # state (failure included) survives cache eviction and the status endpoint
+    # can fall back to it instead of showing "analyzing" forever.
+    STATUS_STARTED = "started"
+    STATUS_IN_PROGRESS = "in_progress"
+    STATUS_FAILED = "failed"
+    STATUS_SUCCESSFUL = "successful"
+    STATUS_COMPLETED = "completed"
+    STATUS_CHOICES = [
+        (STATUS_STARTED, "Started"),
+        (STATUS_IN_PROGRESS, "In progress"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_SUCCESSFUL, "Successful"),
+        (STATUS_COMPLETED, "Completed"),
+    ]
+    TERMINAL_STATUSES = (STATUS_FAILED, STATUS_SUCCESSFUL, STATUS_COMPLETED)
+
     id = models.CharField(max_length=128, primary_key=True)
     project = models.ForeignKey("integrations.Project", on_delete=models.CASCADE, null=True, blank=True, db_index=True)
     user = models.ForeignKey("authentication.UserAccount", on_delete=models.CASCADE, null=True, blank=True, db_index=True)
@@ -18,6 +36,10 @@ class Analysis(TimestampedModel):
     analysis_type = models.CharField(max_length=64, blank=True, default="", db_index=True)
     quarter = models.CharField(max_length=32, blank=True, default="", db_index=True)
     display_number = models.IntegerField(null=True, blank=True, db_index=True)  # Permanent sequence number for UI display
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, blank=True, default="", db_index=True)
+    error = models.TextField(blank=True, default="")
+    task_id = models.CharField(max_length=255, blank=True, default="", db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
     result = models.JSONField(default=dict, blank=True)
     comments = models.JSONField(default=list, blank=True)
     dimensions = models.JSONField(default=list, blank=True)
@@ -30,6 +52,8 @@ class Analysis(TimestampedModel):
             models.Index(fields=["user", "created_at"]),
             models.Index(fields=["type", "created_at"]),
             models.Index(fields=["project", "display_number"]),
+            models.Index(fields=["task_id"], name="analysis_task_id_idx"),
+            models.Index(fields=["status", "created_at"], name="analysis_status_created_idx"),
         ]
 
     def save(self, *args, **kwargs):

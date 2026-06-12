@@ -54,11 +54,25 @@ class TaskService:
         max_comments = int(os.getenv("MAX_COMMENTS_PER_ANALYSIS", "50000"))
         health = PipelineHealth(analysis_id=analysis_id, task_id=task_id)
         cache = get_cache_service()
+
+        def _mark_status(status, error=None):
+            # Durable lifecycle status in Neon so a terminal state survives Redis
+            # eviction (closes the "stuck analyzing" banner). Never breaks the task.
+            try:
+                from .analysis_service import get_analysis_service
+                get_analysis_service().mark_analysis_status(
+                    analysis_id, status, task_id=task_id, error=error,
+                    project_id=project_id, user_id=user_id_str,
+                )
+            except Exception as _e:
+                logger.warning(f"durable status write failed ({status}): {_e}")
+
         if len(comments) > max_comments:
             health.mark_failed("max_comments_per_analysis exceeded")
             if task_id:
                 cache.set(f"analysis_failed:{analysis_id}", True, ttl=86400)
                 cache.set(f"pipeline_health:{task_id}", health.to_dict(), ttl=3600)
+            _mark_status("failed", error=f"Too many comments ({len(comments)} > {max_comments})")
             raise ValueError(f"Too many comments for one analysis (max {max_comments})")
         if task_id:
             cache.set(f"pipeline_health:{task_id}", health.to_dict(), ttl=3600)
@@ -74,6 +88,8 @@ class TaskService:
                 return {"insight_id": analysis_id, "project_id": project_id, "status": "already_complete"}
         except Exception as e:
             logger.warning(f"Idempotency guard check failed (proceeding): {e}")
+
+        _mark_status("in_progress")
 
         try:
             # Choose processing method based on configuration
@@ -119,6 +135,7 @@ class TaskService:
             if task_id:
                 cache.set(f"pipeline_health:{task_id}", health.to_dict(), ttl=3600)
             cache.set(f"analysis_failed:{analysis_id}", True, ttl=86400)
+            _mark_status("failed", error=str(e))
             raise
     
     def _process_with_local_pipeline(self, comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects=None, dimensions=None, force_regenerate=False):
