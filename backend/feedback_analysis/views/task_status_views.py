@@ -124,6 +124,8 @@ class TaskStatusView(APIView):
         status = (row.get("status") or "").lower()
         if status in ("completed", "successful"):
             return {"task_id": task_id, "status": "SUCCESS", "ready": True}
+        if status == "partially_completed":
+            return {"task_id": task_id, "status": "PARTIAL", "ready": True}
         if status == "failed":
             return {
                 "task_id": task_id,

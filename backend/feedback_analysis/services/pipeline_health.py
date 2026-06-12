@@ -38,10 +38,10 @@ class PipelineHealth:
             self.stage_latencies[name] = delta.total_seconds()
         self.updated_at = datetime.now(timezone.utc)
 
-    def mark_partial(self, reason: str) -> None:
+    def mark_partial(self, reason: str, key: str = "partial") -> None:
         self.status = "PARTIAL"
         self.degraded = True
-        self.errors.setdefault("narration", reason)
+        self.errors.setdefault(key, reason)
         self.updated_at = datetime.now(timezone.utc)
 
     def mark_degraded(self, mode: str, reason: str) -> None:

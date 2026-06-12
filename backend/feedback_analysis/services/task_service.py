@@ -115,6 +115,14 @@ class TaskService:
             except Exception:
                 pass
 
+            # A partial run must report PARTIAL on the LIVE status path too (not just
+            # the durable fallback): mark_partial sets PARTIAL, which mark_complete
+            # preserves and the status endpoint maps to PARTIAL.
+            if isinstance(result, dict) and result.get("partial"):
+                health.mark_partial(
+                    f"{result.get('failed_count', 0)} comment(s) failed classification",
+                    key="classification",
+                )
             health.mark_complete()
             try:
                 narration_service = get_narration_service()
@@ -326,11 +334,21 @@ class TaskService:
             # endpoint can reuse them instead of paying for a second GPT call.
             'narration': pipeline_result.narration,
             'work_item_candidates': pipeline_result.work_item_candidates,
+            # Surface comments that failed classification (partial run) so the UX
+            # can show "Partially Completed" instead of silently dropping them.
+            'failed_comments': pipeline_result.failed_comments,
+            'failed_count': len(pipeline_result.failed_comments),
+            'partial': bool(pipeline_result.failed_comments),
         }
-        
+
         # Save using analysis service
         analysis_service = get_analysis_service()
         saved_result = analysis_service.save_analysis_data(insight_data)
+        # save_analysis_data marks the row "completed"; downgrade to the explicit
+        # partial state when some comments failed (durable; surfaced by the UX).
+        if pipeline_result.failed_comments:
+            from feedback_analysis.models import Analysis
+            analysis_service.mark_analysis_status(analysis_id, Analysis.STATUS_PARTIALLY_COMPLETED)
         
         if saved_result:
             logger.info(f"✅ Local ML analysis saved to PostgreSQL with ID: {saved_result.get('id')}")
@@ -347,9 +365,11 @@ class TaskService:
             "insight_id": insight_data["id"],
             "project_id": project_id,
             "analysis_id": analysis_id,
-            "status": "complete",
+            "status": "partial" if pipeline_result.failed_comments else "complete",
             "processing_method": "local_ml_pipeline",
-            "processing_time": pipeline_result.processing_time
+            "processing_time": pipeline_result.processing_time,
+            "partial": bool(pipeline_result.failed_comments),
+            "failed_count": len(pipeline_result.failed_comments),
         }
     
     def _build_cancel_checker(self, analysis_id: str):
@@ -718,10 +738,14 @@ class TaskService:
                 'neutral': overall_sentiment.get('neutral', 0),
             },
             'counts': {
+                # total = all comments submitted; the sentiment buckets are over the
+                # successfully-classified ones, so on a partial run they sum to
+                # total - failed (failed surfaced here so the frontend can reconcile).
                 'total': total_comments,
                 'positive': positive_count,
                 'negative': negative_count,
                 'neutral': neutral_count,
+                'failed': len(pipeline_result.failed_comments),
             },
             'features': features_normalized,
             'positive_keywords': positive_keywords,

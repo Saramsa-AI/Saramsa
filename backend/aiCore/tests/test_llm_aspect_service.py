@@ -12,8 +12,11 @@ import time
 import random
 from unittest.mock import patch
 
+from django.test import SimpleTestCase
+
 from aiCore.services import llm_aspect_service as mod
 from aiCore.services.llm_aspect_service import LLMAspectService
+from aiCore.services.circuit_breaker import azure_openai_breaker
 
 
 # ---- fake Azure client ----
@@ -131,21 +134,78 @@ def test_max_aspects_cap():
     assert len(r[0]["matched_aspects"]) == 3
 
 
-def test_loud_failure_raises_not_unmapped():
-    aspects = ["Billing"]
+class PartialClassificationTest(SimpleTestCase):
+    """Partial-vs-systemic failure handling.
 
-    def handler(kwargs):
-        raise RuntimeError("boom: azure down")
+    A SimpleTestCase (not bare pytest functions) so the project's canonical
+    `manage.py test` runner actually collects these. No DB access. setUp/tearDown
+    reset the shared circuit-breaker singleton for order-independent isolation.
+    """
 
-    svc = LLMAspectService()
-    svc.max_retries = 0
-    raised = False
-    try:
+    def setUp(self):
+        azure_openai_breaker.reset()
+
+    def tearDown(self):
+        azure_openai_breaker.reset()
+
+    def test_systemic_failure_aborts(self):
+        """When everything fails (outage), fail loud — don't return a misleading result."""
+        def handler(kwargs):
+            raise RuntimeError("boom: azure down")
+
+        svc = LLMAspectService()
+        svc.max_retries = 0
+        with self.assertRaises(RuntimeError):
+            with _patched(handler):
+                svc.classify_aspects(["x", "y"], ["Billing"])  # 2/2 = 100% > threshold
+
+    def test_isolated_failure_is_partial_not_abort(self):
+        """A few failures (< threshold) keep the successful comments and mark the
+        failed ones errored (NOT fake UNMAPPED) instead of aborting the whole run."""
+        def handler(kwargs):
+            if _comment_of(kwargs) == "bad":
+                raise RuntimeError("boom")
+            return _resp(json.dumps({"matched": [{"aspect": "Billing", "confidence": "high"}]}))
+
+        svc = LLMAspectService()
+        svc.max_retries = 0
         with _patched(handler):
-            svc.classify_aspects(["x", "y"], aspects)
-    except RuntimeError:
-        raised = True
-    assert raised, "a failed call must abort the run, not return UNMAPPED"
+            r = svc.classify_aspects(["good1", "good2", "good3", "bad"], ["Billing"])  # 1/4 = 25%
+
+        self.assertEqual(len(r), 4)
+        self.assertTrue(r[3]["errored"])
+        self.assertEqual(r[3]["matched_aspects"], [])            # errored != UNMAPPED
+        self.assertEqual(r[0]["matched_aspects"], ["Billing"])   # successful comments kept
+        self.assertFalse(r[0].get("errored"))
+
+    def test_failure_above_threshold_aborts(self):
+        """Majority failure (> threshold) is treated as systemic and aborts loud."""
+        def handler(kwargs):
+            if _comment_of(kwargs).startswith("bad"):
+                raise RuntimeError("boom")
+            return _resp(json.dumps({"matched": [{"aspect": "Billing", "confidence": "high"}]}))
+
+        svc = LLMAspectService()
+        svc.max_retries = 0
+        svc.max_failure_rate = 0.5
+        with self.assertRaises(RuntimeError):
+            with _patched(handler):
+                svc.classify_aspects(["good", "bad1", "bad2"], ["Billing"])  # 2/3 = 67% > 50%
+
+    def test_failure_exactly_at_threshold_is_partial(self):
+        """At exactly the threshold (guard is strict `>`), the run is partial, not aborted."""
+        def handler(kwargs):
+            if _comment_of(kwargs).startswith("bad"):
+                raise RuntimeError("boom")
+            return _resp(json.dumps({"matched": [{"aspect": "Billing", "confidence": "high"}]}))
+
+        svc = LLMAspectService()
+        svc.max_retries = 0
+        svc.max_failure_rate = 0.5
+        with _patched(handler):
+            r = svc.classify_aspects(["good1", "good2", "bad1", "bad2"], ["Billing"])  # 2/4 = 50%
+        self.assertEqual(len(r), 4)
+        self.assertEqual(sum(1 for x in r if x.get("errored")), 2)  # partial, not aborted
 
 
 def test_malformed_json_is_unmapped_not_crash():

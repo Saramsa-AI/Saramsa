@@ -20,14 +20,21 @@ class Analysis(TimestampedModel):
     STATUS_FAILED = "failed"
     STATUS_SUCCESSFUL = "successful"
     STATUS_COMPLETED = "completed"
+    STATUS_PARTIALLY_COMPLETED = "partially_completed"
     STATUS_CHOICES = [
         (STATUS_STARTED, "Started"),
         (STATUS_IN_PROGRESS, "In progress"),
         (STATUS_FAILED, "Failed"),
         (STATUS_SUCCESSFUL, "Successful"),
         (STATUS_COMPLETED, "Completed"),
+        (STATUS_PARTIALLY_COMPLETED, "Partially completed"),
     ]
-    TERMINAL_STATUSES = (STATUS_FAILED, STATUS_SUCCESSFUL, STATUS_COMPLETED)
+    TERMINAL_STATUSES = (
+        STATUS_FAILED,
+        STATUS_SUCCESSFUL,
+        STATUS_COMPLETED,
+        STATUS_PARTIALLY_COMPLETED,
+    )
 
     id = models.CharField(max_length=128, primary_key=True)
     project = models.ForeignKey("integrations.Project", on_delete=models.CASCADE, null=True, blank=True, db_index=True)

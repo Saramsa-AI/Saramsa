@@ -111,6 +111,9 @@ class ProcessingResult:
     # kept alongside so candidate_id mapping in _apply_llm_phrasing still matches.
     narration: Optional[Dict[str, Any]] = None
     work_item_candidates: Optional[List[Dict[str, Any]]] = None
+    # Comments that failed classification after retries (kept out of the stats);
+    # surfaced so a partial run is visible rather than silently dropped.
+    failed_comments: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class LocalProcessingService:
@@ -170,8 +173,10 @@ class LocalProcessingService:
         # Step 1b: Check mapping rate and adaptive taxonomy update
         # Phase 1+3: Locked taxonomies skip regen; partial matches use additive growth
         if regenerate_callback is not None:
-            unmapped_count = sum(1 for r in similarity_results if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])
-            unmapped_rate = unmapped_count / max(len(similarity_results), 1)
+            # Exclude errored comments — they carry no taxonomy-fit signal either way.
+            scored = [r for r in similarity_results if not r.get("errored")]
+            unmapped_count = sum(1 for r in scored if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])
+            unmapped_rate = unmapped_count / max(len(scored), 1)
             mapping_rate = 1 - unmapped_rate
 
             if unmapped_rate > self.AUTO_REGENERATE_THRESHOLD:
@@ -200,8 +205,9 @@ class LocalProcessingService:
                             similarity_results = self.aspect_service.classify_aspects(
                                 stripped_comments, aspects, f"{run_id}_regen", is_cancelled=is_cancelled
                             )
-                        new_unmapped = sum(1 for r in similarity_results if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])
-                        new_rate = new_unmapped / max(len(similarity_results), 1)
+                        scored_after = [r for r in similarity_results if not r.get("errored")]
+                        new_unmapped = sum(1 for r in scored_after if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])
+                        new_rate = new_unmapped / max(len(scored_after), 1)
                         logger.info(f"📈 After taxonomy update: {(1-new_rate):.1%} mapped (was {mapping_rate:.1%})")
                     else:
                         logger.warning("Regenerate callback returned no aspects; keeping original taxonomy.")
@@ -211,6 +217,16 @@ class LocalProcessingService:
         # Restore original comment text (with brackets) in similarity results for display + LLM narration
         for i, result in enumerate(similarity_results):
             result["comment_text"] = comments[i]
+
+        # Comments that failed classification after retries — kept out of the
+        # stats below, surfaced so a partial run is visible (not silently dropped).
+        failed_comments = [
+            {"index": i, "comment": comments[i], "error": r.get("error", "")}
+            for i, r in enumerate(similarity_results)
+            if r.get("errored")
+        ]
+        if failed_comments:
+            logger.warning("Partial analysis: %d comment(s) failed classification", len(failed_comments))
 
         # Step 2: sentiment — produced by the LLM in the same aspect call (overall +
         # per-aspect, with "NONE" for no opinion). No local model, no sentence-splitting.
@@ -252,6 +268,7 @@ class LocalProcessingService:
             work_items=work_items,
             narration=narratives,
             work_item_candidates=candidates,
+            failed_comments=failed_comments,
         )
 
     # ------------------------------------------------------------------
@@ -299,6 +316,8 @@ class LocalProcessingService:
 
         combined: List[AspectMatch] = []
         for r in similarity_results:
+            if r.get("errored"):
+                continue  # failed comment — excluded from stats/narration, surfaced separately
             matched = r["matched_aspects"]
             overall_label = r.get("overall_sentiment", "NEUTRAL")
             asp_sent = r.get("aspect_sentiments", {}) or {}
