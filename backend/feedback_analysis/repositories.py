@@ -386,6 +386,9 @@ class AnalysisRepository:
         error: Optional[str] = None,
         project_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        comments: Optional[List[Any]] = None,
+        dimensions: Optional[List[Any]] = None,
+        payload: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Durably upsert the analysis lifecycle status.
 
@@ -393,6 +396,10 @@ class AnalysisRepository:
         failure that happens before any result is saved) is recorded in Neon and
         survives Redis eviction. Only the listed fields are written, so updating
         an existing row never clobbers its result/payload.
+
+        `comments`/`dimensions`/`payload` let the failure path persist the run's
+        inputs so a fully-failed analysis (which never reached save) can still be
+        retriggered from its durable record.
         """
         defaults: Dict[str, Any] = {"status": status, "updated_at": timezone.now()}
         if task_id:
@@ -403,6 +410,12 @@ class AnalysisRepository:
             defaults["project_id"] = str(project_id)
         if user_id:
             defaults["user_id"] = str(user_id)
+        if comments is not None:
+            defaults["comments"] = comments
+        if dimensions is not None:
+            defaults["dimensions"] = dimensions
+        if payload is not None:
+            defaults["payload"] = payload
         if status in Analysis.TERMINAL_STATUSES:
             defaults["completed_at"] = timezone.now()
         try:

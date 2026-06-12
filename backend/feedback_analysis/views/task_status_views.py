@@ -15,6 +15,7 @@ from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.views import APIView
 
 from apis.core.response import StandardResponse
+from apis.core.error_handlers import handle_service_errors
 from apis.infrastructure.cache_service import get_cache_service
 from authentication.permissions import IsAdminOrUser
 
@@ -427,3 +428,72 @@ class TaskCancelView(APIView):
                 logger.warning(f"Failed to persist cancelled analysis {analysis_id} to DB: {e}")
 
         return StandardResponse.success(data={"task_id": task_id, "status": "CANCELLED"})
+
+
+class RetriggerAnalysisView(APIView):
+    """Re-run a failed or partially-completed analysis from its durable record.
+
+    The lightweight retrigger over the stored failure record (no separate
+    dead-letter queue): re-processes the analysis's original comments in place,
+    overwriting the same analysis. force_regenerate bypasses the idempotency
+    guard so a partial/failed run is actually reprocessed.
+    """
+    permission_classes = [IsAdminOrUser]
+
+    @handle_service_errors
+    def post(self, request, analysis_id):
+        from feedback_analysis.services.analysis_service import get_analysis_service
+        from feedback_analysis.services.task_service import process_feedback_task
+        from feedback_analysis.models import Analysis
+
+        user_id_str = str(getattr(request.user, "id", "") or "")
+        analysis_service = get_analysis_service()
+        # Scoped by user_id -> a user can only retrigger their own analysis.
+        doc = analysis_service.get_analysis_by_id(analysis_id, user_id_str)
+        if not doc:
+            return StandardResponse.not_found(detail="Analysis not found", instance=request.path)
+
+        comments = doc.get("original_comments") or doc.get("feedback") or doc.get("comments") or []
+        if not comments:
+            return StandardResponse.error(
+                title="Cannot retrigger",
+                detail="This analysis has no stored comments to re-run.",
+                status_code=422,
+                error_type="retrigger-no-comments",
+                instance=request.path,
+            )
+
+        project_id = doc.get("projectId") or doc.get("project_id")
+        company_name = doc.get("company_name")
+        dimensions = doc.get("dimensions") or []
+        # The task builds the row id as insight_{analysis_id}; use the bare id the
+        # run originally used (stored in the payload), falling back to the URL value.
+        bare_analysis_id = doc.get("analysis_id") or analysis_id
+
+        try:
+            task = process_feedback_task.delay(
+                comments, company_name, user_id_str, project_id, bare_analysis_id,
+                None, dimensions, True,  # suggested_aspects, dimensions, force_regenerate
+            )
+        except Exception as e:
+            logger.error(f"Failed to enqueue retrigger for analysis {bare_analysis_id}: {e}", exc_info=True)
+            return StandardResponse.error(
+                title="Service unavailable",
+                detail="Could not queue the re-run — the task broker is unreachable.",
+                status_code=503,
+                error_type="service-unavailable",
+                instance=request.path,
+            )
+
+        cache = get_cache_service()
+        if cache:
+            cache.set(f"task_start:{task.id}", datetime.now().isoformat(), ttl=3600)
+        analysis_service.mark_analysis_status(
+            bare_analysis_id, Analysis.STATUS_IN_PROGRESS,
+            task_id=task.id, project_id=project_id, user_id=user_id_str,
+        )
+
+        return StandardResponse.success(
+            data={"task_id": task.id, "analysis_id": bare_analysis_id},
+            message="Analysis re-run started",
+        )
