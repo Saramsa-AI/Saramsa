@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { AzureDevOpsIntegrationForm } from './AzureDevOpsIntegrationForm';
 
 interface AzureDevOpsConfigScreenProps {
-  onContinue: () => void;
+  onContinue: (projectId: string) => void;
   onBack: () => void;
 }
 

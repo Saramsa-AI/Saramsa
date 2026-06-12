@@ -1,14 +1,14 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { JiraIntegrationForm } from './JiraIntegrationForm';
+import { LinearIntegrationForm } from './LinearIntegrationForm';
 
-interface JiraConfigScreenProps {
+interface LinearConfigScreenProps {
   onContinue: (projectId: string) => void;
   onBack: () => void;
 }
 
-export function JiraConfigScreen({ onContinue, onBack }: JiraConfigScreenProps) {
+export function LinearConfigScreen({ onContinue, onBack }: LinearConfigScreenProps) {
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="min-h-full py-12 lg:py-16">
@@ -20,13 +20,13 @@ export function JiraConfigScreen({ onContinue, onBack }: JiraConfigScreenProps) 
           className="space-y-4 text-center lg:text-left"
         >
           <p className="text-xs uppercase tracking-widest text-muted-foreground">
-            Jira Integration
+            Linear Integration
           </p>
           <h1 className="text-3xl sm:text-4xl font-semibold text-foreground">
-            Connect your Jira workspace and bring projects into Saramsa.ai
+            Connect your Linear workspace and route feedback into team issue queues
           </h1>
           <p className="text-sm sm:text-base text-muted-foreground max-w-2xl lg:max-w-3xl mx-auto lg:mx-0">
-            Link your Jira account once, then choose the project you would like Saramsa.ai to use when generating issues from customer feedback. We handle the secure connection and remember your configuration for future sessions.
+            Link your Linear account once with a personal API key, then choose the team you would like Saramsa.ai to use when generating issues from customer feedback. Credentials are encrypted and reused across future sessions.
           </p>
         </motion.div>
 
@@ -40,25 +40,25 @@ export function JiraConfigScreen({ onContinue, onBack }: JiraConfigScreenProps) 
             <div className="space-y-6">
               <div className="space-y-2">
                 <h2 className="text-xl font-semibold text-foreground">
-                  Why link Jira?
+                  Why link Linear?
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Create issues directly from feedback, synchronize updates, and keep teams aligned without switching tools.
+                  Turn triaged feedback into Linear issues with the right team, priority, and Markdown context — without leaving Saramsa.ai.
                 </p>
               </div>
               <div className="space-y-4">
                 {[
                   {
-                    title: "Secure authentication",
-                    description: "API tokens stay encrypted in storage and never leave your browser without consent."
+                    title: "Personal API key auth",
+                    description: "Generate a key in Linear and paste it once. We encrypt it and never expose it back to the browser."
                   },
                   {
-                    title: "Synced project context",
-                    description: "Choose the project where Saramsa.ai should publish triaged feedback as issues."
+                    title: "Team-aware mapping",
+                    description: "Choose the team where Saramsa.ai should publish issues so they land in the right backlog."
                   },
                   {
                     title: "Reusable integration",
-                    description: "We detect existing connections and let you manage multiple Jira accounts with ease."
+                    description: "We detect existing connections so you can link multiple Linear accounts without redoing setup."
                   }
                 ].map((item) => (
                   <div key={item.title} className="rounded-2xl border border-border/60 bg-card/70 p-4">
@@ -74,7 +74,7 @@ export function JiraConfigScreen({ onContinue, onBack }: JiraConfigScreenProps) 
                   Need help?
                 </p>
                 <p className="mt-2 text-sm text-foreground">
-                  Reach out to your Saramsa.ai admin to enable Jira integrations for your workspace.
+                  Reach out to your Saramsa.ai admin to enable Linear integrations for your workspace.
                 </p>
               </div>
             </div>
@@ -86,7 +86,7 @@ export function JiraConfigScreen({ onContinue, onBack }: JiraConfigScreenProps) 
             transition={{ duration: 0.7, ease: "easeOut" }}
             className="w-full"
           >
-            <JiraIntegrationForm onContinue={onContinue} onBack={onBack} />
+            <LinearIntegrationForm onContinue={onContinue} onBack={onBack} />
           </motion.section>
           </div>
         </div>

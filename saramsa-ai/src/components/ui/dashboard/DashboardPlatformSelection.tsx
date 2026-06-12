@@ -4,17 +4,19 @@ import { useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { motion } from "framer-motion";
 import {
-  Download,
-  Globe,
   ArrowRight,
   CheckCircle,
   Shield,
 } from 'lucide-react';
 import type { AppDispatch, RootState } from "@/store/store";
 import { fetchIntegrationAccounts } from "@/store/features/integrations/integrationsSlice";
+import {
+  getProviderSelectionCards,
+  type WorkProvider,
+} from "@/lib/providers";
 
 interface DashboardPlatformSelectionProps {
-  onPlatformSelect: (platform: "azure" | "jira") => void;
+  onPlatformSelect: (platform: WorkProvider) => void;
   className?: string;
 }
 
@@ -30,48 +32,13 @@ export function DashboardPlatformSelection({
     dispatch(fetchIntegrationAccounts());
   }, [dispatch]);
 
-  // Check if integrations already exist
-  const hasAzureIntegration = accounts.some(
-    (account) => account.provider === "azure"
+  const activeProviders = accounts
+    .filter((account) => account.status === "active")
+    .map((account) => account.provider);
+  const platforms = getProviderSelectionCards(
+    "dashboardSelection",
+    activeProviders
   );
-  const hasJiraIntegration = accounts.some(
-    (account) => account.provider === "jira"
-  );
-
-  const platforms = [
-    {
-      id: "azure",
-      name: "Azure DevOps",
-      description: hasAzureIntegration
-        ? "Azure DevOps integration is already configured. You can reconfigure or link to a different organization."
-        : "Connect your project to Azure DevOps for seamless work item creation",
-      icon: <Download className="w-8 h-8" />,
-      color: "bg-secondary/70",
-      features: [
-        "AI-Powered Analysis",
-        "Auto Work Item Creation",
-        "Real-time Sync",
-        "Team Assignment",
-      ],
-      status: hasAzureIntegration ? "configured" : "available",
-    },
-    {
-      id: "jira",
-      name: "Jira",
-      description: hasJiraIntegration
-        ? "Jira integration is already configured. You can reconfigure or link to a different workspace."
-        : "Integrate your project with Jira for comprehensive project management",
-      icon: <Globe className="w-8 h-8" />,
-      color: "bg-secondary/70",
-      features: [
-        "Dynamic Project Detection",
-        "AI-Powered Issue Classification",
-        "Automatic Priority Assignment",
-        "Rich Issue Details",
-      ],
-      status: hasJiraIntegration ? "configured" : "available",
-    },
-  ];
 
   return (
     <div className={`p-6 ${className}`}>
@@ -87,7 +54,7 @@ export function DashboardPlatformSelection({
             Choose Your Integration Platform
           </h2>
           <p className="text-sm text-muted-foreground dark:text-muted-foreground">
-            Connect this project to Azure DevOps or Jira to enable automated work item creation and synchronization.
+            Connect this project to a delivery platform to enable automated work item creation and synchronization.
           </p>
         </motion.div>
 
@@ -108,14 +75,14 @@ export function DashboardPlatformSelection({
               <div
                 className={`relative bg-card/80 border-2 rounded-xl p-5 transition-all duration-300 cursor-pointer hover:border-border/70 hover:shadow-sm ${
                   platform.status === "configured"
-                    ? "border-border/70 bg-secondary/40"
+                    ? "border-saramsa-brand/25 bg-card/85 shadow-[0_16px_40px_-34px_rgba(139,95,191,0.4)]"
                     : "border-border/60"
                 }`}
-                onClick={() => onPlatformSelect(platform.id as "azure" | "jira")}
+                onClick={() => onPlatformSelect(platform.id)}
               >
                 {platform.status === "configured" && (
                   <div className="absolute top-3 right-3">
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-secondary/70 text-foreground">
+                    <span className="inline-flex items-center rounded-full border border-border/60 bg-secondary/70 px-2.5 py-1 text-xs font-medium text-foreground">
                       <CheckCircle className="w-3 h-3 mr-1" />
                       Configured
                     </span>
@@ -124,15 +91,15 @@ export function DashboardPlatformSelection({
 
                 <div className="flex items-start gap-4">
                   <div
-                    className={`w-12 h-12 ${platform.color} border border-border/60 rounded-xl flex items-center justify-center text-foreground flex-shrink-0`}
+                    className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl border border-border/60 bg-secondary/70 text-foreground"
                   >
-                    {platform.icon}
+                    <platform.icon className="w-8 h-8" />
                   </div>
 
                   <div className="flex-1 space-y-2">
                     <div>
                       <h3 className="text-lg font-semibold text-foreground dark:text-foreground">
-                        {platform.name}
+                        {platform.label}
                       </h3>
                       <p className="text-sm text-muted-foreground dark:text-muted-foreground">
                         {platform.description}
@@ -178,4 +145,3 @@ export function DashboardPlatformSelection({
     </div>
   );
 }
-

@@ -1,8 +1,9 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
+import { getProviderPlatformKey, type WorkProvider } from '@/lib/providers';
 
 export interface ProjectExternalLink {
-  provider: 'azure' | 'jira';
+  provider: WorkProvider;
   integrationAccountId: string;
   externalId: string;
   url: string;
@@ -64,7 +65,7 @@ export const createProject = createAsyncThunk(
     name: string; 
     description?: string;
     externalLinks?: Array<{
-      provider: string;
+      provider: WorkProvider;
       integrationAccountId: string;
       externalId: string;
       externalKey?: string;
@@ -83,12 +84,16 @@ export const createProject = createAsyncThunk(
       // If external links provided, use the first one to set platform and integration details
       if (data.externalLinks && data.externalLinks.length > 0) {
         const link = data.externalLinks[0];
-        payload.platform = link.provider === 'azure' ? 'azure_devops' : 'jira';
+        payload.platform = getProviderPlatformKey(link.provider);
         payload.external_project_id = link.externalId;
         payload.integration_account_id = link.integrationAccountId;
         payload.external_url = link.url;
         if (link.externalKey) {
-          payload.jira_project_key = link.externalKey;
+          if (link.provider === 'linear') {
+            payload.linear_team_key = link.externalKey;
+          } else {
+            payload.jira_project_key = link.externalKey;
+          }
         }
       } else {
         payload.platform = 'standalone';
@@ -111,7 +116,7 @@ export const createProject = createAsyncThunk(
 export const importProjectFromExternal = createAsyncThunk(
   'projects/importFromExternal',
   async (data: {
-    provider: 'azure' | 'jira';
+    provider: WorkProvider;
     integrationAccountId: string;
     externalProject: {
       id: string;
@@ -133,23 +138,19 @@ export const importProjectFromExternal = createAsyncThunk(
     const createData: any = {
       project_name: data.externalProject.name,
       description: data.externalProject.description,
-      platform: data.provider === 'azure' ? 'azure_devops' : 'jira',
+      platform: getProviderPlatformKey(data.provider),
       external_project_id: data.externalProject.id,
       integration_account_id: data.integrationAccountId,
     };
-    
-    // Add provider-specific fields
+
+    // Add provider-specific fields from the explicit selection payload instead of browser storage.
     if (data.provider === 'azure') {
-      const organization = typeof window !== 'undefined' ? localStorage.getItem('azure_organization') : null;
-      createData.organization = organization;
       createData.azure_project_name = data.externalProject.name;
       createData.azure_process_template = data.externalProject.templateName;
     } else if (data.provider === 'jira') {
-      const jira_domain = typeof window !== 'undefined' ? localStorage.getItem('jira_domain') : null;
-      const jira_email = typeof window !== 'undefined' ? localStorage.getItem('jira_email') : null;
-      createData.jira_domain = jira_domain;
-      createData.jira_email = jira_email;
       createData.jira_project_key = data.externalProject.key;
+    } else if (data.provider === 'linear') {
+      createData.linear_team_key = data.externalProject.key;
     }
     
     const response = await apiRequest('post', '/integrations/projects/create/', createData, true);
@@ -183,54 +184,11 @@ export const deleteProject = createAsyncThunk(
 
 export const syncProjectWithExternal = createAsyncThunk(
   'projects/syncWithExternal',
-  async (data: { projectId: string; provider: 'azure' | 'jira' }) => {
+  async (data: { projectId: string; provider: WorkProvider }) => {
     const response = await apiRequest('post', `/integrations/projects/${data.projectId}/sync`, {
       provider: data.provider,
     }, true);
     return response.data;
-  }
-);
-
-// Fallback thunk for existing project creation (temporary compatibility)
-export const createProjectLegacy = createAsyncThunk(
-  'projects/createProjectLegacy',
-  async (data: {
-    name: string;
-    platform: 'azure_devops' | 'jira' | 'standalone';
-    externalProjectId?: string;
-    metadata?: any;
-  }) => {
-    // Use existing project creation endpoint
-    const response = await apiRequest('post', '/integrations/projects/create/', {
-      project_name: data.name,
-      platform: data.platform,
-      external_project_id: data.externalProjectId,
-      ...data.metadata,
-    }, true);
-    
-    const project = response.data.data;
-    
-    // Transform to our Project interface
-    return {
-      id: project.id,
-      name: project.name || data.name,
-      description: project.description,
-      userId: project.userId || 'current_user',
-      createdAt: project.createdAt || new Date().toISOString(),
-      updatedAt: project.updatedAt || new Date().toISOString(),
-      externalLinks: data.externalProjectId ? [{
-        provider: data.platform === 'azure_devops' ? 'azure' as const : 'jira' as const,
-        integrationAccountId: 'legacy',
-        externalId: data.externalProjectId,
-        url: project.external_url || '',
-        status: 'ok' as const,
-        lastSyncedAt: new Date().toISOString(),
-      }] : [],
-      metadata: {
-        totalComments: 0,
-        analysisStatus: 'pending' as const,
-      },
-    } as Project;
   }
 );
 
@@ -369,27 +327,6 @@ const projectsSlice = createSlice({
             link.lastSyncedAt = new Date().toISOString();
           }
         }
-      })
-      
-      // Legacy project creation
-      .addCase(createProjectLegacy.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(createProjectLegacy.fulfilled, (state, action) => {
-        state.loading = false;
-        // Safety check: ensure payload exists and has an id
-        if (action.payload && action.payload.id) {
-          state.projects.push(action.payload);
-          state.currentProject = action.payload;
-        } else {
-          console.error('createProjectLegacy fulfilled but payload is invalid:', action.payload);
-          state.error = 'Project created but data is invalid';
-        }
-      })
-      .addCase(createProjectLegacy.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.error.message || 'Failed to create project';
       });
   },
 });

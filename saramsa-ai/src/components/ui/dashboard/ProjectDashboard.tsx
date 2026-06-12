@@ -25,7 +25,6 @@ import {
   Users,
   AlertCircle,
   ExternalLink,
-  Cloud,
   Loader2,
   ChevronDown,
   ArrowRight
@@ -38,6 +37,7 @@ import { EditProjectModal } from '@/components/ui/dashboard/EditProjectModal';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/useAuth';
 import { Building2 } from 'lucide-react';
+import { getProviderLabel, type WorkProvider } from '@/lib/providers';
 
 interface ProjectDashboardProps {
   onNavigateToAnalysis?: () => void;
@@ -59,7 +59,7 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<'azure' | 'jira' | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<WorkProvider | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [syncingProjectId, setSyncingProjectId] = useState<string | null>(null);
@@ -81,7 +81,7 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
   const handleCreateProject = async (
     name: string, 
     description?: string, 
-    externalLink?: { provider: 'azure' | 'jira', accountId: string, projectId: string, projectName: string, projectUrl?: string, projectKey?: string }
+    externalLink?: { provider: WorkProvider, accountId: string, projectId: string, projectName: string, projectUrl?: string, projectKey?: string }
   ) => {
     try {
       let result;
@@ -133,12 +133,11 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     setShowCreateModal(true);
   };
 
-  const handleImportProject = (provider: 'azure' | 'jira') => {
+  const handleImportProject = (provider: WorkProvider) => {
     const hasIntegration = accounts.some(acc => acc.provider === provider && acc.status === 'active');
     
     if (!hasIntegration) {
-      // Show error and redirect to settings
-      alert(`No ${provider === 'azure' ? 'Azure DevOps' : 'Jira'} integration found. Please go to Settings > Integrations to connect your account.`);
+      alert(`No ${getProviderLabel(provider)} integration found. Please go to Settings > Integrations to connect your account.`);
       return;
     }
     
@@ -163,13 +162,13 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     }
   };
 
-  const handleSyncProject = async (project: Project, provider: 'azure' | 'jira') => {
+  const handleSyncProject = async (project: Project, provider: WorkProvider) => {
     try {
       setSyncingProjectId(project.id);
       await dispatch(syncProjectWithExternal({ projectId: project.id, provider })).unwrap();
       // Refresh projects to get updated data
       await dispatch(fetchProjects());
-      alert(`Successfully synced "${project.name}" with ${provider === 'azure' ? 'Azure DevOps' : 'Jira'}`);
+      alert(`Successfully synced "${project.name}" with ${getProviderLabel(provider)}`);
     } catch (err: any) {
       console.error('Failed to sync project:', err);
       alert(err?.message || 'Failed to sync project. Please try again.');
@@ -197,26 +196,6 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     } finally {
       setDeletingProjectId(null);
     }
-  };
-
-  const getProviderBadge = (provider: 'azure' | 'jira') => {
-    const config = {
-      azure: { name: 'Azure DevOps', color: 'bg-saramsa-brand', IconComponent: Cloud },
-      jira: { name: 'Jira', color: 'bg-saramsa-brand', IconComponent: null }
-    };
-    
-    const { name, color, IconComponent } = config[provider];
-    
-    return (
-      <div className={`inline-flex items-center gap-1 px-2 py-1 ${color} text-white text-xs rounded-full`}>
-        {IconComponent ? (
-          <IconComponent className="w-3 h-3" />
-        ) : (
-          <span className="font-bold">J</span>
-        )}
-        {name}
-      </div>
-    );
   };
 
   if (loading && projects.length === 0) {
@@ -371,7 +350,7 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
             {accounts.length === 0 && (
               <div className="mt-6 p-4 bg-secondary/80 dark:bg-secondary/60 rounded-2xl max-w-md mx-auto border border-border/60">
                 <p className="text-sm text-muted-foreground">
-                  Tip: Connect your Azure DevOps or Jira accounts in{' '}
+                  Tip: Connect your Azure DevOps, Jira, or Asana accounts in{' '}
                   <a href="/settings" className="underline hover:no-underline">
                     Settings {'>'} Integrations
                   </a>{' '}
@@ -452,5 +431,3 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
     </div>
   );
 }
-
-

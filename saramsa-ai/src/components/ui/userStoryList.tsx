@@ -38,6 +38,7 @@ import { Checkbox } from "./checkbox";
 import { EditActionDrawer } from "./edit-action-drawer";
 import apiRequest from "@/lib/apiRequest";
 import { getRelatedInsightsForWorkItem } from "@/lib/insightTraceability";
+import { getProviderLabel, getProviderProcessTemplate, type WorkProvider } from "@/lib/providers";
 import { DEFAULT_QUALITY_RULES, evaluateWorkItems, type QualityReport, type QualityRules } from "@/lib/workItemQuality";
 import { sortWorkItemsByPriority } from "@/lib/workItemPrioritySort";
 
@@ -59,7 +60,7 @@ interface WorkItem {
 
 interface UserStoryListProps {
   userStories?: UserStory[];
-  platform?: 'azure' | 'jira';
+  platform?: WorkProvider;
   projectId?: string;
   projectKey?: string;
   onRegenerateAnalysis?: () => void;
@@ -93,7 +94,9 @@ export const UserStoryList = ({
     (link: any) => link.provider === platform
   ) || false;
   const isDraftFromContext = (currentProject as any)?.is_draft === true || (currentProject as any)?.config_state === 'unconfigured';
-  const isDraftProject = isDraftFromContext || (!hasIntegrations && projectId) || (!hasPlatformIntegration && projectId);
+  const isDraftProject = currentProject
+    ? (!hasIntegrations || !hasPlatformIntegration)
+    : isDraftFromContext || (!hasIntegrations && projectId) || (!hasPlatformIntegration && projectId);
   const canManageAdminActions =
     !!projectId && (
       user?.role === 'admin' ||
@@ -122,6 +125,8 @@ export const UserStoryList = ({
   const [qualityLoading, setQualityLoading] = useState(false);
   /** Items staged for the review/push flow (header multi-select or per-row push). */
   const [pushQueueItems, setPushQueueItems] = useState<ActionItem[]>([]);
+
+  const platformLabel = useMemo(() => getProviderLabel(platform), [platform]);
 
   const insightsList = useMemo(() => {
     const data = analysisData as Record<string, unknown> | null;
@@ -460,7 +465,7 @@ export const UserStoryList = ({
           projectId: formattedProjectId,
           userStories: userStoriesToSubmit,
           platform: platform,
-          processTemplate: 'Agile',
+          processTemplate: getProviderProcessTemplate(platform),
           time: new Date().toISOString()
         })
       ).unwrap() as any;
@@ -564,9 +569,9 @@ export const UserStoryList = ({
       }
         
         if (created > 0) {
-          alert(`Successfully submitted ${created} user stories to ${platform === 'azure' ? 'Azure DevOps' : 'Jira'}${skipped > 0 ? ` (${skipped} already existed)` : ''}`);
+          alert(`Successfully submitted ${created} user stories to ${platformLabel}${skipped > 0 ? ` (${skipped} already existed)` : ''}`);
         } else if (skipped > 0 && failed === 0) {
-          alert(`All ${skipped} user stories were already created in ${platform === 'azure' ? 'Azure DevOps' : 'Jira'}`);
+          alert(`All ${skipped} user stories were already created in ${platformLabel}`);
         }
       } else {
         // Handle case where submission failed
@@ -788,7 +793,7 @@ export const UserStoryList = ({
   };
 
   const getPlatformDisplayName = () => {
-    return platform === 'azure' ? 'Azure DevOps' : 'Jira';
+    return platformLabel;
   };
 
   // Get submitted work items for the "Pushed to" section
@@ -1180,6 +1185,7 @@ export const UserStoryList = ({
         isOpen={showIntegrationModal}
         onClose={() => setShowIntegrationModal(false)}
         projectId={projectId || ''}
+        initialPlatform={platform}
       />
 
       <WorkItemReviewModal
@@ -1213,4 +1219,3 @@ export const UserStoryList = ({
     </div>
   );
 };
-

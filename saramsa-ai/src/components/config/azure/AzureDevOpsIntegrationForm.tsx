@@ -16,11 +16,12 @@ type AzureDevOpsProject = {
 };
 
 interface AzureDevOpsIntegrationFormProps {
-  onContinue: () => void;
+  onContinue: (projectId: string) => void;
   onBack: () => void;
+  targetProjectId?: string;
 }
 
-export function AzureDevOpsIntegrationForm({ onContinue, onBack }: AzureDevOpsIntegrationFormProps) {
+export function AzureDevOpsIntegrationForm({ onContinue, onBack, targetProjectId }: AzureDevOpsIntegrationFormProps) {
   const dispatch = useDispatch<AppDispatch>();
   const { accounts } = useSelector((state: RootState) => state.integrations);
   const { projects: saramsaProjects } = useSelector((state: RootState) => state.projects);
@@ -33,6 +34,13 @@ export function AzureDevOpsIntegrationForm({ onContinue, onBack }: AzureDevOpsIn
   const [projects, setProjects] = useState<AzureDevOpsProject[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [isExistingIntegration, setIsExistingIntegration] = useState(false);
+
+  const normalizedTargetProjectId = targetProjectId?.startsWith('project_')
+    ? targetProjectId.replace('project_', '')
+    : targetProjectId;
+  const currentSaramsaProject = normalizedTargetProjectId
+    ? saramsaProjects?.find(project => project.id === normalizedTargetProjectId)
+    : null;
 
   const linkedProjects: { [key: string]: { id: string; name: string } } = {};
   saramsaProjects?.forEach(project => {
@@ -96,12 +104,6 @@ export function AzureDevOpsIntegrationForm({ onContinue, onBack }: AzureDevOpsIn
 
     const selectedProjectData = projects.find(p => p.id === selectedProject);
     if (selectedProjectData) {
-      localStorage.setItem('azure_organization', orgName);
-      localStorage.setItem('azure_selected_project', selectedProject);
-      localStorage.setItem('azure_project_name', selectedProjectData.name);
-      if (selectedProjectData.templateName) {
-        localStorage.setItem('azure_process_template', selectedProjectData.templateName);
-      }
     }
 
     setIsCreatingProject(true);
@@ -109,9 +111,8 @@ export function AzureDevOpsIntegrationForm({ onContinue, onBack }: AzureDevOpsIn
 
     try {
       await handlePersistProject();
-      onContinue();
-    } catch {
-      // Error already set by handlePersistProject
+    } catch (persistError) {
+      console.error('Azure DevOps project persistence failed:', persistError);
     } finally {
       setIsCreatingProject(false);
     }
@@ -173,23 +174,39 @@ export function AzureDevOpsIntegrationForm({ onContinue, onBack }: AzureDevOpsIn
         integrationAccountId = integrationResponse.data.data.account.id;
       }
 
-      const projectData = {
-        name: selectedProjectData?.name || 'Azure DevOps Project',
-        description: `Imported from Azure DevOps: ${orgName}`,
-        externalLinks: [{
-          provider: 'azure',
+      const azureExternalLink = {
+          provider: 'azure' as const,
           integrationAccountId: integrationAccountId,
           externalId: selectedProject,
           url: `https://dev.azure.com/${orgName}/${selectedProjectData?.name}`,
           status: 'ok',
           lastSyncedAt: null,
           syncMetadata: {}
-        }]
+        };
+
+      if (currentSaramsaProject && normalizedTargetProjectId) {
+        const nextExternalLinks = [
+          ...(currentSaramsaProject.externalLinks || []).filter(link => link.provider !== 'azure'),
+          azureExternalLink,
+        ];
+
+        await apiRequest('patch', `/integrations/projects/${normalizedTargetProjectId}/`, {
+          externalLinks: nextExternalLinks,
+        }, true);
+        await dispatch(fetchProjects());
+
+        onContinue(normalizedTargetProjectId);
+        return;
+      }
+
+      const projectData = {
+        name: selectedProjectData?.name || 'Azure DevOps Project',
+        description: `Imported from Azure DevOps: ${orgName}`,
+        externalLinks: [azureExternalLink]
       };
 
       const result = await dispatch(createProject(projectData)).unwrap();
-      localStorage.setItem('project_id', result.id);
-      localStorage.setItem('selected_project_name', selectedProjectData?.name || '');
+      onContinue(result.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create project');
       throw e;

@@ -7,16 +7,16 @@ import { useDispatch } from 'react-redux';
 import type { AppDispatch } from '@/store/store';
 import { fetchIntegrationAccounts } from '@/store/features/integrations/integrationsSlice';
 import { PlatformSelectionScreen } from '@/components/config/PlatformSelectionScreen';
-import { AzureDevOpsConfigScreen } from '@/components/config/azure/AzureDevOpsConfigScreen';
-import { JiraConfigScreen } from '@/components/config/jira/JiraConfigScreen';
+import { providerConfigScreens } from '@/components/config/providerConfigScreens';
 import { forceUnlockBodyScroll } from '@/lib/bodyScrollLock';
+import type { WorkProvider } from '@/lib/providers';
 
 
 export default function ConfigPage() {
   const router = useRouter();
   const {} = useAuth();
   const dispatch = useDispatch<AppDispatch>();
-  const [selectedPlatform, setSelectedPlatform] = useState<'azure' | 'jira' | null>(null);
+  const [selectedPlatform, setSelectedPlatform] = useState<WorkProvider | null>(null);
 
   // checkk Fetch integration accounts once at the parent level
   useEffect(() => {
@@ -24,28 +24,17 @@ export default function ConfigPage() {
     dispatch(fetchIntegrationAccounts());
   }, [dispatch]);
 
-  const handlePlatformSelect = (platform: 'azure' | 'jira') => {
+  const handlePlatformSelect = (platform: WorkProvider) => {
     setSelectedPlatform(platform);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('selected_platform', platform);
-    }
   };
 
   const handleBackToPlatformSelection = () => {
     setSelectedPlatform(null);
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('selected_platform');
-    }
   };
 
-  const handleContinue = async () => {
+  const handleContinue = async (projectId?: string) => {
     try {
-      // The config screens will already have stored project/organization
-      // Get the project ID from localStorage and route to the project dashboard
-      const projectId = typeof window !== 'undefined' ? localStorage.getItem('project_id') : null;
-      
       if (projectId) {
-        // Import encryption function
         const { encryptProjectId } = await import('@/lib/encryption');
         const encryptedId = encryptProjectId(projectId);
         router.push(`/projects/${encryptedId}/dashboard/`);
@@ -75,29 +64,13 @@ export default function ConfigPage() {
     );
   }
 
-  // Show Azure DevOps config for Azure platform
-  if (selectedPlatform === 'azure') {
-    return (
-      <div className="h-full overflow-y-auto bg-background">
-        <AzureDevOpsConfigScreen 
-          onContinue={handleContinue}
-          onBack={handleBackToPlatformSelection}
-        />
-      </div>
-    );
-  }
-
-  // Show Jira config for Jira platform
-  if (selectedPlatform === 'jira') {
-    return (
-      <div className="h-full overflow-y-auto bg-background">
-        <JiraConfigScreen 
-          onContinue={handleContinue}
-          onBack={handleBackToPlatformSelection}
-        />
-      </div>
-    );
-  }
-
-  return null;
+  const SelectedConfigScreen = providerConfigScreens[selectedPlatform];
+  return (
+    <div className="h-full overflow-y-auto bg-background">
+      <SelectedConfigScreen
+        onContinue={handleContinue}
+        onBack={handleBackToPlatformSelection}
+      />
+    </div>
+  );
 } 
