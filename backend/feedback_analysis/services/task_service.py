@@ -120,7 +120,8 @@ class TaskService:
             # preserves and the status endpoint maps to PARTIAL.
             if isinstance(result, dict) and result.get("partial"):
                 health.mark_partial(
-                    f"{result.get('failed_count', 0)} comment(s) failed classification"
+                    f"{result.get('failed_count', 0)} comment(s) failed classification",
+                    key="classification",
                 )
             health.mark_complete()
             try:
