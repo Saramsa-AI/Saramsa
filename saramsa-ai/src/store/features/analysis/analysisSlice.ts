@@ -103,8 +103,11 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<any> 
 
         console.log(`[waitForAnalysisTask] Status: ${status}`);
 
-        if (status === 'COMPLETED' || status === 'SUCCESS') {
+        // PARTIAL is terminal too — a partial run produced results (some comments
+        // failed). Without this branch it would poll until the 30-min timeout.
+        if (status === 'COMPLETED' || status === 'SUCCESS' || status === 'PARTIAL') {
           clearInterval(pollInterval);
+          const isPartial = status === 'PARTIAL';
 
           // Fetch the full analysis data
           const insightId = statusData.result?.insight_id;
@@ -112,17 +115,19 @@ async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<any> 
             const analysisRes = await apiRequest('get', `/feedback/analysis/${insightId}/`, undefined, true);
             const analysisData = analysisRes.data?.data;
 
-            console.log(`[waitForAnalysisTask] Analysis loaded:`, insightId);
+            console.log(`[waitForAnalysisTask] Analysis loaded:`, insightId, isPartial ? '(partial)' : '');
             resolve({
               id: insightId,
               analysisData: analysisData,
-              taskId: taskId
+              taskId: taskId,
+              partial: isPartial,
             });
           } else {
             resolve({
               id: `analysis_${Date.now()}`,
               analysisData: statusData.result,
-              taskId: taskId
+              taskId: taskId,
+              partial: isPartial,
             });
           }
         } else if (status === 'FAILURE' || status === 'FAILED') {
@@ -211,13 +216,21 @@ export const fetchAnalysisHistory = createAsyncThunk<
       const analyses: any[] = response.data?.data?.analyses ?? [];
       console.log(`[fetchHistory] Received ${analyses.length} items`);
 
+      // Map the backend's durable status to the sidebar's vocabulary.
+      const statusMap: Record<string, string> = {
+        partially_completed: 'partial',
+        in_progress: 'analyzing',
+        started: 'analyzing',
+        successful: 'completed',
+      };
+
       // Map to AnalysisHistoryEntry format
       return analyses.map((a: any): AnalysisHistoryEntry => ({
         id: a.id,
         analysis_date: a.created_at ?? '',
         comments_count: a.comments_count ?? 0,
         positive_pct: a.positive_pct ?? 0,
-        status: a.status ?? 'completed',
+        status: statusMap[a.status] ?? a.status ?? 'completed',
         display_number: a.display_number,
         name: a.name,
         task_id: a.task_id,
@@ -768,6 +781,49 @@ export const ingestFile = createAsyncThunk<
       errorMessage = err.response?.data?.detail || 'Analysis service unavailable.';
     } else if (err.response?.status >= 500) {
       errorMessage = 'Server error. Please try again later.';
+    } else if (err.message) {
+      errorMessage = err.message;
+    }
+    return rejectWithValue(errorMessage);
+  }
+});
+
+/**
+ * Re-run a failed or partially-completed analysis from its durable record.
+ * Posts the retrigger endpoint, then polls the new task to completion and
+ * refreshes the history so the updated run appears.
+ */
+export const retriggerAnalysis = createAsyncThunk<
+  any,
+  { analysisId: string; projectId?: string },
+  { rejectValue: string }
+>('analysis/retrigger', async ({ analysisId, projectId }, { dispatch, rejectWithValue, getState }) => {
+  try {
+    const response = await apiRequest('post', `/insights/analyses/${analysisId}/retrigger/`, undefined, true);
+    const taskId = response.data?.data?.task_id;
+    if (!taskId) {
+      throw new Error('No task ID received from retrigger');
+    }
+
+    const result = await waitForAnalysisTask(taskId, dispatch);
+
+    const state: any = getState();
+    const stateProjectId = state?.analysis?.projectId || projectId;
+    if (stateProjectId) {
+      await dispatch(fetchAnalysisHistory({ projectId: stateProjectId })).unwrap();
+      if (result?.id) {
+        dispatch(setSelectedAnalysisId(result.id));
+      }
+    }
+    return result;
+  } catch (err: any) {
+    let errorMessage = 'Re-run failed. Please try again.';
+    if (err.response?.status === 429) {
+      errorMessage = err.response?.data?.detail || 'Quota exceeded.';
+    } else if (err.response?.status === 404) {
+      errorMessage = 'Analysis not found.';
+    } else if (err.response?.status === 503) {
+      errorMessage = err.response?.data?.detail || 'Analysis service unavailable.';
     } else if (err.message) {
       errorMessage = err.message;
     }
