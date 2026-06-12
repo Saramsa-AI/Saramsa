@@ -55,14 +55,29 @@ class TaskService:
         health = PipelineHealth(analysis_id=analysis_id, task_id=task_id)
         cache = get_cache_service()
 
-        def _mark_status(status, error=None):
+        def _mark_status(status, error=None, store_input=False):
             # Durable lifecycle status in Neon so a terminal state survives Redis
             # eviction (closes the "stuck analyzing" banner). Never breaks the task.
+            # store_input persists the run's inputs (comments/dimensions/metadata)
+            # so a fully-failed analysis can be retriggered from its record.
             try:
                 from .analysis_service import get_analysis_service
+                extra = {}
+                if store_input:
+                    extra["comments"] = comments
+                    extra["dimensions"] = dimensions or []
+                    extra["payload"] = {
+                        "id": f"insight_{analysis_id}",
+                        "analysis_id": analysis_id,
+                        "projectId": project_id,
+                        "userId": user_id_str,
+                        "company_name": company_name,
+                        "type": "analysis",
+                        "status": status,
+                    }
                 get_analysis_service().mark_analysis_status(
                     analysis_id, status, task_id=task_id, error=error,
-                    project_id=project_id, user_id=user_id_str,
+                    project_id=project_id, user_id=user_id_str, **extra,
                 )
             except Exception as _e:
                 logger.warning(f"durable status write failed ({status}): {_e}")
@@ -83,7 +98,12 @@ class TaskService:
         # duplicate write instead of re-charging it.
         try:
             from .analysis_service import get_analysis_service
-            if get_analysis_service().analysis_has_result(analysis_id):
+            # force_regenerate (a user-initiated retrigger) intentionally bypasses
+            # the guard so a failed/partial analysis can be reprocessed in place.
+            # Tradeoff: if the broker re-delivers a forced task (worker died after
+            # the work but before ack), it reprocesses again — a bounded, rare
+            # extra run, acceptable for an explicit user-initiated retrigger.
+            if not force_regenerate and get_analysis_service().analysis_has_result(analysis_id):
                 logger.info(f"♻️ Analysis {analysis_id} already complete — skipping re-delivered task (idempotent)")
                 return {"insight_id": analysis_id, "project_id": project_id, "status": "already_complete"}
         except Exception as e:
@@ -143,7 +163,7 @@ class TaskService:
             if task_id:
                 cache.set(f"pipeline_health:{task_id}", health.to_dict(), ttl=3600)
             cache.set(f"analysis_failed:{analysis_id}", True, ttl=86400)
-            _mark_status("failed", error=str(e))
+            _mark_status("failed", error=str(e), store_input=True)
             raise
     
     def _process_with_local_pipeline(self, comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects=None, dimensions=None, force_regenerate=False):

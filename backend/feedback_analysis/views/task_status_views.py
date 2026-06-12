@@ -15,6 +15,7 @@ from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.views import APIView
 
 from apis.core.response import StandardResponse
+from apis.core.error_handlers import handle_service_errors
 from apis.infrastructure.cache_service import get_cache_service
 from authentication.permissions import IsAdminOrUser
 
@@ -427,3 +428,109 @@ class TaskCancelView(APIView):
                 logger.warning(f"Failed to persist cancelled analysis {analysis_id} to DB: {e}")
 
         return StandardResponse.success(data={"task_id": task_id, "status": "CANCELLED"})
+
+
+class RetriggerAnalysisView(APIView):
+    """Re-run a failed or partially-completed analysis from its durable record.
+
+    The lightweight retrigger over the stored failure record (no separate
+    dead-letter queue): re-processes the analysis's original comments in place,
+    overwriting the same analysis. force_regenerate bypasses the idempotency
+    guard so a partial/failed run is actually reprocessed.
+    """
+    permission_classes = [IsAdminOrUser]
+
+    @handle_service_errors
+    def post(self, request, analysis_id):
+        from feedback_analysis.services.analysis_service import get_analysis_service
+        from feedback_analysis.services.task_service import process_feedback_task
+        from feedback_analysis.models import Analysis
+        from billing.quota import check_quota, record_usage, QuotaExceeded
+
+        user_id_str = str(getattr(request.user, "id", "") or "")
+        analysis_service = get_analysis_service()
+        # Scoped by user_id -> a user can only retrigger their own analysis.
+        doc = analysis_service.get_analysis_by_id(analysis_id, user_id_str)
+        if not doc:
+            return StandardResponse.not_found(detail="Analysis not found", instance=request.path)
+
+        comments = doc.get("original_comments") or doc.get("feedback") or doc.get("comments") or []
+        if not comments:
+            return StandardResponse.error(
+                title="Cannot retrigger",
+                detail="This analysis has no stored comments to re-run.",
+                status_code=422,
+                error_type="retrigger-no-comments",
+                instance=request.path,
+            )
+
+        project_id = doc.get("projectId") or doc.get("project_id")
+        company_name = doc.get("company_name")
+        dimensions = doc.get("dimensions") or []
+        project_org_id = doc.get("organizationId") or doc.get("organization_id")
+        # The task builds the row id as insight_{analysis_id}; use the bare id the
+        # run originally used (stored in the payload), falling back to the URL value.
+        bare_analysis_id = doc.get("analysis_id") or analysis_id
+
+        # A retrigger re-runs the full (paid) LLM pipeline, so it is quota-gated and
+        # metered exactly like any other analysis — consistent with the other
+        # enqueue paths and prevents an over-quota user from bypassing limits here.
+        try:
+            check_quota(user_id_str, "analysis", organization_id=project_org_id)
+        except QuotaExceeded as exc:
+            return StandardResponse.error(title="Quota exceeded", detail=str(exc), status_code=429, instance=request.path)
+
+        try:
+            task = process_feedback_task.delay(
+                comments, company_name, user_id_str, project_id, bare_analysis_id,
+                None, dimensions, True,  # suggested_aspects, dimensions, force_regenerate
+            )
+        except Exception as e:
+            logger.error(f"Failed to enqueue retrigger for analysis {bare_analysis_id}: {e}", exc_info=True)
+            return StandardResponse.error(
+                title="Service unavailable",
+                detail="Could not queue the re-run — the task broker is unreachable.",
+                status_code=503,
+                error_type="service-unavailable",
+                instance=request.path,
+            )
+
+        cache = get_cache_service()
+        started_at = datetime.now().isoformat()
+        if cache:
+            cache.set(f"task_start:{task.id}", started_at, ttl=3600)
+            # Register in the per-user task list so the owner can poll status
+            # (TaskStatusView gates on this list). Mirrors the other enqueue paths.
+            try:
+                tasks_key = f"tasks:{user_id_str}"
+                existing = cache.get(tasks_key, default=[])
+                if not isinstance(existing, list):
+                    existing = []
+                existing = [t for t in existing if t.get("task_id") != task.id]
+                existing.insert(0, {
+                    "task_id": task.id,
+                    "analysis_id": bare_analysis_id,
+                    "project_id": project_id,
+                    "started_at": started_at,
+                    "comment_count": len(comments),
+                    "retrigger": True,
+                })
+                cache.set(tasks_key, existing[:15], ttl=86400)
+            except Exception as e:
+                logger.warning(f"Failed to record retrigger task history: {e}")
+
+        analysis_service.mark_analysis_status(
+            bare_analysis_id, Analysis.STATUS_IN_PROGRESS,
+            task_id=task.id, project_id=project_id, user_id=user_id_str,
+        )
+
+        # Meter the re-run (fails gracefully if the quota system is unavailable).
+        try:
+            record_usage(user_id_str, "analysis", organization_id=project_org_id)
+        except Exception as e:
+            logger.warning(f"Failed to record retrigger usage: {e}")
+
+        return StandardResponse.success(
+            data={"task_id": task.id, "analysis_id": bare_analysis_id},
+            message="Analysis re-run started",
+        )
