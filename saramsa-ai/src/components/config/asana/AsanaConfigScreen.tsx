@@ -50,11 +50,11 @@ export function AsanaConfigScreen({ onContinue, onBack }: AsanaConfigScreenProps
                     },
                     {
                       title: 'Project-level linkage',
-                      description: 'Choose the exact Asana project Saramsa should map to before any tasks are pushed or reconciled.',
+                      description: 'Choose the exact Asana project Saramsa should map to before any tasks are pushed.',
                     },
                     {
-                      title: 'Bi-directional readiness',
-                      description: 'This flow lines up the same project configuration used by the backend webhook and task sync pipeline.',
+                      title: 'One-way push',
+                      description: 'Saramsa pushes insights and work items into Asana; changes you make in Asana stay in Asana.',
                     },
                   ].map((item) => (
                     <div key={item.title} className="rounded-2xl border border-border/60 bg-card/70 p-4">

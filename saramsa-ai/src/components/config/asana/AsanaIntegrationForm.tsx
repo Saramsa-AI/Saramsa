@@ -110,20 +110,6 @@ export function AsanaIntegrationForm({ onContinue, onBack, targetProjectId }: As
       { asana_project_gid: asanaProjectGid },
       true
     );
-
-    try {
-      await apiRequest(
-        'post',
-        `/integrations/asana/projects/${normalizedProjectId}/webhook/subscribe/`,
-        {},
-        true
-      );
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail || err?.message || '';
-      throw new Error(
-        detail || 'Failed to subscribe the Asana webhook for this project.'
-      );
-    }
   };
 
   const fetchProjectsForExistingIntegration = async (accountId: string) => {

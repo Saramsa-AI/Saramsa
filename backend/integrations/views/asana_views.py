@@ -104,24 +104,3 @@ def push_insight_to_asana(request, insight_id):
             error_type="asana-push-failed",
             instance=request.path,
         )
-
-
-@api_view(["POST"])
-@permission_classes([IsProjectAdmin])
-@handle_service_errors
-def subscribe_asana_webhook(request, project_id):
-    """Ensure an Asana webhook exists for the configured Saramsa project."""
-    try:
-        result = get_asana_service().subscribe_webhook(saramsa_project_id=project_id)
-        return StandardResponse.success(
-            data={"result": result},
-            message="Asana webhook subscribed",
-        )
-    except ValueError as e:
-        return StandardResponse.error(
-            title="Failed to subscribe Asana webhook",
-            detail=str(e),
-            status_code=400,
-            error_type="asana-webhook-subscribe-failed",
-            instance=request.path,
-        )
