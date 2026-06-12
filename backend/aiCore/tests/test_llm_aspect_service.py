@@ -196,6 +196,25 @@ def test_failure_above_threshold_aborts():
     assert raised
 
 
+def test_failure_exactly_at_threshold_is_partial():
+    """At exactly the threshold (guard is strict `>`), the run is partial, not aborted."""
+    aspects = ["Billing"]
+
+    def handler(kwargs):
+        if _comment_of(kwargs).startswith("bad"):
+            raise RuntimeError("boom")
+        return _resp(json.dumps({"matched": [{"aspect": "Billing", "confidence": "high"}]}))
+
+    svc = LLMAspectService()
+    svc.max_retries = 0
+    svc.max_failure_rate = 0.5
+    azure_openai_breaker.reset()
+    with _patched(handler):
+        r = svc.classify_aspects(["good1", "good2", "bad1", "bad2"], aspects)  # 2/4 = 50% (== threshold)
+    assert len(r) == 4
+    assert sum(1 for x in r if x.get("errored")) == 2  # partial, not aborted
+
+
 def test_malformed_json_is_unmapped_not_crash():
     aspects = ["Billing"]
 

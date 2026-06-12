@@ -115,6 +115,13 @@ class TaskService:
             except Exception:
                 pass
 
+            # A partial run must report PARTIAL on the LIVE status path too (not just
+            # the durable fallback): mark_partial sets PARTIAL, which mark_complete
+            # preserves and the status endpoint maps to PARTIAL.
+            if isinstance(result, dict) and result.get("partial"):
+                health.mark_partial(
+                    f"{result.get('failed_count', 0)} comment(s) failed classification"
+                )
             health.mark_complete()
             try:
                 narration_service = get_narration_service()
@@ -357,9 +364,11 @@ class TaskService:
             "insight_id": insight_data["id"],
             "project_id": project_id,
             "analysis_id": analysis_id,
-            "status": "complete",
+            "status": "partial" if pipeline_result.failed_comments else "complete",
             "processing_method": "local_ml_pipeline",
-            "processing_time": pipeline_result.processing_time
+            "processing_time": pipeline_result.processing_time,
+            "partial": bool(pipeline_result.failed_comments),
+            "failed_count": len(pipeline_result.failed_comments),
         }
     
     def _build_cancel_checker(self, analysis_id: str):
@@ -728,10 +737,14 @@ class TaskService:
                 'neutral': overall_sentiment.get('neutral', 0),
             },
             'counts': {
+                # total = all comments submitted; the sentiment buckets are over the
+                # successfully-classified ones, so on a partial run they sum to
+                # total - failed (failed surfaced here so the frontend can reconcile).
                 'total': total_comments,
                 'positive': positive_count,
                 'negative': negative_count,
                 'neutral': neutral_count,
+                'failed': len(pipeline_result.failed_comments),
             },
             'features': features_normalized,
             'positive_keywords': positive_keywords,
