@@ -341,6 +341,7 @@ class UpdateKeywordsView(APIView):
                 'positive': to_num(counts.get('positive')),
                 'negative': to_num(counts.get('negative')),
                 'neutral': to_num(counts.get('neutral')),
+                'failed': to_num(counts.get('failed')),
             },
             'features': features_norm,
             'positive_keywords': pos_keys,
