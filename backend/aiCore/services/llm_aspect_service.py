@@ -22,6 +22,7 @@ from typing import List, Dict, Any, Optional
 from openai import BadRequestError
 
 from aiCore.services.openai_client import get_azure_client, get_azure_deployment_name
+from aiCore.services.circuit_breaker import azure_openai_breaker, CircuitOpenError
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,10 @@ class LLMAspectService:
         reasoning = self.reasoning_effort  # local copy; never mutate the shared singleton
         last_err = None
         for attempt in range(self.max_retries + 1):
+            # Fail fast while Azure OpenAI is known-down instead of waiting out
+            # the per-call timeout for every comment in the fan-out.
+            if not azure_openai_breaker.allow():
+                raise CircuitOpenError("Azure OpenAI circuit breaker is open")
             try:
                 kwargs = dict(
                     model=self.deployment,
@@ -175,16 +180,19 @@ class LLMAspectService:
                 if reasoning:
                     kwargs["reasoning_effort"] = reasoning
                 resp = call.chat.completions.create(**kwargs)
+                azure_openai_breaker.record_success()
                 content = resp.choices[0].message.content or "{}"
                 return self._parse(content, idx, comment, canonical, lookup)
             except (TypeError, BadRequestError) as e:
-                # reasoning_effort unsupported for this model/api -> drop it and retry once
+                # Client-side error (e.g. unsupported reasoning_effort), not a
+                # downstream outage -> retry without tripping the breaker.
                 if reasoning and "reasoning_effort" in str(e).lower():
                     reasoning = ""
                     continue
                 last_err = e
                 break
             except Exception as e:
+                azure_openai_breaker.record_failure()
                 last_err = e
                 msg = str(e).lower()
                 # Backoff with jitter on rate limit / transient; otherwise stop early
