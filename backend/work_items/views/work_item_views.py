@@ -19,10 +19,15 @@ from asgiref.sync import async_to_sync, sync_to_async
 import json
 import uuid
 
-from authentication.permissions import IsAdminOrUser, IsProjectViewer, IsProjectEditor, IsProjectAdmin
+from authentication.permissions import IsProjectViewer, IsProjectEditor, IsProjectAdmin
 from apis.core.response import StandardResponse
 from apis.core.error_handlers import handle_service_errors
 from ..services import get_devops_service, get_quality_gate_service
+from ..services.provider_adapters import (
+    get_default_process_template,
+    get_provider_config,
+    get_supported_work_item_providers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +62,11 @@ class WorkItemGenerationView(APIView):
                 len(top_keys), has_narration, cached_cands_len,
             )
             logger.info("WorkItemGenerationView: analysis_data keys: %s", top_keys)
-        process_template = request.data.get("process_template", "Agile")
+        # Default left as None on purpose: the per-provider override at
+        # `get_default_process_template(provider_config.provider)` only fires
+        # for falsy values, so defaulting to "Agile" here would make the
+        # provider-aware fallback below dead code.
+        process_template = request.data.get("process_template")
         incoming_project_id = request.data.get("project_id")
         platform = request.data.get("platform", "azure")
         company_name = request.data.get("company_name")
@@ -69,6 +78,18 @@ class WorkItemGenerationView(APIView):
 
         if not analysis_data:
             return StandardResponse.validation_error(detail="Analysis data is required.", instance=request.path)
+
+        try:
+            provider_config = get_provider_config(platform)
+        except ValueError as exc:
+            return StandardResponse.validation_error(
+                detail=str(exc),
+                instance=request.path,
+            )
+
+        process_template = process_template or get_default_process_template(
+            provider_config.provider
+        )
 
         # Validate project ID is provided
         if not incoming_project_id:
@@ -108,7 +129,7 @@ class WorkItemGenerationView(APIView):
         try:
             result = await devops_service.generate_work_items_from_analysis(
                 analysis_data=analysis_data,
-                platform=platform,
+                platform=provider_config.provider,
                 process_template=process_template,
                 company_name=company_name,
                 project_metadata=project_metadata,
@@ -143,7 +164,7 @@ class WorkItemGenerationView(APIView):
                 )(
                     user_id=user_id_str,
                     work_items=work_items,
-                    platform=platform,
+                    platform=provider_config.provider,
                     project_id=resolved_project_id,
                     analysis_id=analysis_id
                 )
@@ -178,7 +199,7 @@ class WorkItemSubmissionView(APIView):
     @handle_service_errors
     @async_to_sync
     async def post(self, request):
-        """Submit work items to external platforms (Azure DevOps/Jira)"""
+        """Submit work items to external platforms (Azure DevOps/Jira/Asana/Linear)"""
         logger.info("🔧 WorkItemSubmissionView called")
         
         user_id = request.user.id if hasattr(request, 'user') and request.user.is_authenticated else None
@@ -201,9 +222,10 @@ class WorkItemSubmissionView(APIView):
                 instance=request.path
             )
         
-        if platform not in ['azure', 'jira']:
+        supported_platforms = get_supported_work_item_providers()
+        if platform not in supported_platforms:
             return StandardResponse.validation_error(
-                detail="platform must be either 'azure' or 'jira'", 
+                detail=f"platform must be one of {', '.join(repr(item) for item in supported_platforms)}", 
                 instance=request.path
             )
         
@@ -509,38 +531,6 @@ class WorkItemRemovalView(APIView):
         except Exception as e:
             logger.error(f"Error removing work items: {e}")
             return StandardResponse.internal_server_error(detail="Failed to remove work items.", instance=request.path)
-
-
-class WorkItemsByPlatformView(APIView):
-    """Get work items by platform (azure_devops, jira) - CONSOLIDATED"""
-    permission_classes = [IsAdminOrUser]
-    
-    @handle_service_errors
-    def get(self, request, platform):
-        """Get work items by platform"""
-        user_id = request.user.id if hasattr(request, 'user') and request.user.is_authenticated else None
-        if not user_id:
-            return StandardResponse.unauthorized(detail="User authentication required.", instance=request.path)
-        
-        try:
-            devops_service = get_devops_service()
-            user_work_items = devops_service.get_work_items_by_user(str(user_id))
-            
-            # Filter by platform
-            platform_work_items = [item for item in user_work_items if item.get('platform') == platform]
-            
-            return StandardResponse.success(data={
-                "work_items": platform_work_items,
-                "platform": platform,
-                "count": len(platform_work_items)
-            })
-            
-        except Exception as e:
-            logger.error(f"Error retrieving work items for platform {platform}: {e}")
-            return StandardResponse.internal_server_error(
-                detail=f"Failed to retrieve work items for {platform}", 
-                instance=request.path
-            )
 
 
 class WorkItemQualityRulesView(APIView):

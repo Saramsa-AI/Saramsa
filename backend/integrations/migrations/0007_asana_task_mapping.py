@@ -1,0 +1,62 @@
+# Generated for Asana integration: links Saramsa Insights to Asana tasks.
+
+from django.db import migrations, models
+import django.db.models.deletion
+import django.utils.timezone
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ('feedback_analysis', '0005_add_display_number_to_analysis'),
+        ('integrations', '0006_hash_invite_tokens'),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name='AsanaTaskMapping',
+            fields=[
+                ('created_at', models.DateTimeField(db_index=True, default=django.utils.timezone.now)),
+                ('updated_at', models.DateTimeField(default=django.utils.timezone.now)),
+                ('id', models.CharField(max_length=64, primary_key=True, serialize=False)),
+                ('asana_task_gid', models.CharField(db_index=True, max_length=64)),
+                ('asana_project_gid', models.CharField(db_index=True, max_length=64)),
+                ('last_known_state_hash', models.CharField(blank=True, default='', max_length=64)),
+                ('last_synced_at', models.DateTimeField(blank=True, db_index=True, null=True)),
+            ],
+            options={
+                'db_table': 'asana_task_mappings',
+            },
+        ),
+        migrations.AddField(
+            model_name='asanataskmapping',
+            name='insight',
+            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='asana_task_mappings', to='feedback_analysis.insight'),
+        ),
+        migrations.AddField(
+            model_name='asanataskmapping',
+            name='integration',
+            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='asana_task_mappings', to='integrations.integrationaccount'),
+        ),
+        migrations.AddField(
+            model_name='asanataskmapping',
+            name='organization',
+            field=models.ForeignKey(blank=True, db_column='organization_id', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='asana_task_mappings', to='integrations.organization'),
+        ),
+        migrations.AddIndex(
+            model_name='asanataskmapping',
+            index=models.Index(fields=['organization', 'asana_project_gid'], name='asana_task__organiz_1dd616_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='asanataskmapping',
+            index=models.Index(fields=['integration', 'last_synced_at'], name='asana_task__integra_112905_idx'),
+        ),
+        migrations.AddConstraint(
+            model_name='asanataskmapping',
+            constraint=models.UniqueConstraint(fields=('insight',), name='uq_asana_task_mapping_insight'),
+        ),
+        migrations.AddConstraint(
+            model_name='asanataskmapping',
+            constraint=models.UniqueConstraint(fields=('organization', 'asana_task_gid'), name='uq_asana_task_mapping_org_gid'),
+        ),
+    ]

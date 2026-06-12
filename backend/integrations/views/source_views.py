@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
+from authentication.permissions import IsProjectAdmin, IsProjectEditor, IsProjectViewer
 from apis.core.response import StandardResponse
 from apis.core.error_handlers import handle_service_errors
 from apis.infrastructure.cache_service import get_cache_service
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsProjectAdmin])
 @handle_service_errors
 def create_feedback_source(request):
     """Create a new feedback source (e.g. Slack channels for a project)."""

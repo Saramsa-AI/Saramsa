@@ -16,6 +16,14 @@ class UserAccount(TimestampedModel):
     email = models.EmailField(unique=True, db_index=True)
     password = models.TextField()
 
+    # Django/DRF expect this attribute on the request.user object. Production
+    # auth flows wrap UserAccount in an AppUser proxy that already exposes
+    # this; surfacing it on the model directly lets tests use
+    # force_authenticate(request, user=user_account_instance) without having
+    # to monkey-patch the attribute in setUp.
+    is_authenticated = True
+    is_anonymous = False
+
     def check_password(self, raw_password: str) -> bool:
         if check_password(raw_password, self.password):
             return True

@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 import uuid
 import logging
 
+from django.db import transaction
+
 from ..repositories import IntegrationsRepository
 from .external_api_service import get_external_api_service
 from .organization_service import get_organization_service
@@ -65,7 +67,9 @@ class IntegrationService:
         """Get default scopes for a provider."""
         scopes_map = {
             "azure": ["vso.project", "vso.code", "vso.work"],
-            "jira": ["read:project", "write:issue", "read:issue"]
+            "jira": ["read:project", "write:issue", "read:issue"],
+            "asana": ["tasks:read", "tasks:write", "projects:read", "users:read"],
+            "linear": ["read", "write"],
         }
         return scopes_map.get(provider, [])
     
@@ -106,8 +110,8 @@ class IntegrationService:
             if field not in account_data:
                 raise ValueError(f"Missing required field: {field}")
         
-        if account_data["provider"] not in ["azure", "jira"]:
-            raise ValueError("Provider must be 'azure' or 'jira'")
+        if account_data["provider"] not in ["azure", "jira", "asana", "linear"]:
+            raise ValueError("Provider must be 'azure', 'jira', 'asana', or 'linear'")
         
         return True
     
@@ -202,6 +206,10 @@ class IntegrationService:
             decrypted_credentials["pat_token"] = decrypted_token
         elif provider == "jira":
             decrypted_credentials["api_token"] = decrypted_token
+        elif provider == "asana":
+            decrypted_credentials["pat_token"] = decrypted_token
+        elif provider == "linear":
+            decrypted_credentials["api_key"] = decrypted_token
         else:
             raise ValueError(f"Unsupported provider: {provider}")
 
@@ -351,6 +359,135 @@ class IntegrationService:
             logger.error(f"Error creating Jira integration: {e}")
             raise
     
+    def create_asana_integration(
+        self,
+        user_id: str,
+        organization_id: str,
+        pat_token: str,
+        workspace_gid: str,
+        workspace_name: str = "",
+    ) -> Dict[str, Any]:
+        """Create or update an Asana integration account.
+
+        Mirrors the Azure/Jira PAT pattern. Validates the PAT against
+        GET /users/me before persisting. Customer-supplied workspace_gid
+        scopes the integration to one Asana workspace.
+        """
+        try:
+            if not organization_id or not pat_token or not workspace_gid:
+                raise ValueError("Organization ID, PAT token, and workspace GID are required")
+
+            self._require_org_admin(str(organization_id), str(user_id))
+
+            test_result = self.external_api_service.test_asana_connection(pat_token)
+            if not test_result["success"]:
+                raise ValueError(f"Connection test failed: {test_result['error']}")
+
+            from .encryption_service import get_encryption_service
+            encryption_service = get_encryption_service()
+            encrypted_token = encryption_service.encrypt_token(pat_token)
+
+            credentials = {
+                "tokenEncrypted": encrypted_token,
+                "tokenType": "pat",
+            }
+            metadata = {
+                "workspaceGid": workspace_gid,
+                "workspaceName": workspace_name,
+                "userGid": test_result.get("user_gid", ""),
+                "userName": test_result.get("user", ""),
+                "baseUrl": "https://app.asana.com",
+            }
+
+            display_name = f"{workspace_name or 'Asana'} (Asana)"
+            account_data = self._create_integration_account_document(
+                user_id=user_id,
+                organization_id=organization_id,
+                provider="asana",
+                credentials=credentials,
+                metadata=metadata,
+                display_name=display_name,
+            )
+            self._validate_integration_account(account_data)
+
+            saved = self.integrations_repo.create_or_update_integration_account(account_data)
+            return self._get_saved_account_for_display(
+                user_id,
+                saved["id"],
+                organization_id=organization_id,
+            )
+
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"Error creating Asana integration: {e}")
+            raise
+
+    def create_linear_integration(
+        self,
+        user_id: str,
+        organization_id: str,
+        api_key: str,
+        workspace_name: str = "",
+    ) -> Dict[str, Any]:
+        """Create or update a Linear integration account.
+
+        Mirrors the Asana PAT pattern. Validates the API key against
+        Linear's `viewer` query before persisting.
+        """
+        try:
+            if not organization_id or not api_key:
+                raise ValueError("Organization ID and API key are required")
+
+            self._require_org_admin(str(organization_id), str(user_id))
+
+            test_result = self.external_api_service.test_linear_connection(api_key)
+            if not test_result["success"]:
+                raise ValueError(f"Connection test failed: {test_result['error']}")
+
+            from .encryption_service import get_encryption_service
+            encryption_service = get_encryption_service()
+            encrypted_token = encryption_service.encrypt_token(api_key)
+
+            credentials = {
+                "tokenEncrypted": encrypted_token,
+                "tokenType": "api_key",
+            }
+            resolved_workspace_name = workspace_name or test_result.get("workspace_name", "")
+            metadata = {
+                "workspaceId": test_result.get("workspace_id", ""),
+                "workspaceName": resolved_workspace_name,
+                "workspaceUrlKey": test_result.get("workspace_url_key", ""),
+                "userId": test_result.get("user_id", ""),
+                "userName": test_result.get("user", ""),
+                "email": test_result.get("email", ""),
+                "baseUrl": "https://linear.app",
+            }
+
+            display_name = f"{resolved_workspace_name or 'Linear'} (Linear)"
+            account_data = self._create_integration_account_document(
+                user_id=user_id,
+                organization_id=organization_id,
+                provider="linear",
+                credentials=credentials,
+                metadata=metadata,
+                display_name=display_name,
+            )
+            self._validate_integration_account(account_data)
+
+            saved = self.integrations_repo.create_or_update_integration_account(account_data)
+            return self._get_saved_account_for_display(
+                user_id,
+                saved["id"],
+                organization_id=organization_id,
+            )
+
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"Error creating Linear integration: {e}")
+            raise
+
     def test_integration_connection(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Test connection for an existing integration account.
@@ -390,9 +527,17 @@ class IntegrationService:
                 encrypted_token = credentials.get('tokenEncrypted')
                 api_token = encryption_service.decrypt_token(encrypted_token)
                 return self.external_api_service.test_jira_connection(domain, email, api_token)
+            elif provider == 'asana':
+                encrypted_token = credentials.get('tokenEncrypted')
+                pat_token = encryption_service.decrypt_token(encrypted_token)
+                return self.external_api_service.test_asana_connection(pat_token)
+            elif provider == 'linear':
+                encrypted_token = credentials.get('tokenEncrypted')
+                api_key = encryption_service.decrypt_token(encrypted_token)
+                return self.external_api_service.test_linear_connection(api_key)
             else:
                 raise ValueError(f"Unsupported provider: {provider}")
-                
+
         except ValueError:
             raise
         except Exception as e:
@@ -402,34 +547,39 @@ class IntegrationService:
     def delete_integration_account(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> bool:
         """
         Delete an integration account.
-        
+
+        Wraps the deletion in a database transaction so that any related
+        cleanup (e.g. feedback sources tied to this account) and the
+        account row itself either all succeed or all roll back together.
+
         Args:
             user_id: User ID
             account_id: Integration account ID
-            
+
         Returns:
             True if deleted successfully, False if not found
         """
         try:
-            account_org_id = self._require_account_admin(user_id, account_id)
-            if not account_org_id:
-                return False
-            account = self.integrations_repo.get_integration_account(
-                user_id,
-                account_id,
-                organization_id=account_org_id,
-            )
-            if not account:
-                return False
+            with transaction.atomic():
+                account_org_id = self._require_account_admin(user_id, account_id)
+                if not account_org_id:
+                    return False
+                account = self.integrations_repo.get_integration_account(
+                    user_id,
+                    account_id,
+                    organization_id=account_org_id,
+                )
+                if not account:
+                    return False
 
-            if account.get("provider") == "slack":
-                self.integrations_repo.delete_feedback_sources_by_account(account_id)
+                if account.get("provider") == "slack":
+                    self.integrations_repo.delete_feedback_sources_by_account(account_id)
 
-            return self.integrations_repo.delete_integration_account(
-                user_id,
-                account_id,
-                organization_id=account_org_id,
-            )
+                return self.integrations_repo.delete_integration_account(
+                    user_id,
+                    account_id,
+                    organization_id=account_org_id,
+                )
         except Exception as e:
             logger.error(f"Error deleting integration account {account_id}: {e}")
             raise
@@ -440,8 +590,11 @@ class IntegrationService:
         
         Args:
             user_id: User ID
-            provider: 'azure' or 'jira'
-            **kwargs: Provider-specific parameters (organization, pat_token for Azure; domain, email, api_token for Jira)
+            provider: 'azure', 'jira', 'asana', or 'linear'
+            **kwargs: Provider-specific parameters
+                      (organization, pat_token for Azure;
+                       domain, email, api_token for Jira;
+                       pat_token, workspace_gid for Asana)
                       OR accountId to fetch from stored integration account
             
         Returns:
@@ -470,9 +623,20 @@ class IntegrationService:
                 if not domain or not email or not api_token:
                     raise ValueError("Domain, email, and API token are required for Jira")
                 return self.external_api_service.fetch_jira_projects(domain, email, api_token)
+            elif provider == 'asana':
+                pat_token = kwargs.get('pat_token')
+                workspace_gid = kwargs.get('workspace_gid')
+                if not pat_token or not workspace_gid:
+                    raise ValueError("PAT token and workspace GID are required for Asana")
+                return self.external_api_service.fetch_asana_projects(pat_token, workspace_gid)
+            elif provider == 'linear':
+                api_key = kwargs.get('api_key')
+                if not api_key:
+                    raise ValueError("API key is required for Linear")
+                return self.external_api_service.fetch_linear_teams(api_key)
             else:
                 raise ValueError(f"Unsupported provider: {provider}")
-                
+
         except ValueError:
             raise
         except Exception as e:
@@ -552,9 +716,31 @@ class IntegrationService:
                 
                 api_token = encryption_service.decrypt_token(encrypted_token)
                 return self.external_api_service.fetch_jira_projects(domain, email, api_token)
+            elif provider == 'asana':
+                workspace_gid = metadata.get('workspaceGid')
+                encrypted_token = credentials.get('tokenEncrypted')
+                if not workspace_gid or not encrypted_token:
+                    missing = []
+                    if not workspace_gid:
+                        missing.append('workspaceGid')
+                    if not encrypted_token:
+                        missing.append('tokenEncrypted')
+                    raise ValueError(
+                        f"Invalid Asana integration account: missing {', '.join(missing)}"
+                    )
+                pat_token = encryption_service.decrypt_token(encrypted_token)
+                return self.external_api_service.fetch_asana_projects(pat_token, workspace_gid)
+            elif provider == 'linear':
+                encrypted_token = credentials.get('tokenEncrypted')
+                if not encrypted_token:
+                    raise ValueError(
+                        "Invalid Linear integration account: missing tokenEncrypted"
+                    )
+                api_key = encryption_service.decrypt_token(encrypted_token)
+                return self.external_api_service.fetch_linear_teams(api_key)
             else:
                 raise ValueError(f"Unsupported provider: {provider}")
-                
+
         except ValueError:
             raise
         except Exception as e:
@@ -572,7 +758,7 @@ class IntegrationService:
         Check if an external project is already imported.
         
         Args:
-            provider: 'azure' or 'jira'
+            provider: 'azure', 'jira', 'asana', or 'linear'
             external_id: External project ID
             user_id: User ID
             

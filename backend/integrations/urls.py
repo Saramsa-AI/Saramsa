@@ -8,6 +8,8 @@ from .views import (
     get_integration_accounts,
     create_azure_integration,
     create_jira_integration,
+    create_asana_integration,
+    create_linear_integration,
     test_integration_connection,
     delete_integration_account,
     # Project views
@@ -21,8 +23,13 @@ from .views import (
     # External views
     get_azure_projects,
     get_jira_projects,
+    get_asana_workspaces,
+    get_asana_projects,
+    get_linear_projects,
     get_dashboard_azure_projects,
     get_dashboard_jira_projects,
+    get_dashboard_asana_projects,
+    get_dashboard_linear_projects,
     get_external_projects,
     check_external_project,
     # Slack views
@@ -35,6 +42,12 @@ from .views import (
     list_feedback_sources,
     feedback_source_detail,
     feedback_source_sync_now,
+    # Asana push views
+    configure_asana_target,
+    push_insight_to_asana,
+    subscribe_asana_webhook,
+    # Asana webhook receiver (public, signature-verified)
+    asana_webhook_receiver,
 )
 
 urlpatterns = [
@@ -53,10 +66,19 @@ urlpatterns = [
     # External provider project fetching (for configuration) - most specific first
     path('azure/projects/', get_azure_projects, name='get_azure_projects'),
     path('jira/projects/', get_jira_projects, name='get_jira_projects'),
-    
+    path('asana/workspaces/', get_asana_workspaces, name='get_asana_workspaces'),
+    path('asana/projects/', get_asana_projects, name='get_asana_projects'),
+    path('linear/projects/', get_linear_projects, name='get_linear_projects'),
+    path('asana/projects/<str:project_id>/target/', configure_asana_target, name='configure_asana_target'),
+    path('asana/projects/<str:project_id>/webhook/subscribe/', subscribe_asana_webhook, name='subscribe_asana_webhook'),
+    path('asana/insights/<str:insight_id>/push/', push_insight_to_asana, name='push_insight_to_asana'),
+    path('asana/webhook/<str:project_id>/', asana_webhook_receiver, name='asana_webhook_receiver'),
+
     # Dashboard endpoints (fetch imported projects from database)
     path('dashboard/azure/projects/', get_dashboard_azure_projects, name='get_dashboard_azure_projects'),
     path('dashboard/jira/projects/', get_dashboard_jira_projects, name='get_dashboard_jira_projects'),
+    path('dashboard/asana/projects/', get_dashboard_asana_projects, name='get_dashboard_asana_projects'),
+    path('dashboard/linear/projects/', get_dashboard_linear_projects, name='get_dashboard_linear_projects'),
     
     # External project utilities
     path('external/projects/check/', check_external_project, name='check_external_project'),
@@ -75,6 +97,8 @@ urlpatterns = [
     # Integration account management - SPECIFIC ROUTES MUST COME BEFORE PARAMETERIZED ROUTES
     path('azure/', create_azure_integration, name='create_azure_integration'),
     path('jira/', create_jira_integration, name='create_jira_integration'),
+    path('asana/', create_asana_integration, name='create_asana_integration'),
+    path('linear/', create_linear_integration, name='create_linear_integration'),
     
     # PARAMETERIZED ROUTES MUST COME LAST
     path('<str:account_id>/test/', test_integration_connection, name='test_integration_connection'),
