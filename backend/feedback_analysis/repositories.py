@@ -340,7 +340,9 @@ class AnalysisRepository:
 
     def save_analysis_data(self, analysis_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
-            item_id = str(analysis_data.get("id") or f"insight_{timezone.now().timestamp()}")
+            item_id = self._normalize_analysis_id(
+                str(analysis_data.get("id") or f"insight_{timezone.now().timestamp()}")
+            )
 
             # Build result dict from top-level keys if not already nested
             result_dict = analysis_data.get("result") or analysis_data.get("analysisData")
@@ -404,7 +406,11 @@ class AnalysisRepository:
         if status in Analysis.TERMINAL_STATUSES:
             defaults["completed_at"] = timezone.now()
         try:
-            Analysis.objects.update_or_create(id=str(analysis_id), defaults=defaults)
+            # Normalize so the status row is the SAME row the result saves under
+            # (results are stored under the insight_-prefixed id).
+            Analysis.objects.update_or_create(
+                id=self._normalize_analysis_id(str(analysis_id)), defaults=defaults
+            )
         except Exception as e:
             # Status tracking must never mask the real task outcome.
             logger.error(f"Error marking analysis {analysis_id} status={status}: {e}")
@@ -428,8 +434,15 @@ class AnalysisRepository:
 
     def analysis_has_result(self, analysis_id: str) -> bool:
         """True if this analysis already has saved results — the durable 'done' signal
-        for the task-re-delivery idempotency guard (see TaskService)."""
-        obj = Analysis.objects.filter(id=str(analysis_id)).only("result").first()
+        for the task-re-delivery idempotency guard (see TaskService).
+
+        Results are stored under the normalized (``insight_``) id, so normalize the
+        lookup; fall back to the raw id for any legacy rows.
+        """
+        normalized = self._normalize_analysis_id(str(analysis_id))
+        obj = Analysis.objects.filter(id=normalized).only("result").first()
+        if not obj and normalized != str(analysis_id):
+            obj = Analysis.objects.filter(id=str(analysis_id)).only("result").first()
         if not obj or not isinstance(obj.result, dict):
             return False
         return bool(obj.result.get("features") or obj.result.get("insights"))

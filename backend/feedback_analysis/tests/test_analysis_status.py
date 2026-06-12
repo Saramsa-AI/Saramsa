@@ -12,37 +12,46 @@ class AnalysisStatusRepoTest(TestCase):
         self.repo = AnalysisRepository()
 
     def test_mark_failed_creates_durable_stub_when_no_row_exists(self):
-        # Failure before any result is saved must still leave a durable row.
+        # Failure before any result is saved must still leave a durable row,
+        # findable by the task id (used by the status-endpoint fallback).
         self.repo.mark_analysis_status(
-            "analysis_1", Analysis.STATUS_FAILED, task_id="task-1", error="boom",
+            "abc-1", Analysis.STATUS_FAILED, task_id="task-1", error="boom",
         )
-        obj = Analysis.objects.get(id="analysis_1")
-        self.assertEqual(obj.status, "failed")
-        self.assertEqual(obj.error, "boom")
-        self.assertEqual(obj.task_id, "task-1")
-        self.assertIsNotNone(obj.completed_at)
+        row = self.repo.get_status_by_task_id("task-1")
+        self.assertEqual(row["status"], "failed")
+        self.assertEqual(row["error"], "boom")
 
-    def test_in_progress_then_save_marks_completed(self):
-        self.repo.mark_analysis_status("analysis_2", Analysis.STATUS_IN_PROGRESS, task_id="task-2")
-        self.assertEqual(Analysis.objects.get(id="analysis_2").status, "in_progress")
-        self.repo.save_analysis_data({"id": "analysis_2", "features": [{"x": 1}], "insights": []})
-        obj = Analysis.objects.get(id="analysis_2")
-        self.assertEqual(obj.status, "completed")
-        self.assertIsNotNone(obj.completed_at)
-        self.assertEqual(obj.task_id, "task-2")  # preserved from the in_progress mark
+    def test_status_write_and_result_save_converge_on_one_row(self):
+        # Prod scenario: the task marks status with the bare analysis_id, but the
+        # result saves under the insight_-prefixed id. They must be the SAME row,
+        # else a finished analysis can't resolve durably (the bug this fixes).
+        analysis_id = "abc-2"
+        self.repo.mark_analysis_status(analysis_id, Analysis.STATUS_IN_PROGRESS, task_id="task-2")
+        self.repo.save_analysis_data({"id": f"insight_{analysis_id}", "features": [{"x": 1}]})
+
+        rows = Analysis.objects.filter(id__in=[analysis_id, f"insight_{analysis_id}"])
+        self.assertEqual(rows.count(), 1)                       # one row, not two
+        row = rows.first()
+        self.assertEqual(row.id, f"insight_{analysis_id}")      # canonical id
+        self.assertEqual(row.status, "completed")               # save marked it done
+        self.assertEqual(row.task_id, "task-2")                 # task_id preserved
+        # idempotency guard finds it via the bare id
+        self.assertTrue(self.repo.analysis_has_result(analysis_id))
+        # status endpoint finds it via the task id
+        self.assertEqual(self.repo.get_status_by_task_id("task-2")["status"], "completed")
 
     def test_get_status_by_task_id(self):
-        self.repo.mark_analysis_status("analysis_3", Analysis.STATUS_FAILED, task_id="task-3", error="nope")
+        self.repo.mark_analysis_status("abc-3", Analysis.STATUS_FAILED, task_id="task-3", error="nope")
         row = self.repo.get_status_by_task_id("task-3")
         self.assertEqual(row["status"], "failed")
         self.assertEqual(row["error"], "nope")
         self.assertIsNone(self.repo.get_status_by_task_id("missing"))
 
     def test_mark_status_does_not_clobber_result(self):
-        self.repo.save_analysis_data({"id": "analysis_4", "features": [{"x": 1}]})
+        self.repo.save_analysis_data({"id": "insight_abc-4", "features": [{"x": 1}]})
         # A late in_progress mark must not wipe the saved result.
-        self.repo.mark_analysis_status("analysis_4", Analysis.STATUS_IN_PROGRESS)
-        self.assertTrue(Analysis.objects.get(id="analysis_4").result.get("features"))
+        self.repo.mark_analysis_status("abc-4", Analysis.STATUS_IN_PROGRESS)
+        self.assertTrue(self.repo.analysis_has_result("abc-4"))
 
 
 class StuckBannerFallbackTest(TestCase):
