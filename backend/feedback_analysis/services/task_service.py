@@ -94,6 +94,13 @@ class TaskService:
         except Exception as e:
             logger.warning(f"Idempotency guard check failed (proceeding): {e}")
 
+        # A retrigger reuses the same analysis_id; clear the prior run's failure
+        # flag and narration-call counter so the per-analysis narration guards
+        # (which key off analysis_id) don't block the re-run.
+        if force_regenerate:
+            cache.delete(f"analysis_failed:{analysis_id}")
+            cache.delete(f"narration_called:{analysis_id}")
+
         _mark_status("in_progress")
 
         try:

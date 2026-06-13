@@ -352,11 +352,12 @@ class UpdateKeywordsView(APIView):
             'negative_keywords': neg_keys,
         }
 
-        # Resolve taxonomy for versioned linkage (Phase-1)
+        # Resolve taxonomy for versioned linkage. These hit the ORM, so they
+        # must be wrapped (we're inside @async_to_sync).
         taxonomy_service = get_taxonomy_service()
-        taxonomy = taxonomy_service.get_active_taxonomy(project_id, comments=None)
+        taxonomy = await sync_to_async(taxonomy_service.get_active_taxonomy, thread_sensitive=True)(project_id, comments=None)
         if not taxonomy and updated_keywords:
-            taxonomy = taxonomy_service.create_initial_taxonomy(
+            taxonomy = await sync_to_async(taxonomy_service.create_initial_taxonomy, thread_sensitive=True)(
                 project_id,
                 list(updated_keywords.keys()),
                 source="user"
@@ -383,9 +384,9 @@ class UpdateKeywordsView(APIView):
                 }
             }
             
-            saved_analysis = analysis_service.save_analysis_data(analysis_data)
+            saved_analysis = await sync_to_async(analysis_service.save_analysis_data, thread_sensitive=True)(analysis_data)
             if saved_analysis:
-                analysis_service.update_project_last_analysis(project_id, saved_analysis['id'])
+                await sync_to_async(analysis_service.update_project_last_analysis, thread_sensitive=True)(project_id, saved_analysis['id'])
         except Exception as e:
             logger.error(f"Error saving updated analysis: {e}")
 
