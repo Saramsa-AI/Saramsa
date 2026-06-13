@@ -261,6 +261,34 @@ def test_sentiment_none_when_absent_or_operational():
     assert r[0]["overall_sentiment"] == "NEUTRAL"
 
 
+def test_rationale_extracted_and_truncated():
+    aspects = ["Login"]
+    long_reason = "x" * 400
+
+    def handler(kwargs):
+        return _resp(json.dumps({
+            "matched": [{"aspect": "Login", "confidence": "high", "sentiment": "negative"}],
+            "overall_sentiment": "negative",
+            "rationale": long_reason,
+        }))
+
+    with _patched(handler):
+        r = LLMAspectService().classify_aspects(["cannot log in"], aspects)
+    # Carried through, defensively truncated to 240 chars.
+    assert r[0]["rationale"] == "x" * 240
+
+
+def test_rationale_defaults_empty_when_absent():
+    aspects = ["Login"]
+
+    def handler(kwargs):
+        return _resp(json.dumps({"matched": [{"aspect": "Login", "confidence": "high"}]}))
+
+    with _patched(handler):
+        r = LLMAspectService().classify_aspects(["x"], aspects)
+    assert r[0]["rationale"] == ""
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

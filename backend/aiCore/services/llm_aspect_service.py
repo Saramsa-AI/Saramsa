@@ -245,6 +245,9 @@ class LLMAspectService:
             "text is factual/operational with no opinion (e.g. a status update, a request, or an "
             "acknowledgment) — do NOT invent sentiment that isn't there.\n"
             "7. Give an overall sentiment for the whole comment (same four values).\n"
+            "8. Give a brief \"rationale\": one short clause (max 15 words) explaining the "
+            "aspect/sentiment choice, grounded in what the comment actually says. Empty string "
+            "if no category applied.\n"
             "Respond with STRICT JSON only, no prose."
         )
         user = (
@@ -253,7 +256,8 @@ class LLMAspectService:
             "Return JSON exactly in this shape:\n"
             '{"matched": [{"aspect": "<exact category name>", "confidence": "high|medium|low", '
             '"sentiment": "positive|negative|neutral|none"}], '
-            '"overall_sentiment": "positive|negative|neutral|none"}'
+            '"overall_sentiment": "positive|negative|neutral|none", '
+            '"rationale": "<max 15 words explaining the choice>"}'
         )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -264,11 +268,14 @@ class LLMAspectService:
         aspect_scores = {a: 0.0 for a in canonical}
         aspect_sentiments: Dict[str, str] = {}
         overall_sentiment = "NEUTRAL"
+        rationale = ""
         try:
             data = json.loads(content)
             items = data.get("matched", []) if isinstance(data, dict) else []
             if isinstance(data, dict) and data.get("overall_sentiment") is not None:
                 overall_sentiment = _norm_sentiment(data.get("overall_sentiment"))
+            if isinstance(data, dict) and data.get("rationale"):
+                rationale = str(data.get("rationale")).strip()[:240]
         except Exception:
             items = []
 
@@ -293,6 +300,7 @@ class LLMAspectService:
             "aspect_scores": aspect_scores,
             "overall_sentiment": overall_sentiment,
             "aspect_sentiments": aspect_sentiments,
+            "rationale": rationale,
         }
 
     @staticmethod
@@ -304,6 +312,7 @@ class LLMAspectService:
             "aspect_scores": {a: 0.0 for a in canonical},
             "overall_sentiment": "NONE",
             "aspect_sentiments": {},
+            "rationale": "",
         }
 
     @staticmethod
@@ -317,6 +326,7 @@ class LLMAspectService:
             "aspect_scores": {a: 0.0 for a in canonical},
             "overall_sentiment": "NONE",
             "aspect_sentiments": {},
+            "rationale": "",
             "errored": True,
             "error": str(error)[:500],
         }

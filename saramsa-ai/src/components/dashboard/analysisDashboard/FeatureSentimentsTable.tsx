@@ -6,6 +6,7 @@ import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
 import { CompactSentimentBar } from './CompactSentimentBar';
 import { DimensionBreakdown } from '../DimensionBreakdown';
+import type { SampleComment } from '../../../types/analysis';
 
 interface FeatureSentiment {
   name: string;
@@ -19,10 +20,16 @@ interface FeatureSentiment {
   comment_count?: number;
   isEdited?: boolean;
   sample_comments?: {
-    positive?: string[];
-    negative?: string[];
-    neutral?: string[];
+    positive?: SampleComment[];
+    negative?: SampleComment[];
+    neutral?: SampleComment[];
   };
+}
+
+// Evidence entries are either a plain string (older analyses) or
+// { text, rationale } (newer ones). Normalize for rendering.
+function evidenceParts(c: SampleComment): { text: string; rationale?: string } {
+  return typeof c === 'string' ? { text: c } : { text: c.text, rationale: c.rationale };
 }
 
 interface FeatureSentimentsTableProps {
@@ -221,14 +228,22 @@ export const FeatureSentimentsTable = ({
                             Positive ({feature.sample_comments!.positive!.length})
                           </p>
                           <div className="space-y-1 max-h-[160px] overflow-y-auto pr-1">
-                            {feature.sample_comments!.positive!.slice(0, 10).map((c, i) => (
-                              <p
-                                key={`pos-${i}`}
-                                className="text-xs text-foreground/80 pl-2 border-l-2 border-saramsa-brand/40 leading-relaxed"
-                              >
-                                {c}
-                              </p>
-                            ))}
+                            {feature.sample_comments!.positive!.slice(0, 10).map((c, i) => {
+                              const { text, rationale } = evidenceParts(c);
+                              return (
+                                <div
+                                  key={`pos-${i}`}
+                                  className="pl-2 border-l-2 border-saramsa-brand/40"
+                                >
+                                  <p className="text-xs text-foreground/80 leading-relaxed">{text}</p>
+                                  {rationale && (
+                                    <p className="text-[11px] italic text-muted-foreground leading-snug mt-0.5">
+                                      Why: {rationale}
+                                    </p>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -238,14 +253,22 @@ export const FeatureSentimentsTable = ({
                             Negative ({feature.sample_comments!.negative!.length})
                           </p>
                           <div className="space-y-1 max-h-[160px] overflow-y-auto pr-1">
-                            {feature.sample_comments!.negative!.slice(0, 10).map((c, i) => (
-                              <p
-                                key={`neg-${i}`}
-                                className="text-xs text-foreground/80 pl-2 border-l-2 border-saramsa-gradient-to/40 leading-relaxed"
-                              >
-                                {c}
-                              </p>
-                            ))}
+                            {feature.sample_comments!.negative!.slice(0, 10).map((c, i) => {
+                              const { text, rationale } = evidenceParts(c);
+                              return (
+                                <div
+                                  key={`neg-${i}`}
+                                  className="pl-2 border-l-2 border-saramsa-gradient-to/40"
+                                >
+                                  <p className="text-xs text-foreground/80 leading-relaxed">{text}</p>
+                                  {rationale && (
+                                    <p className="text-[11px] italic text-muted-foreground leading-snug mt-0.5">
+                                      Why: {rationale}
+                                    </p>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
