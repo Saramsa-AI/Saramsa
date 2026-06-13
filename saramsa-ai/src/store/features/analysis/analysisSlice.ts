@@ -160,7 +160,6 @@ function normalizeAnalysisData(input: any): AnalysisData {
   if (!input) return input;
 
   console.log('[normalizeAnalysisData] Input keys:', Object.keys(input));
-  console.log('[normalizeAnalysisData] Full input:', input);
 
   // Extract the core analysis data from various possible structures
   let analysisData = input.analysisData || input.analysis?.analysisData || input;
@@ -267,12 +266,9 @@ export const fetchAnalysisById = createAsyncThunk<
       const response = await apiRequest('get', `/feedback/analysis/${analysisId}/`, undefined, true);
 
       const data = response.data?.data ?? response.data;
-      console.log(`[fetchById] RAW response.data:`, response.data);
-      console.log(`[fetchById] Extracted data:`, data);
 
       // CRITICAL: API returns {exists, analysis} - extract the analysis object!
       const analysisData = data.analysis ?? data;
-      console.log(`[fetchById] Analysis object:`, analysisData);
       console.log(`[fetchById] Loaded analysis ID:`, analysisData.id);
 
       return analysisData as AnalysisData;
@@ -534,10 +530,8 @@ const analysisSlice = createSlice({
         console.log(`[setAnalysisData] ✅ Setting deepAnalysis from work_items (${data.work_items.length} items)`);
         state.deepAnalysis = { work_items: data.work_items };
       } else {
-        console.log(`[setAnalysisData] ⚠️  No work_items, using userStories:`, data?.userStories);
         state.deepAnalysis = data?.userStories ?? null;
       }
-      console.log(`[setAnalysisData] deepAnalysis set to:`, state.deepAnalysis);
       state.loadedComments = data?.comments ?? null;
     },
 

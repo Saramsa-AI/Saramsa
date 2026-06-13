@@ -284,6 +284,8 @@ class TaskService:
             is_cancelled=is_cancelled,
             user_id=user_id_str,
             regenerate_callback=_regenerate_taxonomy,
+            project_id=project_id,
+            analysis_id=analysis_id,
         )
         
         logger.info(f"✅ Pipeline completed in {pipeline_result.processing_time:.2f}s")
