@@ -17,9 +17,9 @@ import analysisReducer, {
   resumeInFlightTask,
   ingestFile,
   clearAnalysisData,
+  clearError,
   selectIsGeneratingWorkItems,
   selectAnalysisLifecycleState,
-  selectIsAnyAnalysisRunning,
 } from './analysisSlice'
 import { AnalysisLifecycleState } from '@/lib/analysisConstants'
 
@@ -286,6 +286,21 @@ describe('analysisSlice work-item generation flag + clearAnalysisData (I2)', () 
     expect(next.loadedComments).toBeNull()
     expect(next.analysisHistory).toHaveLength(1) // history untouched
   })
+
+  test('clearError clears all error fields (fixes stuck error banner)', () => {
+    const start = {
+      ...baseState(),
+      selectedAnalysisError: 'load failed',
+      historyError: 'history failed',
+      currentTaskError: 'task failed',
+      analysisData: { id: 'x' } as any,
+    }
+    const next = analysisReducer(start, clearError())
+    expect(next.selectedAnalysisError).toBeNull()
+    expect(next.historyError).toBeNull()
+    expect(next.currentTaskError).toBeNull()
+    expect(next.analysisData).not.toBeNull() // data left intact — only errors cleared
+  })
 })
 
 describe('analysisSlice derived selectors (I2)', () => {
@@ -302,11 +317,5 @@ describe('analysisSlice derived selectors (I2)', () => {
     expect(selectAnalysisLifecycleState(mk({ currentTaskStatus: 'analyzing' }), 'a')).toBe(AnalysisLifecycleState.ANALYZING)
     expect(selectAnalysisLifecycleState(mk({ currentTaskStatus: 'failed' }), 'a')).toBe(AnalysisLifecycleState.FAILED)
     expect(selectAnalysisLifecycleState(mk({ currentTaskStatus: 'analyzing' }), null)).toBe(AnalysisLifecycleState.IDLE)
-  })
-
-  test('selectIsAnyAnalysisRunning is true while analyzing or with an analyzing placeholder', () => {
-    expect(selectIsAnyAnalysisRunning(mk({ currentTaskStatus: 'analyzing' }))).toBe(true)
-    expect(selectIsAnyAnalysisRunning(mk({ analysisHistory: [entry({ status: 'analyzing' })] }))).toBe(true)
-    expect(selectIsAnyAnalysisRunning(mk({ analysisHistory: [entry({ id: 'insight_done', status: 'completed' })] }))).toBe(false)
   })
 })

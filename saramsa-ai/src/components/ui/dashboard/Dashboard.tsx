@@ -6,8 +6,6 @@ import type { AppDispatch, RootState } from '@/store/store';
 import {
   analyzeComments,
   ingestFile,
-  getLatestAnalysis,
-  getConsolidatedDashboardData,
   generateUserStories,
   fetchAnalysisHistory,
   fetchAnalysisById,
@@ -39,9 +37,7 @@ import {
   AnalysisLifecycleState,
 } from '@/lib/analysisConstants';
 import {
-  selectTaskState,
   selectAnalysisLifecycleState,
-  selectIsAnyAnalysisRunning,
   selectIsProjectAnalyzing,
   selectIsViewingActiveAnalysis,
   selectAnalysisDisplayStatus,
@@ -144,14 +140,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   // Items stay visible until delete API succeeds.
   const analysisHistory = analysisState.analysisHistory;
 
-  const currentTask = useSelector((state: RootState) =>
-    selectTaskState(state, selectedAnalysisId)
-  );
   const currentLifecycleState = useSelector((state: RootState) =>
     selectAnalysisLifecycleState(state, selectedAnalysisId)
-  );
-  const isAnyAnalysisRunning = useSelector((state: RootState) =>
-    selectIsAnyAnalysisRunning(state)
   );
   const isProjectAnalyzing = useSelector((state: RootState) =>
     selectIsProjectAnalyzing(state, currentProjectId)
@@ -176,8 +166,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
   // Declare all refs at the top to prevent recreation on every render
   const didInitRef = useRef(false);
-  const hasConsolidatedFetchRef = useRef(false);
-  const lastFetchedProjectRef = useRef<string | null>(null);
   const lastProcessedAnalysisIdRef = useRef<string | null>(null);
   const lastHistoryProjectRef = useRef<string | null>(null);
   const initialSelectionAppliedRef = useRef<string | null>(null);
@@ -878,22 +866,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     };
   }, [selectedAnalysisId, dispatch]);
 
-  // Handle page refresh - fetch consolidated dashboard data for the current project
-  useEffect(() => {
-    // Prevent duplicate fetches
-    if (hasConsolidatedFetchRef.current) return;
-    
-    const currentProjectId = typeof window !== 'undefined' ? localStorage.getItem('project_id') : null;
-    
-    if (currentProjectId) {
-      hasConsolidatedFetchRef.current = true;
-      // Mark latest fetch as satisfied for this project to avoid a subsequent getLatestAnalysis call
-      lastFetchedProjectRef.current = currentProjectId;
-      // Fetch consolidated dashboard data (analysis + user stories + comments + submission status)
-      dispatch(getConsolidatedDashboardData(currentProjectId));
-    }
-  }, [dispatch]);
-
   // Handle project selection
   const handleProjectSelect = (projectId: string) => {
     // If external handler is provided (from route-based component), use it
@@ -906,7 +878,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     // Reset all refs first to prevent stale processing.
     lastProcessedAnalysisIdRef.current = null;
     lastHistoryProjectRef.current = null;
-    lastFetchedProjectRef.current = null;
 
     // Dispatch all clear actions synchronously
     dispatch(clearAnalysisData());
@@ -915,17 +886,11 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     dispatch(setSelectedAnalysisId(null));
     dispatch(setDeepAnalysis(null));
 
-    // Now update the project ID after data is cleared
+    // Update the project ID after data is cleared. The fetchAnalysisHistory
+    // effect (keyed on currentProjectId) loads the new project's data.
     setCurrentProjectId(projectId);
     if (typeof window !== 'undefined') {
       localStorage.setItem('project_id', projectId);
-    }
-
-    // Fetch consolidated dashboard data for the selected project
-    if (projectId) {
-      // Mark latest fetch as satisfied for this project to avoid triggering getLatestAnalysis
-      lastFetchedProjectRef.current = projectId;
-      dispatch(getConsolidatedDashboardData(projectId));
     }
   };
 
@@ -1001,69 +966,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       return value;
     }
   }
-
-  // When project changes, fetch latest analysis for it
-  useEffect(() => {
-    if (!currentProjectId) return;
-    // Prevent fetching for the same project multiple times
-    if (lastFetchedProjectRef.current === currentProjectId) return;
-    lastFetchedProjectRef.current = currentProjectId;
-
-    /*
-    (async () => {
-      try {
-        const result = await dispatch(getLatestAnalysis(currentProjectId)).unwrap();
-        if (result?.exists && result?.analysis) {
-          const a = result.analysis; // Extract the nested analysis data
-          
-          // The backend now returns data in the new format (analysisData field)
-          // Check if data is already in the correct frontend format
-          if (a.analysisData) {
-            // Data is already in the new format, use it directly
-            dispatch(setAnalysisData(a));
-            dispatch(setDeepAnalysis(a.userStories ? parseDeepAnalysis(a.userStories) : null));
-          } else if (a.result?.overall && a.result?.counts && a.result?.features !== undefined) {
-            // Data is nested under result field - normalize it and merge metadata
-            const normalized = normalizeAnalysis(a.result);
-            // Merge metadata from the analysis object
-            if (normalized) {
-              normalized.id = a.id || normalized.id;
-              normalized.projectId = a.projectId || normalized.projectId;
-              normalized.userId = a.userId || normalized.userId;
-              normalized.createdAt = a.createdAt || a.analysis_date || normalized.createdAt;
-              normalized.analysisType = a.analysis_type || normalized.analysisType;
-            }
-            dispatch(setAnalysisData(normalized));
-            dispatch(setDeepAnalysis(a.userStories ? parseDeepAnalysis(a.userStories) : null));
-          } else if (a.sentimentsummary && a.counts && a.featureasba !== undefined) {
-            // Data is in the old format, normalize it
-            dispatch(setAnalysisData(normalizeAnalysis(a)));
-            dispatch(setDeepAnalysis(a.userStories ? parseDeepAnalysis(a.userStories) : null));
-          } else if (a.overall && a.counts && a.features !== undefined) {
-            // Fallback: data is in the old format, normalize it
-            dispatch(setAnalysisData(normalizeAnalysis(a)));
-            dispatch(setDeepAnalysis(a.userStories ? parseDeepAnalysis(a.userStories) : null));
-          } else if (a.commentAnalysis) {
-            // Fallback: use commentAnalysis if available
-            const ca = Array.isArray(a.commentAnalysis)
-              ? (typeof a.commentAnalysis[0] === 'string' ? JSON.parse(a.commentAnalysis[0]) : a.commentAnalysis[0])
-              : a.commentAnalysis;
-            dispatch(setAnalysisData(normalizeAnalysis(ca)));
-            dispatch(setDeepAnalysis(a.userStories ? parseDeepAnalysis(a.userStories) : null));
-          } else {
-            dispatch(setAnalysisData(null));
-            dispatch(setDeepAnalysis(null));
-          }
-        } else {
-          dispatch(setAnalysisData(null));
-          dispatch(setDeepAnalysis(null));
-        }
-      } catch (e) {
-        console.error('Error fetching latest analysis:', e);
-      }
-    })();
-    */
-  }, [currentProjectId, dispatch]);
 
   // TODO: Re-enable when filters are fully implemented
   // Fetch filtered analysis when dimension filters change
