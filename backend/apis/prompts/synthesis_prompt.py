@@ -28,9 +28,8 @@ You are an expert customer feedback analyst. Analyze the following structured cu
 
 ## OVERVIEW
 - Total Comments Analyzed: {total_comments}
-- Processing Method: Local ML Pipeline (all-MiniLM-L6-v2 + cardiffnlp/twitter-roberta-base-sentiment-latest)
-- Sentiment Method: Aspect-relative (sentence-level sentiment per matched aspect)
-- Aspect Matching: Bi-encoder cosine similarity with tiered thresholds (0.60 strong / 0.55 weak)
+- Processing Method: LLM pipeline (per-comment aspect classification + sentiment)
+- Sentiment Method: Per-aspect sentiment (POSITIVE / NEGATIVE / NEUTRAL / NONE)
 
 ## AGGREGATED STATISTICS
 Overall Sentiment Distribution:

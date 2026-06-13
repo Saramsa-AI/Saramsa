@@ -57,7 +57,7 @@ class CooldownGateTests(SimpleTestCase):
 
 
 class TieredRegenRuleTests(SimpleTestCase):
-    """Drive the closure built inside TaskService._process_with_local_pipeline.
+    """Drive the closure built inside TaskService._process_feedback.
 
     We don't import TaskService directly to avoid pulling Django models; we
     instead reproduce the rule's branching by stubbing the suggestion service

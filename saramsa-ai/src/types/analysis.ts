@@ -4,6 +4,21 @@ export type SentimentBreakdown = {
   neutral: number;
 };
 
+// An example comment with the LLM's short rationale for its classification.
+// Older analyses stored plain strings, so consumers must handle both shapes.
+export type EvidenceComment = {
+  text: string;
+  rationale?: string;
+};
+
+export type SampleComment = string | EvidenceComment;
+
+export type SampleComments = {
+  positive?: SampleComment[];
+  negative?: SampleComment[];
+  neutral?: SampleComment[];
+};
+
 export type FeatureSentiment = {
   featureId: string;
   name: string;
@@ -11,11 +26,7 @@ export type FeatureSentiment = {
   sentiment: SentimentBreakdown;
   keywords: string[];
   comment_count: number;
-  sample_comments?: {
-    positive?: string[];
-    negative?: string[];
-    neutral?: string[];
-  };
+  sample_comments?: SampleComments;
 };
 
 export type EmojiAnalysis = {

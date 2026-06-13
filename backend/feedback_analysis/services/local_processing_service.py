@@ -84,6 +84,7 @@ class AspectMatch:
     aspect_scores: Dict[str, float]
     comment_sentiment: SentimentResult          # Overall comment-level sentiment
     aspect_sentiments: Dict[str, AspectSentiment] = field(default_factory=dict)  # Per-aspect sentiment
+    rationale: str = ""                          # Short LLM explanation of the aspect/sentiment choice
 
 
 @dataclass
@@ -334,6 +335,7 @@ class LocalProcessingService:
                 comment_id=r["comment_id"], comment_text=r["comment_text"],
                 matched_aspects=matched, aspect_scores=r["aspect_scores"],
                 comment_sentiment=to_result(overall_label), aspect_sentiments=aspect_sentiments,
+                rationale=str(r.get("rationale", "") or ""),
             ))
         return combined
 
@@ -633,7 +635,8 @@ class LocalProcessingService:
                 for comment in buckets.get(sentiment, []):
                     if len(aspect_samples) >= max_per_candidate:
                         break
-                    aspect_samples.append(comment)
+                    # Buckets hold {text, rationale}; the narration prompt wants plain text.
+                    aspect_samples.append(comment["text"] if isinstance(comment, dict) else comment)
             if aspect_samples:
                 samples[aspect_key] = aspect_samples
         return samples
@@ -728,11 +731,13 @@ class LocalProcessingService:
     def _normalize_aspect_key(label: str) -> str:
         return str(label).strip().lower().replace(" ", "_")
 
-    def _build_feature_comment_buckets(self, matches: List[AspectMatch], limit: int = 10) -> Dict[str, Dict[str, List[str]]]:
-        """Build per-feature comment buckets split by sentiment (positive/negative/neutral)."""
-        buckets: Dict[str, Dict[str, List[str]]] = {}
+    def _build_feature_comment_buckets(self, matches: List[AspectMatch], limit: int = 10) -> Dict[str, Dict[str, List[Dict[str, str]]]]:
+        """Per-feature evidence buckets split by sentiment. Each entry is
+        ``{"text", "rationale"}`` — the example comment plus the LLM's short
+        explanation for why it was classified that way (empty when none)."""
+        buckets: Dict[str, Dict[str, List[Dict[str, str]]]] = {}
 
-        def _add(bucket: Dict[str, List[str]], sentiment: str, text: str) -> None:
+        def _add(bucket: Dict[str, List[Dict[str, str]]], sentiment: str, text: str, rationale: str) -> None:
             if not text:
                 return
             key = sentiment.upper()
@@ -743,9 +748,9 @@ class LocalProcessingService:
             else:
                 k = "neutral"
             existing = bucket[k]
-            if text in existing or len(existing) >= limit:
+            if any(e["text"] == text for e in existing) or len(existing) >= limit:
                 return
-            existing.append(text)
+            existing.append({"text": text, "rationale": rationale or ""})
 
         for m in matches:
             for aspect in m.matched_aspects:
@@ -756,7 +761,7 @@ class LocalProcessingService:
                     buckets[aspect_key] = {"positive": [], "negative": [], "neutral": []}
                 asp_sent = m.aspect_sentiments.get(aspect)
                 sentiment = asp_sent.sentiment if asp_sent else m.comment_sentiment.sentiment
-                _add(buckets[aspect_key], sentiment, m.comment_text)
+                _add(buckets[aspect_key], sentiment, m.comment_text, m.rationale)
 
         return buckets
 

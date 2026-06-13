@@ -2,7 +2,7 @@
 Pydantic schema for normalized analysis data stored in analysisData.
 """
 
-from typing import List, Any
+from typing import List, Any, Union
 from pydantic import BaseModel, ConfigDict
 
 
@@ -19,10 +19,23 @@ class Counts(BaseModel):
     neutral: int
 
 
+class EvidenceComment(BaseModel):
+    """An example comment with the LLM's short rationale for its classification."""
+    text: str
+    rationale: str = ""
+
+    model_config = ConfigDict(extra="allow")
+
+
+# Backward-compatible: older analyses stored plain strings; new ones store
+# {text, rationale} objects.
+EvidenceEntry = Union[EvidenceComment, str]
+
+
 class SampleComments(BaseModel):
-    positive: List[str] = []
-    negative: List[str] = []
-    neutral: List[str] = []
+    positive: List[EvidenceEntry] = []
+    negative: List[EvidenceEntry] = []
+    neutral: List[EvidenceEntry] = []
 
 
 class Feature(BaseModel):

@@ -6,6 +6,7 @@ import { FeatureSentimentsTable } from '../../dashboard/analysisDashboard/Featur
 import { SentimentCharts } from '../../dashboard/analysisDashboard/SentimentCharts';
 import { KeywordCloud } from './KeywordCloud';
 import { AdvancedWordCloud } from './AdvancedWordCloud';
+import type { SampleComment } from '../../../types/analysis';
 
 interface LocalFeatureSentiment {
   name: string;
@@ -14,7 +15,7 @@ interface LocalFeatureSentiment {
   keywords: string[];
   comment_count?: number;
   isEdited?: boolean;
-  sample_comments?: { positive?: string[]; negative?: string[]; neutral?: string[] };
+  sample_comments?: { positive?: SampleComment[]; negative?: SampleComment[]; neutral?: SampleComment[] };
 }
 
 interface AnalysisProgressUi {
