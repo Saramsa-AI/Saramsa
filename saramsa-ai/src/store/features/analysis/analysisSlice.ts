@@ -466,6 +466,31 @@ const analysisSlice = createSlice({
       state.analysisHistory = state.analysisHistory.filter(e => e.id !== action.payload);
     },
 
+    // Resolve an "analyzing" placeholder to a terminal state (cancelled / completed
+    // / failed). Used by the hydration sweeper and cancelAnalysisTask. Maps onto the
+    // flat v2 state: patch the placeholder row, swap its id to the real insight id
+    // when known, release the selection, and clear the current-task tracking.
+    resolveAnalyzingTaskAction: (
+      state,
+      action: PayloadAction<{ placeholderId?: string; taskId?: string; historyStatus?: string; insightId?: string | null; nextTaskStatus?: string }>
+    ) => {
+      const { placeholderId, taskId, historyStatus, insightId } = action.payload || {};
+      if (placeholderId) {
+        const row = state.analysisHistory.find(e => e.id === placeholderId);
+        if (row) {
+          if (historyStatus) row.status = historyStatus;
+          if (insightId) row.id = insightId;
+        }
+        if (state.selectedAnalysisId === placeholderId) {
+          state.selectedAnalysisId = insightId ?? null;
+        }
+      }
+      if (taskId && state.currentTaskId === taskId) {
+        state.currentTaskId = null;
+        state.currentTaskStatus = 'idle';
+      }
+    },
+
     // Reset entire state
     resetAnalysisState: () => {
       console.log(`[reset] Resetting all state`);
@@ -667,6 +692,7 @@ export const {
   clearCurrentTask,
   prependToHistoryAction,
   removeFromHistoryAction,
+  resolveAnalyzingTaskAction,
   resetAnalysisState,
   setAnalysisDataAction,
   setDeepAnalysisAction,
@@ -698,17 +724,39 @@ export const setAnalysisData = setAnalysisDataAction;
 export const setDeepAnalysis = setDeepAnalysisAction;
 export const setLoadedComments = setLoadedCommentsAction;
 
+// Resolve a stale "analyzing" placeholder to its terminal state (real reducer).
+export const resolveAnalyzingTask = resolveAnalyzingTaskAction;
+
 // Dummy actions for components that haven't been migrated yet (no-ops)
 export const clearAnalysisData = (_params?: any) => ({ type: 'analysis/clearAnalysisData' });
-export const resolveAnalyzingTask = (_params?: any) => ({ type: 'analysis/resolveAnalyzingTask' });
 export const clearError = (_params?: any) => ({ type: 'analysis/clearError' });
 export const setTaskIdForEntry = (_params?: any) => ({ type: 'analysis/setTaskIdForEntry' });
 export const replaceInHistory = (_params?: any) => ({ type: 'analysis/replaceInHistory' });
 
-// Dummy thunks
-export const resumeInFlightTask = createAsyncThunk('analysis/resumeInFlightTask', async (_params?: any) => {
-  console.warn('[DEPRECATED] resumeInFlightTask called - needs migration');
-  return null;
+/**
+ * Re-attach to an in-flight analysis task on cold mount (the hydration sweeper
+ * dispatches this for the newest non-terminal task). Re-polls to completion and
+ * refreshes history so the placeholder resolves to the real run.
+ */
+export const resumeInFlightTask = createAsyncThunk<
+  any,
+  { taskId: string; projectId?: string },
+  { rejectValue: string }
+>('analysis/resumeInFlightTask', async ({ taskId, projectId }, { dispatch, rejectWithValue, getState }) => {
+  try {
+    const result = await waitForAnalysisTask(taskId, dispatch);
+    const state: any = getState();
+    const stateProjectId = state?.analysis?.projectId || projectId;
+    if (stateProjectId) {
+      await dispatch(fetchAnalysisHistory({ projectId: stateProjectId })).unwrap();
+      if (result?.id && !String(result.id).startsWith('analysis_')) {
+        dispatch(setSelectedAnalysisId(result.id));
+      }
+    }
+    return result;
+  } catch (err: any) {
+    return rejectWithValue(err?.message || 'Failed to resume task.');
+  }
 });
 
 export const getConsolidatedDashboardData = createAsyncThunk('analysis/getConsolidatedDashboardData', async (_projectId?: string) => {
@@ -849,9 +897,23 @@ export const submitUserStories = createAsyncThunk('analysis/submitUserStories', 
   return null;
 });
 
-export const cancelAnalysisTask = createAsyncThunk('analysis/cancelAnalysisTask', async (_params?: any) => {
-  console.warn('[DEPRECATED] cancelAnalysisTask called - needs migration');
-  return null;
+/**
+ * Cancel a running analysis: tell the backend to stop the task, then mark the
+ * placeholder row cancelled and release the selection. `tempId` is the
+ * placeholder row id; `taskId` is the Celery task id.
+ */
+export const cancelAnalysisTask = createAsyncThunk<
+  { taskId: string; tempId: string },
+  { taskId: string; tempId: string },
+  { rejectValue: string }
+>('analysis/cancelAnalysisTask', async ({ taskId, tempId }, { dispatch, rejectWithValue }) => {
+  try {
+    await apiRequest('post', `/insights/task-cancel/${taskId}/`, undefined, true);
+    dispatch(resolveAnalyzingTaskAction({ placeholderId: tempId, taskId, historyStatus: 'cancelled' }));
+    return { taskId, tempId };
+  } catch (err: any) {
+    return rejectWithValue(err?.message || 'Failed to cancel task.');
+  }
 });
 
 // Backward compatibility wrappers
