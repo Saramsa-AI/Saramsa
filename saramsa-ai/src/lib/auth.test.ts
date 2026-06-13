@@ -139,7 +139,7 @@ describe('login() — error paths', () => {
       json: async () => {
         throw new Error('not json')
       },
-    } as Response)
+    } as unknown as Response)
 
     await expect(
       login({ email: 'x@y.com', password: 'p' })
