@@ -1,6 +1,6 @@
 """Tests for POST /api/auth/logout/ — the LogoutView in authentication_views.
 
-Covers the refresh-token blacklist shipped in Phase 1b:
+Covers the refresh-token blacklist behavior:
 - A logged-out refresh token is rejected on the next /refresh attempt
 - Calling logout twice (or with already-blacklisted token) is idempotent
 - Missing/empty/malformed refresh tokens all return 200 (logout must
@@ -73,40 +73,33 @@ class LogoutViewBlacklistTest(TestCase):
 
     @unittest.expectedFailure
     def test_blacklisted_refresh_token_rejected_on_next_refresh(self) -> None:
-        """KNOWN BUG — pinned as expectedFailure so the gap is visible.
+        """Pinned as expectedFailure so the gap is visible.
 
         The intent: logout → try the same refresh token at /api/auth/refresh/
         → expect 401 'Token is blacklisted'. This is the actual security
         guarantee of LogoutView; without it, the refresh token stays valid
         for its full 7-day TTL even after logout.
 
-        Why it fails today: SimpleJWT's `RefreshToken.blacklist()` creates
-        an OutstandingToken row whose `user` FK expects a numeric Django
+        It fails because SimpleJWT's `RefreshToken.blacklist()` creates an
+        OutstandingToken row whose `user` FK expects a numeric Django
         auth-User pk, but our `UserAccount.id` is a string. The blacklist
         call raises silently inside `LogoutView` (which catches the
         exception) and inside `AppTokenRefreshSerializer.validate` (which
-        debug-logs and continues — see serializers.py:110-120).
-
-        Net effect: the LogoutView returns 200 as if it worked, but the
-        token is NOT actually blacklisted and can be reused. This test
-        will start passing as soon as someone wires up custom blacklist
-        models that accept string user IDs (a Phase 6 follow-up).
+        debug-logs and continues). The LogoutView returns 200 as if it
+        worked, but the token is not actually blacklisted and can be reused.
+        It will pass once custom blacklist models that accept string user
+        IDs are wired up.
         """
-        # Step 1: logout, which SHOULD blacklist the refresh but currently
-        # fails silently.
         self.client.post(
             "/api/auth/logout/",
             {"refresh": self.refresh},
             format="json",
         )
-        # Step 2: try to use the (un-blacklisted) refresh at /refresh/.
         refresh_resp = self.client.post(
             "/api/auth/refresh/",
             {"refresh": self.refresh},
             format="json",
         )
-        # Expected post-fix: 401 "Token is blacklisted".
-        # Actual today: 200 — refresh succeeds.
         self.assertEqual(refresh_resp.status_code, 401)
 
     def test_double_logout_does_not_error(self) -> None:

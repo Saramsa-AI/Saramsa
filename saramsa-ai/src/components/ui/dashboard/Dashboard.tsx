@@ -3,7 +3,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch, RootState } from '@/store/store';
-// encryptProjectId moved to WorkItemsPanel.tsx (Phase 2).
 import {
   analyzeComments,
   ingestFile,
@@ -63,10 +62,6 @@ import { Check, Loader2, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { UploadPanel } from './UploadPanel';
 import { SlackChannelPanel } from './SlackChannelPanel';
-// MetricsCards, FeatureSentimentsTable, SentimentCharts, KeywordCloud,
-// AdvancedWordCloud, AlertCircle moved to InsightsPanel.tsx (Phase 3).
-// UserStoryList, encryptProjectId, Sparkles moved to WorkItemsPanel.tsx (Phase 2).
-// import { NavigationTabs } from './NavigationTabs'; // Inlined below
 
 import { AnalysisRunList } from './AnalysisRunList';
 import { InsightsPanel } from './InsightsPanel';
@@ -129,7 +124,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   const [personalProjectId, setPersonalProjectId] = useState<string>('');
   const [isSwitchingAnalysis, setIsSwitchingAnalysis] = useState<boolean>(false);
 
-  // NOW we can use Redux selectors (they may depend on state variables above)
   const analysisState = useSelector((state: RootState) => state.analysis);
   const {
     analysisData,
@@ -140,20 +134,16 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     // projectId - not used, gets overridden by localStorage version below
     historyLoading,
     selectedAnalysisId,
-    // selectedAnalysisData - not renaming, doesn't match expected structure
   } = analysisState;
 
-  // fetchingAnalysisById is same as selectedAnalysisLoading
   const fetchingAnalysisById = loading;
 
-  // Backward compatibility stubs - these don't exist in new state
   const projectContext = null;
   const latestAnalysis = null;
 
-  // Use raw history - items stay visible until delete API succeeds
+  // Items stay visible until delete API succeeds.
   const analysisHistory = analysisState.analysisHistory;
 
-  // NEW: Use selectors for derived state from state machine
   const currentTask = useSelector((state: RootState) =>
     selectTaskState(state, selectedAnalysisId)
   );
@@ -308,7 +298,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       }
     })();
   }, [currentProjectId, selectedAnalysisId, dispatch]);
-  // DEPRECATED: Entire useEffect removed - projectContext doesn't exist in Redux state
   /*
   useEffect(() => {
     const contextProjectId = projectContext?.project_id;
@@ -341,19 +330,17 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   // const [filteredStats, setFilteredStats] = useState<any>(null);
 
   // Memoize the localStorage-derived projectId and the projects-array lookup
-  // for selectedProjectName. Without memoization, both ran on every render —
-  // the localStorage read is cheap (~1µs) but the projects.find() is a linear
-  // scan that ran on every keystroke / hover / state change. Per the Phase 1
-  // agent audit (CRITICAL #7), this was a measurable hot path.
+  // for selectedProjectName. Without memoization, both run on every render —
+  // the localStorage read is cheap but the projects.find() is a linear scan
+  // that would run on every keystroke / hover / state change.
   //
   // Same-tab writes to localStorage 'project_id' originate from this file's
-  // own effect (line 236, triggered by projectContext change), so re-reading
-  // when projectContext changes covers every meaningful update. Cross-tab
-  // writes won't be observed (no 'storage' event subscription) — that matches
-  // the original behavior since this read was synchronous.
+  // own effect, so re-reading when currentProjectId changes covers every
+  // meaningful update. Cross-tab writes won't be observed (no 'storage' event
+  // subscription) — this read is synchronous.
   const projectId = useMemo(
     () => (typeof window !== 'undefined' ? localStorage.getItem('project_id') : null),
-    [currentProjectId]  // Removed projectContext - it's not used and causes unnecessary refetches
+    [currentProjectId]
   );
   const selectedProjectName = useMemo(
     () => projects?.find((p: any) => p.id === (currentProjectId || projectId))?.name,
@@ -621,8 +608,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     dispatch(setCurrentProjectUserStories([userStoryFromDeepAnalysis]));
   }, [dispatch, userStoryFromDeepAnalysis, currentProjectUserStories]);
   
-  // DEPRECATED: latestAnalysis is null - this entire useEffect is dead code
-  // Commenting out to fix TypeScript errors on Vercel
   /*
   useEffect(() => {
     if (!latestAnalysis) {
@@ -744,7 +729,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   }, [latestAnalysis, dispatch, selectedAnalysisId]);
   */
 
-  // DEPRECATED: latestAnalysis is null - this entire useEffect is dead code
   /*
   useEffect(() => {
     // CRITICAL: Don't process latestAnalysis work items if user has selected a specific historical analysis
@@ -831,7 +815,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     console.log('[Dashboard] Setting project ID in Redux:', pid);
     dispatch(setProjectId(pid));
 
-    // NEW API: fetchAnalysisHistory({ projectId })
     dispatch(fetchAnalysisHistory({ projectId: pid }));
   }, [currentProjectId, projectId, dispatch]);
 
@@ -852,7 +835,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       return;
     }
 
-    // BUG FIX: Set switching state and clear previous analysis data immediately to prevent flash of stale content
+    // Set switching state and clear previous analysis data immediately to prevent flash of stale content
     setIsSwitchingAnalysis(true);
 
     // Clear all previous analysis data synchronously to prevent showing stale work items or analysis results
@@ -868,14 +851,12 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
     (async () => {
       try {
-        // NEW API: fetchAnalysisById({ analysisId })
         const result = await dispatch(fetchAnalysisById({ analysisId: selectedAnalysisId })).unwrap();
         // If the user switched again before this resolved, drop the result.
         if (controller.signal.aborted) return;
-        // Handle result - normalize to extract work_items from pipeline_work_items
+        // Normalize to extract work_items from pipeline_work_items.
         if (result) {
           dispatch(setAnalysisData(normalizeAnalysis(result)));
-          // setAnalysisDataAction now handles deepAnalysis from work_items
         }
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -921,8 +902,8 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       return;
     }
 
-    // BUG FIX: Clear data synchronously BEFORE updating project ID to prevent flash of stale data
-    // Reset all refs first to prevent stale processing
+    // Clear data synchronously BEFORE updating project ID to prevent flash of stale data.
+    // Reset all refs first to prevent stale processing.
     lastProcessedAnalysisIdRef.current = null;
     lastHistoryProjectRef.current = null;
     lastFetchedProjectRef.current = null;
@@ -1028,7 +1009,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     if (lastFetchedProjectRef.current === currentProjectId) return;
     lastFetchedProjectRef.current = currentProjectId;
 
-    // DEPRECATED: getLatestAnalysis returns null - this entire block is dead code
     /*
     (async () => {
       try {
@@ -1135,7 +1115,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       return;
     }
 
-    // FIX #2: Clear old data BEFORE creating new placeholder to prevent flash of stale content
+    // Clear old data BEFORE creating new placeholder to prevent flash of stale content.
     // NOTE: Don't use clearAnalysisData() - it wipes the entire history!
     if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
       dispatch(setAnalysisData(null));  // Clear only current analysis data
@@ -1191,9 +1171,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     try {
       setTopError(null);
       dispatch(clearError());
-
-      // FIX #2: Old data clearing moved to BEFORE tempId creation (see lines 1088-1092)
-      // This ensures stale data is cleared synchronously before new analysis starts
 
       // Load file data first
       const text = await new Promise<string>((resolve, reject) => {
@@ -1366,7 +1343,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
 
     if (payload.id) {
-      // FIX 2: Use metadata from result if available (sidebar sync fix)
+      // Use metadata from result if available, to keep the sidebar in sync.
       const metadata = (result as any)?.metadata;
       const counts = payload.analysisData?.counts ?? {};
       const total = metadata?.comments_count ?? Number(counts.total ?? 0);
@@ -1385,16 +1362,15 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         },
       }));
 
-      // FIX #3: Swap selectedAnalysisId immediately to clear "Analyzing feedback..." banner
-      // Work items generation continues in background tracked by isGeneratingUserStories
-      // This ensures the banner clears synchronously when analysis completes, before work items generation
+      // Swap selectedAnalysisId immediately to clear the "Analyzing feedback..."
+      // banner synchronously when analysis completes; work item generation
+      // continues in the background tracked by isGeneratingUserStories.
       if (isAnalyzingPlaceholder(selectedAnalysisId) || selectedAnalysisId === tempId) {
         dispatch(setSelectedAnalysisId(payload.id));
       }
 
-      // CRITICAL: Generate work items unconditionally for every completed analysis
-      // Previous bug: work items were only generated if user was actively viewing this analysis
-      // This caused "no deep analysis" placeholder when user navigated away during analysis
+      // Generate work items unconditionally for every completed analysis, so it
+      // still happens when the user has navigated away from this analysis.
       generateWorkItemsFromAnalysis(payload).catch(e => {
         console.error('Background work item generation failed:', e);
       });
@@ -1405,17 +1381,11 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     if (payload.deepAnalysis) {
       dispatch(setDeepAnalysis(payload.deepAnalysis));
     }
-
-    // Work items generation is now called from the selectedAnalysisId swap logic above
-    // to ensure proper timing coordination (FIX 1)
   }
 
   // Generate work items from analysis data
   async function generateWorkItemsFromAnalysis(analysisData: any) {
     try {
-      // TODO Phase 2: Dispatch state machine transition to GENERATING_WORKITEMS
-      // setIsGeneratingUserStories(true);
-      
       // Use platform derived from selected project (default to Azure for personal workspaces)
       const currentPlatform = selectedPlatform ?? 'azure';
       
@@ -1442,8 +1412,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       
       if (!commentsToUse || commentsToUse.length === 0) {
         console.error('❌ No comments available for work item generation');
-        // TODO Phase 2: Dispatch state machine transition to FAILED
-        // setIsGeneratingUserStories(false);
         return;
       }
       if (currentPlatform === 'jira') {
@@ -1631,9 +1599,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       // You can uncomment this to show errors to users:
       // alert(`Work item generation failed: ${errorMessage}`);
     } finally {
-      // TODO Phase 2: Dispatch state machine transition to COMPLETED or FAILED
-      // setIsGeneratingUserStories(false);
-      
       // Fetch the persisted user stories from the backend after generation
       const effectiveProjectId = currentProjectId || personalProjectId;
       if (effectiveProjectId && user?.id) {
@@ -2084,10 +2049,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
               )}
 
               <div id="analysis-results-section" className="space-y-6">
-              {/* FIX #1: Removed duplicate amber banner - progress stepper below is sufficient */}
-              {/* Analysis Results Section — only show loader when the selected run is the one being analyzed */}
-              {/* REMOVED: Duplicate amber "Analyzing feedback..." banner (lines 2008-2023) */}
-              {/* The progress stepper below already shows the analyzing state clearly */}
               {analysisProgressUi && (
                 <div className="rounded-xl border border-border/60 bg-card/80 p-3 transition-all duration-300">
                   <div className="mb-2 flex items-center justify-between text-xs">

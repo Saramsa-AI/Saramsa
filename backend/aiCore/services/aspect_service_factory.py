@@ -1,9 +1,7 @@
 """
 Aspect Service Factory.
 
-Returns the LLM aspect classifier. The local-model methods (ensemble / NLI /
-similarity) were removed when the pipeline moved fully to LLM — no local models,
-no fallback.
+Returns the LLM aspect classifier, the only classification method.
 """
 
 import logging

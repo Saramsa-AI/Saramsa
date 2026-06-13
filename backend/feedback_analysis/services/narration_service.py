@@ -1,5 +1,5 @@
 """
-Unified narration service (Phase-3).
+Unified narration service.
 
 Single GPT entrypoint for narrative text.
 Deterministic inputs are trimmed and validated before/after the call.

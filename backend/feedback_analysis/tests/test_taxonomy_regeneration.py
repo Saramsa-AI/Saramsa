@@ -1,16 +1,16 @@
-"""Regression tests for the adaptive-taxonomy cooldown bookkeeping.
+"""Tests for the adaptive-taxonomy cooldown bookkeeping.
 
 These exercise the DB-backed taxonomy service (in-memory sqlite under
-``apis.settings_test``) and cover the wiring bugs that previously left the
-mapping-rate tiered regen policy unable to actually engage its cooldown:
+``apis.settings_test``) and cover the wiring the mapping-rate tiered regen
+policy needs to engage its cooldown:
 
-  * BUG 1 - increment_upload_counter must update the caller's live dict (and
-    persist) so the cooldown gate sees the fresh, incremented counter.
-  * BUG 2 - a full regeneration must record the cooldown markers on the new
-    taxonomy via record_full_regeneration so drift damps to additive growth.
-  * BUG 3 - the LLM health metric must treat the ["UNMAPPED"] sentinel as
-    unmapped (covered by HealthMetricUnmappedSentinelTests).
-  * BUG 4 - create+archive must leave exactly one active taxonomy per project.
+  * increment_upload_counter must update the caller's live dict (and persist)
+    so the cooldown gate sees the fresh, incremented counter.
+  * a full regeneration must record the cooldown markers on the new taxonomy
+    via record_full_regeneration so drift damps to additive growth.
+  * the LLM health metric must treat the ["UNMAPPED"] sentinel as unmapped
+    (covered by HealthMetricUnmappedSentinelTests).
+  * create+archive must leave exactly one active taxonomy per project.
 
 NOTE: Taxonomy.project is a real FK to integrations.Project, so each DB-backed
 test creates a Project row first to satisfy the constraint.
@@ -51,9 +51,9 @@ class IncrementUploadCounterTests(_RepoBackedTaxonomyTests):
         self.assertEqual(reloaded.get("uploads_since_regen"), 1)
 
     def test_increment_updates_callers_dict_in_place(self):
-        # BUG 1 regression: the caller (task_service._resolve_taxonomy) keeps
-        # using the SAME dict for the downstream cooldown decision, so the
-        # incremented value must be visible on that dict, not just persisted.
+        # The caller (task_service._resolve_taxonomy) keeps using the SAME
+        # dict for the downstream cooldown decision, so the incremented value
+        # must be visible on that dict, not just persisted.
         tax = self._create(["Service"], source="auto_regenerate")
         self.assertEqual(tax.get("uploads_since_regen"), 0)
         returned = self.svc.increment_upload_counter(self.project_id, tax)
@@ -95,8 +95,8 @@ class FullRegenCooldownTests(_RepoBackedTaxonomyTests):
         self.assertTrue(TaxonomyService.is_regen_cooldown_active(reloaded))
 
     def test_full_regen_via_create_plus_record_engages_cooldown(self):
-        # BUG 2 regression: a full regeneration goes through
-        # create_initial_taxonomy(source="auto_regenerate") and task_service now
+        # A full regeneration goes through
+        # create_initial_taxonomy(source="auto_regenerate") and task_service
         # explicitly arms the cooldown on the NEW row via
         # record_full_regeneration. The newly active taxonomy must be in
         # cooldown so the next drift-band upload damps to additive growth.
@@ -112,8 +112,8 @@ class FullRegenCooldownTests(_RepoBackedTaxonomyTests):
 
 class CreateArchiveAtomicityTests(_RepoBackedTaxonomyTests):
     def test_create_then_archive_leaves_exactly_one_active(self):
-        # BUG 4 mitigation: create+archive run in one transaction. Even after
-        # several sequential creates there must be exactly one active row.
+        # create+archive run in one transaction. Even after several sequential
+        # creates there must be exactly one active row.
         self._create(["A"], source="gpt")
         self._create(["B"], source="auto_regenerate")
         latest = self._create(["C"], source="auto_regenerate")
@@ -127,7 +127,7 @@ class CreateArchiveAtomicityTests(_RepoBackedTaxonomyTests):
 
 
 class HealthMetricUnmappedSentinelTests(TestCase):
-    """BUG 3: the ["UNMAPPED"] sentinel must count as unmapped, not mapped."""
+    """The ["UNMAPPED"] sentinel must count as unmapped, not mapped."""
 
     def setUp(self):
         self.task_service = TaskService()

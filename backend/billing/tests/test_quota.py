@@ -101,13 +101,13 @@ class RecordUsageTest(TestCase):
 
 
 class AtomicQuotaEnforcementTest(TestCase):
-    """Regression: record_usage is the authoritative, race-safe quota gate.
+    """record_usage is the authoritative, race-safe quota gate.
 
-    The TOCTOU bug was that check_quota (read-compare) and record_usage
-    (increment) were not atomic, so concurrent requests at the limit
-    boundary could all pass check_quota and then all record usage,
-    overrunning the monthly pool. record_usage now performs an atomic
-    conditional increment and refuses to push the counter past the limit.
+    There is a TOCTOU hazard if check_quota (read-compare) and record_usage
+    (increment) are not atomic: concurrent requests at the limit boundary
+    could all pass check_quota and then all record usage, overrunning the
+    monthly pool. record_usage performs an atomic conditional increment and
+    refuses to push the counter past the limit.
 
     True concurrency is hard to assert deterministically; a sequential
     exhaust-then-charge sequence exercises the same guarantee: once the

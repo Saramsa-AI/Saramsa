@@ -2,7 +2,7 @@
 Synthesis Prompt Template for GPT-5-mini
 
 Single prompt template for synthesizing insights, feature descriptions, and work items
-from structured local ML pipeline results.
+from structured pipeline results.
 """
 
 def create_synthesis_prompt(structured_extractions: dict, aggregated_stats: dict, 

@@ -37,8 +37,8 @@ class WorkItemCandidate(TimestampedModel):
     """
     A single generated work item / review candidate.
 
-    Previously embedded as JSON inside UserStory.work_items; now a first-class
-    table so we can index, filter, and paginate at the DB level.
+    A first-class table so candidates can be indexed, filtered, and
+    paginated at the DB level.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

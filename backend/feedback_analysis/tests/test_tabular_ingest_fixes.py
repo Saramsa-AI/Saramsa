@@ -1,13 +1,13 @@
-"""Regression tests for tabular / text ingest data-quality fixes.
+"""Tests for tabular / text ingest data-quality handling.
 
-These cover bugs that surfaced when pandas reads CSV/Excel/structured-JSON:
+These cover edge cases that arise when pandas reads CSV/Excel/structured-JSON:
 
-  * BUG 1 — pandas turns blank cells into float ``NaN``; the old empty-check
-    let ``NaN`` through so blank dimensions serialized to the literal "nan".
-  * BUG 2 — pandas widens an integer column to float64 when any cell is blank,
-    so ``5`` became ``5.0`` and rendered / filtered as "5.0".
-  * BUG 3 — ``extract_comments_from_text`` hard-coded a strict UTF-8 decode, so
-    a CP-1252 .txt upload produced mojibake instead of the real characters.
+  * Blank cells become float ``NaN``; a blank dimension must be dropped, not
+    serialized to the literal "nan".
+  * pandas widens an integer column to float64 when any cell is blank, so an
+    integral ``5.0`` must collapse back to ``5`` rather than render as "5.0".
+  * ``extract_comments_from_text`` must tolerate a CP-1252 .txt upload and
+    decode the real characters instead of producing mojibake.
 
 They exercise the pure functions directly (no Django ORM / Celery / LLM), so
 they run fast and deterministically.
@@ -26,7 +26,7 @@ from feedback_analysis.services.column_classifier_service import (
 
 
 class BlankDimensionCellTests(unittest.TestCase):
-    """BUG 1: a blank dimension cell must not become the string 'nan'."""
+    """A blank dimension cell must not become the string 'nan'."""
 
     def _classification(self):
         return {
@@ -73,7 +73,7 @@ class BlankDimensionCellTests(unittest.TestCase):
 
 
 class IntegerColumnTests(unittest.TestCase):
-    """BUG 2: an integral float (5.0) must collapse back to int (5)."""
+    """An integral float (5.0) must collapse back to int (5)."""
 
     def _classification(self):
         return {
@@ -121,7 +121,7 @@ class IntegerColumnTests(unittest.TestCase):
 
 
 class TextDecodeTests(unittest.TestCase):
-    """BUG 3: a CP-1252 .txt upload must decode to real characters."""
+    """A CP-1252 .txt upload must decode to real characters."""
 
     def test_cp1252_smart_quotes_decode_correctly(self):
         # 0x93/0x94 are CP-1252 curly double quotes, 0x97 is an em dash.

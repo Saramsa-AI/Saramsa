@@ -31,19 +31,14 @@ except Exception as e:
 
 # Start Celery worker as a subprocess.
 #
-# Concurrency = 1: each worker fork loads its own ~2.2 GB DeBERTa NLI model
-# (prefork pool, no shared memory). On a 16 GB App Service plan, two forks
-# OOM-SIGKILL under load (verified in prod logs 2026-05-30). Concurrency=1
-# fits one full ML task in 4-6 GB peak. Scale OUT (multiple instances)
-# rather than UP when we need genuine parallelism.
+# Concurrency = 1: one task per worker process. Scale OUT (multiple
+# instances) rather than UP when we need genuine parallelism.
 #
 # max-tasks-per-child=10: recycle the worker process every 10 tasks to
-# bound the model/Python memory leak we measured (RAM baseline grew from
-# 4 GB → 10 GB across a day of tasks before this guard).
+# bound per-process memory growth.
 #
-# prefetch-multiplier=1: only pull 1 task per worker from Redis at a time.
-# Default (4) caused tasks to sit in worker-local queues even while other
-# workers were idle, blocking the "scale out by adding instances" plan.
+# prefetch-multiplier=1: only pull 1 task per worker from Redis at a time,
+# so tasks don't sit in worker-local queues while other instances are idle.
 celery_args = [
     sys.executable, "-m", "celery", "-A", "apis", "worker",
     "--loglevel=info",

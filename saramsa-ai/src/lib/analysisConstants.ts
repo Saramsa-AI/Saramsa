@@ -1,8 +1,6 @@
 /**
  * Single source of truth for the placeholder ID convention used to mark
- * an in-flight analysis in Redux state. Eight call sites used to inline
- * the literal "analyzing_" prefix; if it ever changed by typo or rename,
- * those branches would silently break.
+ * an in-flight analysis in Redux state.
  *
  * Convention: when an upload is dispatched, frontend creates an
  * AnalysisHistoryEntry with id = `analyzing_<task_id>` and uses that
@@ -25,7 +23,7 @@ export function extractTaskIdFromPlaceholder(id: string | null | undefined): str
   return (id as string).slice(ANALYZING_PREFIX.length);
 }
 
-/** Status values used on AnalysisHistoryEntry.status — narrowed from `string`. */
+/** Status values used on AnalysisHistoryEntry.status. */
 export const HISTORY_STATUS = {
   ANALYZING: 'analyzing',
   COMPLETED: 'completed',
@@ -34,7 +32,7 @@ export const HISTORY_STATUS = {
 } as const;
 export type HistoryStatus = (typeof HISTORY_STATUS)[keyof typeof HISTORY_STATUS];
 
-/** Status values used on state.analysisStatus — already narrowed in the slice. */
+/** Status values used on state.analysisStatus. */
 export const TASK_STATUS = {
   IDLE: 'idle',
   PENDING: 'pending',
@@ -45,7 +43,6 @@ export const TASK_STATUS = {
 export type TaskStatus = (typeof TASK_STATUS)[keyof typeof TASK_STATUS];
 
 /** Backend's task-status response — what `/api/insights/task-status/<id>/` returns. */
-// FIX 3: Add 'REVOKED' to terminal statuses to handle task revocation edge case
 export const BACKEND_TERMINAL_STATUSES = new Set(['SUCCESS', 'PARTIAL', 'FAILURE', 'FAILED', 'CANCELLED', 'REVOKED']);
 
 export function isBackendTerminal(status: string | null | undefined): boolean {
@@ -60,7 +57,6 @@ export function isBackendTerminal(status: string | null | undefined): boolean {
  * Analysis Lifecycle State Machine
  *
  * Single source of truth for all analysis lifecycle states.
- * Replaces: isAnalyzing, analyzingByProject, analysisStatus, isGeneratingUserStories
  */
 
 export enum AnalysisLifecycleState {

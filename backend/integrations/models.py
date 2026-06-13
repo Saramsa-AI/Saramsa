@@ -75,11 +75,9 @@ class OrganizationInvite(TimestampedModel):
     )
     email = models.EmailField(db_index=True)
     role = models.CharField(max_length=32, default="member")
-    # `token` is the deprecated PLAINTEXT field. After migration 0006 all
-    # existing rows have token=NULL and lookups go through `token_hash`.
-    # Kept on the model (nullable) for rollback safety — if the hashing
-    # service change has to revert, old code paths can still read this
-    # column without a schema change. A follow-up PR can RemoveField it.
+    # `token` is the deprecated PLAINTEXT field. Rows have token=NULL and
+    # lookups go through `token_hash`. Kept on the model (nullable) so the
+    # column can be read without a schema change.
     token = models.CharField(max_length=128, null=True, blank=True, unique=True, db_index=True)
     # SHA-256 hex digest of the plaintext token. We NEVER store the raw
     # token at rest — invite-token leak via DB compromise would otherwise
@@ -336,9 +334,8 @@ class AsanaTaskMapping(TimestampedModel):
 
     Uniqueness on `insight` enforces one task per insight; uniqueness on
     `asana_task_gid` prevents the same Asana task being claimed by two
-    different insights. The `last_known_state_hash` enables inbound
-    reconciliation in C3 (webhook handlers compute current hash and skip
-    no-op updates)."""
+    different insights. `last_known_state_hash` records the last pushed
+    state so no-op updates can be skipped."""
 
     id = models.CharField(max_length=64, primary_key=True)
     organization = models.ForeignKey(

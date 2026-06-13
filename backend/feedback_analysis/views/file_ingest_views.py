@@ -5,7 +5,7 @@ extracts comments via :mod:`feedback_analysis.file_extractors`, then queues
 the same Celery analysis task so the frontend can poll task-status as usual.
 
 Heavy dependencies (Celery task, services package) are imported lazily so
-unit tests can patch the seams without dragging in the full ML stack.
+unit tests can patch the seams without dragging in the full service stack.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def get_cache_service():
 
 def get_process_feedback_task():
     """Return the Celery task callable. Indirection lets tests patch without
-    importing the heavy task module (which pulls in torch/transformers)."""
+    importing the heavy task module."""
     from ..services.task_service import process_feedback_task as _task
     return _task
 
@@ -188,7 +188,7 @@ class FeedbackFileIngestView(APIView):
                         # Build structured comments with dimensions
                         structured_comments, seed_values = build_structured_comments(csv_data, classification)
 
-                        # Extract plain text comments for ML processing
+                        # Extract plain text comments for processing
                         comments = [sc['text'] for sc in structured_comments]
 
                         # Extract dimensions for each comment
@@ -252,7 +252,7 @@ class FeedbackFileIngestView(APIView):
                     # Build structured comments with dimensions
                     structured_comments, seed_values = build_structured_comments(csv_data, classification)
 
-                    # Extract plain text comments for ML processing
+                    # Extract plain text comments for processing
                     comments = [sc['text'] for sc in structured_comments]
 
                     # Extract dimensions for each comment

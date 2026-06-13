@@ -60,14 +60,13 @@ export const USER_STORAGE_KEY = 'sa_user';
 const ACCESS_TOKEN_COOKIE = 'saramsa_access_token';
 const REFRESH_TOKEN_COOKIE = 'saramsa_refresh_token';
 
-// Single source of truth for the login route. 7+ places previously
-// inlined the literal '/login' — pull them into this constant so a
-// future route rename is a one-line change.
+// Single source of truth for the login route, so a route rename is a
+// one-line change.
 export const LOGIN_PATH = '/login';
 
 // localStorage keys that are auth-adjacent and should be cleared on
 // logout. Centralizing the list means new integration writes only need
-// to add their key here (instead of in 3 different cleanup handlers).
+// to add their key here.
 // Tokens (`sa_access_token`, `sa_refresh_token`) are handled separately
 // by clearTokens(); `sa_user` by setStoredUser(null).
 //
@@ -335,15 +334,11 @@ export async function refreshAccessToken(): Promise<string> {
   //   1. Returns a NEW refresh token in `data.refresh`
   //   2. Blacklists the refresh token we just used
   //
-  // Previously we only persisted the new access token and kept reusing the
-  // OLD refresh token. On the next refresh (~1 hour later when access
-  // expires again) the backend would reject the now-blacklisted refresh →
-  // user gets silently logged out. Every active user hit this exactly once
-  // per access-token lifetime (1h), seeing it as a "random session timeout".
-  //
-  // Fix: persist the rotated refresh too. Fall back to the incoming refresh
-  // token if the backend ever stops rotating (e.g., dev environment with
-  // ROTATE_REFRESH_TOKENS=False) — that keeps behavior identical to before.
+  // We must persist the rotated refresh too, otherwise the next refresh
+  // would send the now-blacklisted token and the backend would reject it,
+  // silently logging the user out. Fall back to the incoming refresh token
+  // if the backend ever stops rotating (e.g., dev environment with
+  // ROTATE_REFRESH_TOKENS=False).
   const rotatedRefreshToken: string | undefined = data.refresh;
   const refreshToPersist = rotatedRefreshToken ?? refreshToken;
 
@@ -487,11 +482,9 @@ export async function switchActiveOrganization(organizationId: string): Promise<
 }
 
 /**
- * Single source of truth for logging out. Three places used to do their
- * own version of this (auth.ts, useAuth.ts, apiRequest.ts handleAuthFailure)
- * with different localStorage cleanup lists — that drift produced bugs
- * like Azure/Jira project keys surviving logout. After Phase 2 cleanup,
- * every logout path funnels through here.
+ * Single source of truth for logging out. Every logout path funnels
+ * through here so the localStorage cleanup list can't drift between
+ * callers (which previously left Azure/Jira project keys surviving logout).
  *
  * Steps:
  *   1. Clear access + refresh tokens (localStorage + cookies)

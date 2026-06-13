@@ -1,8 +1,7 @@
 """
 Aspect Taxonomy Service - Production-grade aspect management.
 
-Replaces dynamic aspect generation with versioned, frozen taxonomies.
-Aspects are now treated as versioned artifacts that are:
+Versioned, frozen taxonomies. Aspects are treated as versioned artifacts that are:
 - Generated once per domain/project
 - Edited by users through UI
 - Passed as input to processing pipeline

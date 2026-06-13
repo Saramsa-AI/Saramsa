@@ -165,7 +165,7 @@ class TestDecodeText:
     """Tolerant decoding for CSV/JSON uploads.
 
     Spreadsheet / ITSM exports are routinely not strict UTF-8. A bare
-    ``bytes.decode("utf-8")`` used to crash the whole upload with a generic
+    ``bytes.decode("utf-8")`` would crash the whole upload with a generic
     "special character" error; ``decode_text`` must recover the real text.
     """
 
