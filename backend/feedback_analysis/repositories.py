@@ -536,6 +536,7 @@ class AnalysisRepository:
                 "id",
                 "created_at",
                 "updated_at",
+                "status",    # durable lifecycle status (partial/failed/completed)
                 "payload",   # Contains: name, counts metadata
                 "result",    # Contains: sentiment_summary, counts fallback
             )
@@ -549,6 +550,7 @@ class AnalysisRepository:
                 "id": str(obj.id),
                 "createdAt": obj.created_at.isoformat() if obj.created_at else None,
                 "updatedAt": obj.updated_at.isoformat() if obj.updated_at else None,
+                "status": obj.status or "",
                 "payload": obj.payload or {},
                 "result": obj.result or {},
             }

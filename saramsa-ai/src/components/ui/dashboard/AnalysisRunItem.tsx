@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Loader2, Pencil, Check, X, Trash2 } from 'lucide-react';
+import { Loader2, Pencil, Check, X, Trash2, RotateCw } from 'lucide-react';
 import type { AnalysisHistoryEntry } from '@/store/features/analysis/analysisSlice';
 import { useSelector } from 'react-redux';
 import type { RootState } from '@/store/store';
@@ -15,17 +15,32 @@ interface AnalysisRunItemProps {
   onRename: (id: string, name: string) => void;
   onDelete?: (id: string) => Promise<void>;
   onCancel?: (id: string, taskId: string) => Promise<void>;
+  onRetry?: (id: string) => Promise<void>;
   index: number;
   totalCount?: number;
 }
 
-export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, onCancel, index, totalCount }: AnalysisRunItemProps) {
+export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, onCancel, onRetry, index, totalCount }: AnalysisRunItemProps) {
   // NEW: Derive display state from Redux state machine instead of entry.status string
   const displayStatus = useSelector((state: RootState) => selectAnalysisDisplayStatus(state, entry.id));
 
   // Use entry.status for now (taskState selector is a stub that returns null)
   const isPending = entry.status === 'analyzing';
   const isCancelled = entry.status === 'cancelled';
+  const isPartial = entry.status === 'partial';
+  const isFailed = entry.status === 'failed';
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  const handleRetry = async (e: React.MouseEvent | React.KeyboardEvent) => {
+    e.stopPropagation();
+    if (isRetrying || !onRetry) return;
+    setIsRetrying(true);
+    try {
+      await onRetry(entry.id);
+    } finally {
+      setIsRetrying(false);
+    }
+  };
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -117,6 +132,10 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
           <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500 flex-shrink-0" />
         ) : isCancelled ? (
           <span className="w-2 h-2 rounded-full bg-muted-foreground/40 flex-shrink-0" />
+        ) : isFailed ? (
+          <span className="w-2 h-2 rounded-full bg-destructive flex-shrink-0" />
+        ) : isPartial ? (
+          <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
         ) : isActive ? (
           <span className="w-2 h-2 rounded-full bg-saramsa-brand animate-pulse flex-shrink-0" />
         ) : (
@@ -209,9 +228,28 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
       )}
 
       {/* Stats row */}
-      <div className="flex items-center gap-3 pl-4 text-xs text-muted-foreground">
+      <div className="flex items-center gap-2 pl-4 text-xs text-muted-foreground">
         {isPending ? (
           <span className="text-amber-600/70 dark:text-amber-400/70">{displayStatus}</span>
+        ) : (isPartial || isFailed) && !isEditing ? (
+          <>
+            <span className={`text-[10px] font-medium ${isFailed ? 'text-destructive' : 'text-amber-500'}`}>
+              {isFailed ? 'Failed' : 'Partially completed'}
+            </span>
+            {onRetry && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={handleRetry}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleRetry(e); }}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-saramsa-brand hover:bg-saramsa-brand/10 cursor-pointer"
+                title="Re-run this analysis"
+              >
+                {isRetrying ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCw className="w-3 h-3" />}
+                {isRetrying ? 'Retrying…' : 'Retry'}
+              </span>
+            )}
+          </>
         ) : (
           <></>
         )}

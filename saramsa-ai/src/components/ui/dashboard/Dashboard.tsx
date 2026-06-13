@@ -25,6 +25,7 @@ import {
   renameAnalysisRun,
   deleteAnalysisRun,
   cancelAnalysisTask,
+  retriggerAnalysis,
   setTaskIdForEntry,
   resolveAnalyzingTask,
   resumeInFlightTask,
@@ -1914,6 +1915,15 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
   };
 
+  const handleRetry = async (id: string) => {
+    try {
+      await dispatch(retriggerAnalysis({ analysisId: id, projectId: currentProjectId })).unwrap();
+    } catch (err: any) {
+      console.error('Failed to retrigger analysis:', err);
+      alert(typeof err === 'string' ? err : 'Failed to re-run analysis.');
+    }
+  };
+
   // Show loader while:
   // - projects are still loading (initial load only)
   // Note: We don't show full-screen loader for analysis loading anymore
@@ -2022,6 +2032,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             onRename={handleRunRename}
             onDelete={handleRunDelete}
             onCancel={handleCancelTask}
+            onRetry={handleRetry}
             projectName={selectedProjectName}
           />
 
