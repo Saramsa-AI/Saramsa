@@ -54,17 +54,9 @@ export interface InsightsPanelProps {
 /**
  * Renders the "Insights" tab body of the Dashboard.
  *
- * Extracted verbatim from Dashboard.tsx (Phase 3 refactor). Internal JSX is
- * unchanged — what was previously inlined at Dashboard.tsx:2055-2213 now
- * lives here with all required state passed as explicit props. The component
- * is intentionally "dumb": no Redux selectors, no router awareness, no async
- * fetches. All side effects stay in Dashboard.tsx so behavior is identical.
- *
- * Future cleanups (deferred):
- * - The repeated `.map((word: any) => typeof word === 'string' ? word : ...)`
- *   for word-cloud keywords could move to a shared helper.
- * - The skeleton block in the loading branch is shared shape with WorkItemsPanel
- *   — extract a `<PanelSkeleton>` if we see a third copy.
+ * The component is intentionally "dumb": no Redux selectors, no router
+ * awareness, no async fetches. All side effects stay in Dashboard.tsx and
+ * required state is passed as explicit props.
  */
 export function InsightsPanel(props: InsightsPanelProps) {
   const {

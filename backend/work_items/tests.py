@@ -1,11 +1,11 @@
 """
-Regression tests for work item / user story view fixes.
+Tests for work item / user story view behavior.
 
 Covers:
-- BUG 1/2: error and validation paths must not raise AttributeError/TypeError
-  and turn a predictable bad input into a 500.
-- BUG 3: UserStoryUpdateView must reject malformed update field values
-  (non-list work_items, non-dict payload, non-string status) before persisting.
+- Error and validation paths must not raise AttributeError/TypeError and turn
+  a predictable bad input into a 500.
+- UserStoryUpdateView must reject malformed update field values (non-list
+  work_items, non-dict payload, non-string status) before persisting.
 
 The views are invoked directly via ``as_view()`` with a force-authenticated
 request, so the tests exercise the view bodies (the code under test) without
@@ -36,8 +36,8 @@ class StandardResponseHelperTest(TestCase):
     """
     Guards the StandardResponse contract the views rely on. ``error`` requires a
     positional ``title`` (calling it with only ``detail``/``instance`` is a
-    TypeError -- the original bug), while ``validation_error`` and
-    ``internal_server_error`` supply their own titles and must not raise.
+    TypeError), while ``validation_error`` and ``internal_server_error`` supply
+    their own titles and must not raise.
     """
 
     def test_error_requires_title(self):
@@ -56,7 +56,7 @@ class StandardResponseHelperTest(TestCase):
 
 
 class WorkItemGenerationBadProjectIdTest(TestCase):
-    """BUG 2: a bad project_id (ValueError) must yield 4xx, not a 500 TypeError."""
+    """A bad project_id (ValueError) must yield 4xx, not a 500 TypeError."""
 
     def setUp(self):
         self.factory = APIRequestFactory()
@@ -87,13 +87,11 @@ class WorkItemGenerationBadProjectIdTest(TestCase):
         ):
             response = WorkItemGenerationView.as_view()(request)
 
-        # Previously StandardResponse.error(detail=...) without the required
-        # positional title raised TypeError -> 500. Must now be 400.
         self.assertEqual(response.status_code, 400)
 
 
 class UserStoryUpdateViewValidationTest(TestCase):
-    """BUG 3: malformed field values must be rejected before persisting."""
+    """Malformed field values must be rejected before persisting."""
 
     def setUp(self):
         from feedback_analysis.views.insights_views import UserStoryUpdateView

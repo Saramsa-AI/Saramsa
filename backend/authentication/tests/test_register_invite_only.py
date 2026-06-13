@@ -55,11 +55,11 @@ def _make_invite(
 ) -> OrganizationInvite:
     """Bypass-the-service invite factory used by the register flow tests.
 
-    Mirrors the production layout after migration 0006_hash_invite_tokens:
-    DB row has the SHA-256 hash in `token_hash` and the deprecated
-    plaintext `token` column nulled out. The `token` arg is still the
-    PLAINTEXT — callers pass it into the register POST as `invite_token`,
-    and the service hashes it at lookup time to match the stored hash.
+    Mirrors the production layout: the DB row has the SHA-256 hash in
+    `token_hash` and the plaintext `token` column nulled out. The `token`
+    arg is still the PLAINTEXT — callers pass it into the register POST as
+    `invite_token`, and the service hashes it at lookup time to match the
+    stored hash.
     """
     import hashlib
 
@@ -68,7 +68,7 @@ def _make_invite(
         organization=org,
         email=email.lower(),
         role=role,
-        token=None,  # post-0006: plaintext is never persisted
+        token=None,  # plaintext is never persisted
         token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
         status="pending",
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
@@ -257,7 +257,7 @@ class RegisterInviteOnlyTest(TestCase):
         self.assertEqual(invite_url, "http://example.com/register?invite=tok-123")
 
     def test_register_cannot_self_assign_admin_role(self) -> None:
-        """SECURITY regression: a registration request that smuggles in
+        """SECURITY: a registration request that smuggles in
         ``"role": "admin"`` must NOT produce an admin user. Self-assigning
         the global admin role short-circuits every permission check to
         True (privilege escalation). The created user's profile role must

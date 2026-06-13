@@ -1,9 +1,9 @@
 """
-Local ML Processing Service
+Processing Service
 
-Orchestrates the local ML pipeline:
-  1. Bi-encoder aspect classification (all-MiniLM-L6-v2 cosine similarity)
-  2. Aspect-relative sentiment (sentence-level sentiment per matched aspect)
+Orchestrates the feedback pipeline:
+  1. LLM aspect classification
+  2. Aspect-relative sentiment (per matched aspect, produced in the aspect call)
   3. Aggregation + keyword extraction
   4. Lean GPT-5-mini synthesis (aggregates + evidence samples only)
 """
@@ -118,11 +118,11 @@ class ProcessingResult:
 
 class LocalProcessingService:
     """
-    Orchestrates the local ML pipeline for feedback analysis.
+    Orchestrates the feedback analysis pipeline.
 
     Pipeline:
-      1. Bi-encoder aspect classification (all-MiniLM-L6-v2)
-      2. Aspect-relative sentiment (sentence → aspect → sentiment)
+      1. LLM aspect classification
+      2. Aspect-relative sentiment (per matched aspect)
       3. Aggregate statistics + extract keywords
       4. Lean GPT-5-mini synthesis (aggregates + evidence only)
     """
@@ -160,18 +160,18 @@ class LocalProcessingService:
         logger.info(f"Processing {len(comments)} comments with {len(aspects)} aspects (run: {run_id})")
         reset_pipeline_summary()
 
-        # Strip bracket metadata before ML processing (20-30% token reduction for NLI + sentiment)
-        # The enriched metadata is only useful for LLM narration, not local ML models.
+        # Strip bracket metadata before classification (20-30% token reduction).
+        # The enriched metadata is only useful for LLM narration.
         stripped_comments = [self._strip_bracket_metadata(c) for c in comments]
 
-        # Step 1: Aspect classification (NLI or similarity, via factory)
+        # Step 1: Aspect classification (via factory)
         with phase("aspect_classify_pass1", n_items=len(stripped_comments), n_aspects=len(aspects)):
             similarity_results = self.aspect_service.classify_aspects(
                 stripped_comments, aspects, run_id, is_cancelled=is_cancelled
             )
 
         # Step 1b: Check mapping rate and adaptive taxonomy update
-        # Phase 1+3: Locked taxonomies skip regen; partial matches use additive growth
+        # Locked taxonomies skip regen; partial matches use additive growth
         if regenerate_callback is not None:
             # Exclude errored comments — they carry no taxonomy-fit signal either way.
             scored = [r for r in similarity_results if not r.get("errored")]
@@ -189,18 +189,18 @@ class LocalProcessingService:
                     with phase("taxonomy_regen", mapped_pct=f"{mapping_rate:.1%}"):
                         new_aspects = regenerate_callback(comments, mapping_rate)
                     if new_aspects is None:
-                        # Phase 1: Locked taxonomy - don't re-run, just continue
+                        # Locked taxonomy - don't re-run, just continue
                         logger.info("🔒 Taxonomy locked; keeping original aspects (will produce limited features).")
                     elif len(new_aspects) > 0:
                         logger.info(f"✅ Got {len(new_aspects)} aspects from callback: {new_aspects[:5]}...")
                         aspects = new_aspects
 
-                        # Memory cleanup: Delete pass1 results before running pass2
-                        # pass1 results can be 2-3GB for large datasets and will be replaced anyway
+                        # Free pass1 results before pass2 — they're replaced anyway
+                        # and can be large for big datasets.
                         del similarity_results
                         logger.info("[MEMORY] Cleaned up pass1 results before pass2")
 
-                        # Re-run NLI with updated aspects
+                        # Re-run aspect classification with updated aspects
                         with phase("aspect_classify_pass2", n_items=len(stripped_comments), n_aspects=len(aspects)):
                             similarity_results = self.aspect_service.classify_aspects(
                                 stripped_comments, aspects, f"{run_id}_regen", is_cancelled=is_cancelled
@@ -229,11 +229,11 @@ class LocalProcessingService:
             logger.warning("Partial analysis: %d comment(s) failed classification", len(failed_comments))
 
         # Step 2: sentiment — produced by the LLM in the same aspect call (overall +
-        # per-aspect, with "NONE" for no opinion). No local model, no sentence-splitting.
+        # per-aspect, with "NONE" for no opinion).
         with phase("sentiment_llm", n_items=len(similarity_results)):
             combined_matches = self._apply_llm_sentiment(similarity_results)
 
-        # Step 3: aggregate + keywords (now uses per-aspect sentiment)
+        # Step 3: aggregate + keywords (uses per-aspect sentiment)
         with phase("aggregate_stats", n_aspects=len(aspects)):
             aggregated_stats = self._aggregate_results(combined_matches, aspects)
 
@@ -285,8 +285,8 @@ class LocalProcessingService:
           → "The screener is great."
 
         The bracket metadata is useful for LLM narration (helps GPT understand
-        context) but adds noise for ML models (NLI, sentiment, embeddings) that
-        work better on raw user text.
+        context) but adds noise for aspect classification, which works better on
+        raw user text.
         """
         if not text or not text.startswith("["):
             return text
@@ -303,9 +303,9 @@ class LocalProcessingService:
     def _apply_llm_sentiment(self, similarity_results: List[Dict[str, Any]]) -> List[AspectMatch]:
         """Build combined matches from sentiment the LLM produced in the aspect call.
 
-        No local model and no sentence-splitting: the LLM already judged sentiment per
-        aspect + overall. "NONE" (no opinion / operational text) maps to NEUTRAL for the
-        3-class downstream counts — honest, vs a forced positive/negative.
+        The LLM judges sentiment per aspect + overall. "NONE" (no opinion /
+        operational text) maps to NEUTRAL for the 3-class downstream counts —
+        honest, vs a forced positive/negative.
         """
         def to_result(label: str) -> SentimentResult:
             # NONE (no opinion) -> NEUTRAL for the 3-class downstream. confidence is a

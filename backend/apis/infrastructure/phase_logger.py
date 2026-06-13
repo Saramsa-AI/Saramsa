@@ -2,12 +2,10 @@
 
 Wrap any pipeline step with `phase(name, **context)` to get consistent
 entry/exit/elapsed logs. Use `Heartbeat(name)` to emit periodic "still
-alive" lines during long inner work (e.g. GPT calls, ML inference).
+alive" lines during long inner work (e.g. GPT calls).
 
-The local ML pipeline previously ran for 14 minutes with zero visibility
-into which step was active — this module fixes that. All output goes
-through the standard `apis.pipeline` logger so settings.py routes it to
-the right files.
+All output goes through the standard `apis.pipeline` logger so settings.py
+routes it to the right files.
 """
 
 import logging

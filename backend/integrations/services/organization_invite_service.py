@@ -99,7 +99,6 @@ class OrganizationInviteService:
         # Generate plaintext token + its hash. We persist ONLY the hash;
         # the plaintext is returned to the caller exactly once below for
         # delivery to the invitee (via email or shown-once URL in the UI).
-        # See migration 0006_hash_invite_tokens for why.
         token = secrets.token_urlsafe(32)
         token_hash = _hash_token(token)
         expires_at = _now_utc() + timedelta(days=INVITE_TTL_DAYS)
@@ -107,10 +106,8 @@ class OrganizationInviteService:
         existing = self._resolve_active_invite(organization_id, normalised_email)
         if existing:
             # Re-invite refreshes token + expiry + role + invited_by.
-            # Note: we overwrite `token_hash`, and explicitly set the
-            # legacy `token` column to None even though it's the same
-            # plaintext-vs-hash story — keeps the DB clean of plaintext
-            # so a future RemoveField is safe.
+            # We overwrite `token_hash` and explicitly set the legacy
+            # `token` column to None to keep the DB clean of plaintext.
             existing.token = None
             existing.token_hash = token_hash
             existing.role = role
@@ -180,8 +177,6 @@ class OrganizationInviteService:
 
         Lookup is by `token_hash` — the plaintext token is hashed first
         so we never run a query against the deprecated plaintext column.
-        Existing invite URLs in the wild still work because the same
-        plaintext token hashes to the value backfilled by migration 0006.
         """
         from ..models import Organization, OrganizationInvite
 
@@ -194,9 +189,8 @@ class OrganizationInviteService:
             raise ValueError("This invite has been revoked.")
         if invite.expires_at <= _now_utc():
             # `<=` not `<` so an invite that expires exactly at `now` is
-            # treated as expired. The strict-less-than version had a
-            # zero-width window where an invite at exactly its TTL would
-            # still validate — flagged in the auth audit.
+            # treated as expired, closing the zero-width window where an
+            # invite at precisely its TTL would still validate.
             raise ValueError("This invite has expired.")
         organization = Organization.objects.filter(id=invite.organization_id).first()
         return {
@@ -275,11 +269,10 @@ class OrganizationInviteService:
             "created_at": invite.created_at.isoformat() if invite.created_at else None,
         }
         if include_token:
-            # Prefer the one-shot plaintext stashed by create_or_get_invite
-            # — the DB row's `token` column is NULL since migration 0006.
-            # Falls back to invite.token only for backwards-compat with any
-            # legacy code path that still populated the plaintext column
-            # (post-migration this is always None for new rows).
+            # Prefer the one-shot plaintext stashed at creation time — the
+            # DB row's `token` column is NULL. Falls back to invite.token
+            # only for any legacy row that still populated the plaintext
+            # column.
             plaintext = getattr(invite, "_plaintext_token_for_response", None) or invite.token
             data["token"] = plaintext
             if organization is None:

@@ -141,13 +141,11 @@ _RESOURCE_FIELDS = {
 def _resolve_limit(limits: dict, limit_key: str) -> int:
     """Resolve a resource's limit, failing CLOSED on a missing key.
 
-    A missing limit key previously defaulted to 999_999, which silently
-    handed out an effectively-unlimited quota whenever a limit was
-    misconfigured or absent — a fail-open security hole. We now treat a
-    missing key as a zero quota (deny) so a config gap cannot be exploited
-    to bypass billing. `default_limits()` always supplies every known key,
-    so legitimate tiers are unaffected; intentional unlimited tiers must
-    set an explicit large override rather than relying on a missing key.
+    A missing limit key is treated as a zero quota (deny) so a config gap
+    cannot be exploited to bypass billing. `default_limits()` always supplies
+    every known key, so legitimate tiers are unaffected; intentional unlimited
+    tiers must set an explicit large override rather than relying on a missing
+    key.
     """
     if limit_key in limits:
         return int(limits[limit_key])

@@ -291,9 +291,9 @@ class OrganizationService:
     def delete_organization(self, organization_id: str, actor_user_id: str) -> Dict[str, Any]:
         """Hard-delete a workspace. Cascades to memberships, prompt
         overrides, projects, integrations, feedback sources via the FKs
-        already declared with on_delete=CASCADE in the org-management
-        migration. Members whose active workspace was this one will need
-        to be redirected to another org on their next request."""
+        declared with on_delete=CASCADE. Members whose active workspace
+        was this one will need to be redirected to another org on their
+        next request."""
         actor_membership = self.require_membership(organization_id, actor_user_id)
         if actor_membership.get("role") != "owner":
             raise ValueError("Only the workspace owner can delete the workspace.")
@@ -376,11 +376,10 @@ class OrganizationService:
         NULL organization_id) into `organization_id`, but only once per
         user.
 
-        Intentionally a separate, explicit call: previously this was a
-        side effect inside `get_organization_context_for_user`, which
-        meant every read of org context could trigger a write. Splitting
-        them lets read-only code paths resolve context cheaply, and
-        makes the write call site visible at the auth boundary.
+        Intentionally a separate, explicit call so reads of org context
+        never trigger a write: read-only code paths resolve context
+        cheaply, and the write call site stays visible at the auth
+        boundary.
         """
         if not organization_id:
             return

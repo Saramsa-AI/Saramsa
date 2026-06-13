@@ -1,13 +1,13 @@
 """
-Phase 4: Domain Templates Library
+Domain Templates Library
 
 Pre-built taxonomy templates for common business domains. Used to seed a new
 project's taxonomy without an LLM call (saves ~30-60s on first upload).
 
 The system identifies the domain from comments (via embedding similarity to
 template descriptions or LLM identification) and seeds the project taxonomy
-from the matching template. The taxonomy then evolves via Phase 3 additive
-growth as more data comes in.
+from the matching template. The taxonomy then evolves via additive growth as
+more data comes in.
 """
 
 from typing import Dict, List, Any, Optional, Tuple

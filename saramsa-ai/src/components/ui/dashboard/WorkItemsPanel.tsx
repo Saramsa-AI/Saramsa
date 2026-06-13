@@ -42,21 +42,9 @@ export interface WorkItemsPanelProps {
 /**
  * Renders the "Work items" tab body of the Dashboard.
  *
- * Extracted verbatim from Dashboard.tsx (Phase 2 refactor). Internal JSX
- * — including the 5-deep IIFE chain for the Jira branch — is unchanged.
- * What was previously inlined at Dashboard.tsx:2072-2325 now lives here
- * with required state passed as explicit props. Redux dispatch and the
- * specific thunks/actions used by the inline regenerate handlers are
- * passed through so the imperative side effects fire from the same code
- * path as before.
- *
- * Future cleanups (deferred):
- * - The (() => { return X; })() at line ~70 is just `X`; flatten.
- * - The Jira branch has 3 levels of nested IIFE returning JSX; could be
- *   broken into named helpers (`prepareJiraUserStories`, `renderJiraEmptyState`).
- * - Jira and Azure branches each prepare the same `userStoriesToDisplay`
- *   shape from `deepAnalysis.work_items` — extract a `buildUserStoryFromDeepAnalysis`
- *   helper used by both.
+ * Required state is passed as explicit props. Redux dispatch and the
+ * specific thunks/actions used by the inline regenerate handlers are passed
+ * through so the imperative side effects fire from this component.
  */
 export function WorkItemsPanel(props: WorkItemsPanelProps) {
   const {
@@ -78,13 +66,10 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
   } = props;
 
   // Side-effect: prime Redux's currentProjectUserStories from a fresh
-  // deepAnalysis on Jira branch. Previously this dispatch was inlined inside
-  // an IIFE that ran during render — a React anti-pattern that triggers a
-  // StrictMode warning and will become an error in a future React major.
-  // Moving it to a useEffect preserves the same end state (Redux holds the
-  // jira_user_story so navigation away preserves it) while firing after
-  // render commit. UI behavior is unchanged because the displayed list is
-  // computed locally from deepAnalysis regardless of Redux state.
+  // deepAnalysis on the Jira branch. Kept in a useEffect (rather than during
+  // render) so it fires after render commit; Redux holds the jira_user_story
+  // so navigating away preserves it. The displayed list is computed locally
+  // from deepAnalysis regardless of Redux state.
   useEffect(() => {
     if (selectedPlatform !== 'jira') return;
     const hasDeepAnalysisWorkItems = deepAnalysis?.work_items && deepAnalysis.work_items.length > 0;
@@ -157,10 +142,7 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
 
                     if (hasDeepAnalysisWorkItems) {
                       // Build the local list for display. The Redux priming
-                      // (dispatch(setCurrentProjectUserStories(...))) used to
-                      // live here as a side effect during render; it's now
-                      // moved to the useEffect at the top of this component
-                      // with the same firing condition.
+                      // happens in the useEffect at the top of this component.
                       const jiraUserStory = {
                         id: deepAnalysis.id,
                         type: deepAnalysis.type || 'user_story',

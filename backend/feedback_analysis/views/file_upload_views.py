@@ -2,7 +2,6 @@
 File Upload Views for Feedback Analysis
 
 Handles uploading and processing of feedback files (JSON, CSV).
-Moved from old uploadFile app to feedback_analysis app for better organization.
 """
 
 from datetime import datetime
@@ -281,8 +280,8 @@ class FeedbackFileUploadView(APIView):
 
             # Step 2: Resolve project-owned taxonomy (Phase-1).
             # Pass the LLM-detected feature column values as taxonomy seeds —
-            # this is what cuts the "84% unmapped" rate we kept seeing on rich
-            # CSVs whose feature_area / category column was being ignored.
+            # this keeps the unmapped rate low on rich CSVs that carry an
+            # explicit feature_area / category column.
             taxonomy, aspect_suggestions = await self._resolve_taxonomy_for_upload(
                 project_id, original_comments, seed_aspects=seed_values
             )
@@ -290,7 +289,7 @@ class FeedbackFileUploadView(APIView):
             logger.info(f"🔒 Using frozen aspect list: {frozen_aspects}")
 
             # Step 3: dispatch the heavy LLM processing to Celery and return
-            # 202 immediately. Doing the analysis inline used to push the
+            # 202 immediately. Doing the analysis inline would push the
             # request past Azure's 240s gateway timeout for a real 200-row CSV.
             # Same shape and contract as /api/insights/analyze/.
             return await self._dispatch_to_celery(
@@ -319,9 +318,9 @@ class FeedbackFileUploadView(APIView):
                                   frozen_aspects, aspect_suggestions, dimensions=None):
         """Queue the long-running analysis on Celery and return HTTP 202.
 
-        Mirrors the contract of POST /api/insights/analyze/. The synchronous
-        request used to run the LLM pipeline inline, which routinely blew
-        through Azure App Service's 240s gateway timeout for real CSVs.
+        Mirrors the contract of POST /api/insights/analyze/. Running the LLM
+        pipeline inline within the synchronous request would blow through
+        Azure App Service's 240s gateway timeout for real CSVs.
 
         The client should poll GET /api/insights/task-status/<task_id>/ for
         completion, then fetch the analysis via
@@ -413,9 +412,8 @@ class FeedbackFileUploadView(APIView):
         If no taxonomy exists, bootstrap once and persist version=1. When
         ``seed_aspects`` is provided (from the CSV column classifier — e.g.
         distinct ``feature_area`` values), those are used directly as the
-        taxonomy and we skip the GPT bootstrap call entirely. This is the
-        path that takes the unmapped rate from ~84% to single digits for
-        well-labeled CSVs.
+        taxonomy and we skip the GPT bootstrap call entirely. This keeps the
+        unmapped rate low for well-labeled CSVs.
         """
         # taxonomy_service.get_active_taxonomy / create_initial_taxonomy hit
         # the Django ORM through the taxonomy repository. The post() handler

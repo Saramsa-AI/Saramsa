@@ -1,5 +1,5 @@
 /**
- * CLEAN STATE MANAGEMENT - Version 2.0
+ * Analysis state management.
  *
  * Principles:
  * 1. Backend is the ONLY source of truth
@@ -55,7 +55,7 @@ interface AnalysisState {
   // Project context
   projectId: string | null;
 
-  // BACKWARD COMPATIBILITY - for components not yet migrated
+  // Legacy fields consumed by components that read these directly.
   analysisData: AnalysisData | null;
   deepAnalysis: any | null;
   loadedComments: string[] | null;
@@ -90,8 +90,7 @@ const initialState: AnalysisState = {
 // ============================================================================
 
 /**
- * Poll task status until completion and fetch the analysis result
- * This is the critical missing piece - without it, uploads just hang!
+ * Poll task status until completion and fetch the analysis result.
  */
 async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -611,7 +610,7 @@ const analysisSlice = createSlice({
 
       state.selectedAnalysisData = normalizedData;
 
-      // BACKWARD COMPATIBILITY - populate old fields for components not yet migrated
+      // Populate legacy fields for components that read these directly.
       state.analysisData = normalizedData;
       state.deepAnalysis = (normalizedData as any)?.userStories ?? null;
       state.loadedComments = (normalizedData as any)?.comments ?? null;
@@ -758,26 +757,25 @@ export const selectSelectedAnalysisLoading = (state: RootState) => state.analysi
 export const selectCurrentTaskStatus = (state: RootState) => state.analysis.currentTaskStatus;
 
 // ============================================================================
-// BACKWARD COMPATIBILITY SHIMS
-// These exist to prevent build errors during migration
+// COMPATIBILITY ALIASES
 // ============================================================================
 
-// Backward compatibility - map old action names to new ones
+// Aliases mapping legacy action names to the current actions.
 export const prependToHistory = prependToHistoryAction;
 export const removeFromHistory = removeFromHistoryAction;
 export const setAnalysisData = setAnalysisDataAction;
 export const setDeepAnalysis = setDeepAnalysisAction;
 export const setLoadedComments = setLoadedCommentsAction;
 
-// Resolve a stale "analyzing" placeholder to its terminal state (real reducer).
+// Resolve a stale "analyzing" placeholder to its terminal state.
 export const resolveAnalyzingTask = resolveAnalyzingTaskAction;
 
-// Restored real reducers (placeholder row management).
+// Placeholder row management.
 export const setTaskIdForEntry = setTaskIdForEntryAction;
 export const replaceInHistory = replaceInHistoryAction;
 
-// Clears the displayed analysis (not the history). Real reducer — see
-// clearAnalysisDataAction. The optional arg is ignored; kept for call-site compat.
+// Clears the displayed analysis (not the history). See clearAnalysisDataAction.
+// The optional arg is ignored; kept for call-site compat.
 export const clearAnalysisData = (_params?: any) => clearAnalysisDataAction();
 export const clearError = (_params?: any) => ({ type: 'analysis/clearError' });
 
@@ -933,8 +931,7 @@ export const retriggerAnalysis = createAsyncThunk<
 /**
  * Analyze pasted/loaded comments (the "Analyze" button path, distinct from file
  * upload which uses ingestFile). POSTs the comments, then polls to completion.
- * Restored from the pre-v2 slice; the component swaps its placeholder via
- * setTaskIdForEntry/replaceInHistory.
+ * The component swaps its placeholder via setTaskIdForEntry/replaceInHistory.
  */
 export const analyzeComments = createAsyncThunk<
   any,
@@ -965,8 +962,8 @@ export const analyzeComments = createAsyncThunk<
 
 /**
  * Generate work items / user stories from an analysis (the "Generate" button).
- * Restored from the pre-v2 slice. `platform` is the work-item provider
- * (azure/jira/asana/linear). Returns the work-items payload the panel renders.
+ * `platform` is the work-item provider (azure/jira/asana/linear). Returns the
+ * work-items payload the panel renders.
  */
 export const generateUserStories = createAsyncThunk<
   any,
@@ -1011,7 +1008,7 @@ export const generateUserStories = createAsyncThunk<
 
 /**
  * Submit/push generated work items to the external tracker (Jira/Azure/Asana/
- * Linear). Restored from the pre-v2 slice. Returns the submission response.
+ * Linear). Returns the submission response.
  */
 export const submitUserStories = createAsyncThunk<
   any,
@@ -1059,9 +1056,7 @@ export const cancelAnalysisTask = createAsyncThunk<
   }
 });
 
-// Backward compatibility wrappers
-// Old API: deleteAnalysisRun(id: string)
-// New API: deleteAnalysis({ analysisId, projectId })
+// Wraps deleteAnalysis({ analysisId, projectId }) with a single-id signature.
 export const deleteAnalysisRun = createAsyncThunk<
   { deletedId: string; projectId: string },
   string,
@@ -1092,7 +1087,7 @@ export const deleteAnalysisRun = createAsyncThunk<
   }
 );
 
-// Alias rename function (it has the same signature so simple alias works)
+// Alias for rename (same signature).
 export const renameAnalysisRun = renameAnalysis;
 
 // Real selectors for UI state
@@ -1130,13 +1125,13 @@ export const selectAnalysisDisplayStatus = (state: { analysis: AnalysisState }, 
   return 'Processing...';
 };
 
-// v2 has no per-analysis "task" object; this slot is unused by consumers and
+// No per-analysis "task" object exists; this slot is unused by consumers and
 // kept only to satisfy the legacy signature.
 export const selectTaskState = (_state: { analysis: AnalysisState }, _analysisId: string | null) => null;
 
-// Map the flat v2 task status to the lifecycle enum. v2 does not track the
-// granular backend phases (queued/synthesizing/generating_workitems), so this
-// is a coarse mapping: it drives the progress UI while an analysis is active.
+// Map the flat task status to the lifecycle enum. The granular backend phases
+// (queued/synthesizing/generating_workitems) are not tracked, so this is a
+// coarse mapping: it drives the progress UI while an analysis is active.
 export const selectAnalysisLifecycleState = (
   state: { analysis: AnalysisState },
   analysisId: string | null,

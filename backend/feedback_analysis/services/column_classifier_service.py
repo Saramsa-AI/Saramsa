@@ -1,10 +1,9 @@
 """
 LLM-based CSV column classifier.
 
-Replaces the static "look for a column named comment/feedback/text/..." heuristic
-in file_upload_views.py that silently fell back to the first column when no match
-was found — which produced false-positive "non-English" rejections on CSVs whose
-text column had an unrecognized name (e.g. ``feedback_text``).
+Identifies the free-form text column in an uploaded CSV without relying on a
+fixed set of column names, avoiding false-positive "non-English" rejections on
+CSVs whose text column has an unrecognized name (e.g. ``feedback_text``).
 
 One LLM call per uploaded file. Given column headers and a few sample rows, the
 model labels each column as:

@@ -168,10 +168,10 @@ class TaskService:
     
     def _process_with_local_pipeline(self, comments, company_name, user_id_str, project_id, analysis_id, suggested_aspects=None, dimensions=None, force_regenerate=False):
         """
-        Process feedback using the local ML pipeline.
-        
-        This method uses local models for NLI aspect classification and sentiment analysis,
-        with a single GPT call for final synthesis.
+        Process feedback using the analysis pipeline.
+
+        Uses LLM aspect classification and sentiment, with a single GPT call for
+        final synthesis.
         """
         logger.info("🤖 Processing with Local ML Pipeline")
         
@@ -195,8 +195,8 @@ class TaskService:
         # Build cooperative cancellation checker (Windows solo pool ignores SIGTERM)
         is_cancelled = self._build_cancel_checker(analysis_id)
 
-        # Adaptive taxonomy callback. The mapping rate from the first NLI pass
-        # decides what we do; the user never has to set a flag.
+        # Adaptive taxonomy callback. The mapping rate from the first aspect
+        # classification pass decides what we do; the user never has to set a flag.
         #
         #   mapping >= 70%  -> healthy, do nothing
         #   30-70%          -> additive growth (extend with new aspects)
@@ -289,12 +289,10 @@ class TaskService:
                     f"💾 Regenerated taxonomy. Domain: '{current_domain}' → '{new_domain}'. "
                     f"Source: {source}. Reason: {bypass_reason}."
                 )
-                # BUG 2 fix: explicitly arm the cooldown on the freshly created
-                # taxonomy so a full regeneration always damps the next adapt
-                # attempt. This makes the cooldown contract explicit at the
-                # regen call site rather than relying solely on the implicit
-                # stamp inside create_initial_taxonomy, and gives
-                # record_full_regeneration a real caller.
+                # Explicitly arm the cooldown on the freshly created taxonomy so a
+                # full regeneration always damps the next adapt attempt. Makes the
+                # cooldown contract explicit at the regen call site rather than
+                # relying solely on the implicit stamp inside create_initial_taxonomy.
                 if created:
                     taxonomy_service.record_full_regeneration(project_id, created)
             except Exception as e:
@@ -399,8 +397,8 @@ class TaskService:
         The celery_ops cancel endpoint sets ``saramsa:cancelled:<task_id>``
         in Redis.  Because we may not know the Celery task_id at this level
         we also check by analysis_id.  The callable is cheap (single Redis
-        GET) and is called between NLI batches for cooperative cancellation
-        on Windows where SIGTERM is ignored.
+        GET) and is called between classification batches for cooperative
+        cancellation on Windows where SIGTERM is ignored.
         """
         cache = get_cache_service()
 
@@ -429,7 +427,7 @@ class TaskService:
         """
         logger.info("🔄 Processing with LLM-based chunking (legacy method)")
         
-        # 1. Generate aspect suggestions if not provided (Step 2 of workflow)
+        # 1. Generate aspect suggestions if not provided
         taxonomy, resolved_aspects = self._resolve_taxonomy(comments, project_id, suggested_aspects)
         
         # 2. Process with token-based batching (pass comments list directly to avoid newline-split issues)
@@ -545,8 +543,8 @@ class TaskService:
         Resolve project-owned taxonomy (adaptive multi-domain system).
 
         Logic:
-        1. If project has an active taxonomy → use it (Phase 1 lock-respecting)
-        2. Otherwise, try Phase 4 template-based seeding (fast, free)
+        1. If project has an active taxonomy → use it (lock-respecting)
+        2. Otherwise, try template-based seeding (fast, free)
         3. Fall back to LLM-based aspect suggestion (slow, but accurate)
         """
         from .domain_templates import detect_domain_from_comments, get_template_aspects
@@ -577,7 +575,7 @@ class TaskService:
                 taxonomy_service.increment_upload_counter(project_id, existing)
                 return existing, aspects
 
-        # Phase 4: Try domain template detection (fast, no LLM cost)
+        # Try domain template detection (fast, no LLM cost)
         if comments and len(comments) >= 5:
             detected = detect_domain_from_comments(comments, top_n=1)
             if detected and detected[0][1] >= 0.15:  # At least 15% keywords matched
@@ -646,11 +644,11 @@ class TaskService:
             conf_map = {"HIGH": 0.9, "MEDIUM": 0.6, "LOW": 0.3}
             for item in extracted_comments:
                 aspects = item.get("aspects") or []
-                # BUG 3 fix: the pipeline uses the sentinel ["UNMAPPED"] (not an
-                # empty list) for comments that matched no real aspect. Treat
-                # that sentinel as unmapped and exclude it from the mapped-aspect
-                # count so avg-aspects isn't inflated and broken taxonomies are
-                # visible to _is_healthy_metrics.
+                # The pipeline uses the sentinel ["UNMAPPED"] (not an empty list)
+                # for comments that matched no real aspect. Treat that sentinel as
+                # unmapped and exclude it from the mapped-aspect count so avg-aspects
+                # isn't inflated and broken taxonomies are visible to
+                # _is_healthy_metrics.
                 mapped_aspects = [a for a in aspects if str(a).strip().upper() != "UNMAPPED"]
                 if not mapped_aspects:
                     unmapped_count += 1
@@ -1059,7 +1057,7 @@ def process_feedback_task(comments, company_name, user_id_str, project_id, analy
         project_id: Project ID string
         suggested_aspects: Optional list of frozen aspects (if None, will generate in background task)
         dimensions: Optional list of dimension dicts per comment (structured-dimensions feature)
-        force_regenerate: If True, override locked taxonomy and force regeneration (Phase 1)
+        force_regenerate: If True, override locked taxonomy and force regeneration
     """
     task_service = get_task_service()
     task_id = getattr(current_task.request, "id", None)

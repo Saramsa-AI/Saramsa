@@ -1,5 +1,5 @@
 """
-Taxonomy service for Phase-1: project-owned, versioned taxonomy.
+Taxonomy service: project-owned, versioned taxonomy.
 
 Rules:
 - Exactly ONE active taxonomy per project.
@@ -79,12 +79,11 @@ class TaxonomyService:
         # first taxonomy for a project doesn't enter cooldown on creation.
         regen_now = now if source in ("auto_regenerate", "user_forced") else None
 
-        # BUG 4 mitigation (code-level, no schema change): create the new active
-        # row and archive prior actives inside ONE transaction, taking a row
-        # lock on the project's existing taxonomies so concurrent uploads for
-        # the same project can't interleave and leave two status="active" rows.
-        # select_for_update() is a no-op on sqlite (tests) but serializes on
-        # Postgres, which is where the race actually bites.
+        # Create the new active row and archive prior actives inside ONE
+        # transaction, taking a row lock on the project's existing taxonomies so
+        # concurrent uploads for the same project can't interleave and leave two
+        # status="active" rows. select_for_update() is a no-op on sqlite (tests)
+        # but serializes on Postgres, which is where the race actually bites.
         with transaction.atomic():
             self._lock_project_taxonomies(project_id)
             next_version = max(1, self.taxonomy_repo.get_latest_version(project_id) + 1)
@@ -132,7 +131,7 @@ class TaxonomyService:
                     "key": TaxonomyService._normalize_aspect_key(a),
                     "label": str(a),
                     "synonyms": [],
-                    "usage_count": 0,  # Phase 3: track aspect usage
+                    "usage_count": 0,  # track aspect usage
                     "last_used_at": None,
                 }
                 for a in aspects
@@ -160,7 +159,7 @@ class TaxonomyService:
 
     def add_aspects_to_taxonomy(self, project_id: str, taxonomy: Dict[str, Any],
                                  new_aspects: List[str]) -> Dict[str, Any]:
-        """Phase 3: Additive growth - add new aspects to existing taxonomy without replacing."""
+        """Additive growth - add new aspects to existing taxonomy without replacing."""
         existing_keys = {a.get("key") for a in taxonomy.get("aspects", []) if isinstance(a, dict)}
         now = datetime.now(timezone.utc).isoformat()
 
@@ -196,7 +195,7 @@ class TaxonomyService:
         return taxonomy
 
     def update_aspect_usage(self, project_id: str, taxonomy: Dict[str, Any], used_aspects: List[str]) -> None:
-        """Phase 3: Track which aspects were used in this analysis."""
+        """Track which aspects were used in this analysis."""
         if not taxonomy or not used_aspects:
             return
         used_keys = {self._normalize_aspect_key(a) for a in used_aspects}
@@ -346,11 +345,8 @@ class TaxonomyService:
     def increment_upload_counter(self, project_id: str, taxonomy: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Bump uploads_since_regen so the cooldown's upload gate can clear.
 
-        BUG 1 fix: previously this incremented a throwaway ``taxonomy.copy()``
-        and returned None, so the caller kept the pre-increment dict and the
-        cooldown gate saw a stale counter every run. Now it reads the
-        authoritative persisted counter, increments it, persists, AND mutates
-        the caller's ``taxonomy`` dict in place (also returning it) so the
+        Reads the authoritative persisted counter, increments it, persists, AND
+        mutates the caller's ``taxonomy`` dict in place (also returning it) so the
         regen decision downstream sees the fresh, incremented value.
         """
         if not taxonomy:

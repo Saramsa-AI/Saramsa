@@ -80,7 +80,7 @@ class FilteredAnalysisView(APIView):
             filtered_comments = [comments[i] for i in filtered_indices if i < len(comments)]
 
             # Recalculate feature sentiments based on filtered comments
-            # For now, just return counts - full recalculation would require re-running NLI
+            # For now, just return counts - full recalculation would require re-analysis
             result = analysis.result or {}
             features = result.get('features', [])
 
