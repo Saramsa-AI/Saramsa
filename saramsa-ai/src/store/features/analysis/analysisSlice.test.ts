@@ -1,4 +1,5 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest'
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import { configureStore } from '@reduxjs/toolkit'
 
 // apiRequest is the only side-effecting dependency the tested thunks use.
 vi.mock('@/lib/apiRequest', () => ({ apiRequest: vi.fn() }))
@@ -11,6 +12,10 @@ import analysisReducer, {
   cancelAnalysisTask,
   generateUserStories,
   submitUserStories,
+  analyzeComments,
+  retriggerAnalysis,
+  resumeInFlightTask,
+  ingestFile,
 } from './analysisSlice'
 
 // Full initial state (reducer with unknown action), to spread + override.
@@ -112,5 +117,117 @@ describe('analysisSlice thunks (restored)', () => {
     const res: any = await invoke(generateUserStories({ analysisData: {}, comments: [], platform: 'jira' }))
     expect(res.type).toContain('/rejected')
     expect(res.payload).toBe('bad input')
+  })
+})
+
+// The polling thunks go through waitForAnalysisTask (setInterval). We drive them
+// with a real store (so nested dispatches like fetchAnalysisHistory run) + fake
+// timers, and route apiRequest by URL.
+describe('analysisSlice polling thunks', () => {
+  const makeStore = () => configureStore({ reducer: { analysis: analysisReducer } })
+
+  // Match apiRequest(method, url, ...) by URL substring → response.
+  const route = (handlers: Array<[string, any]>) => {
+    ;(apiRequest as any).mockImplementation((_method: string, url: string) => {
+      for (const [pattern, resp] of handlers) {
+        if (url.includes(pattern)) return Promise.resolve(resp)
+      }
+      return Promise.resolve({ data: { data: {} } })
+    })
+  }
+
+  beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  test('analyzeComments POSTs /analyze/, polls to SUCCESS, resolves with the insight', async () => {
+    route([
+      ['/insights/analyze/', { data: { data: { task_id: 'task-1' } } }],
+      ['/insights/task-status/', { data: { data: { status: 'SUCCESS', result: { insight_id: 'insight_1' } } } }],
+      ['/feedback/analysis/', { data: { data: { id: 'insight_1', analysisData: { x: 1 } } } }],
+    ])
+    const store = makeStore()
+    const p = store.dispatch(analyzeComments({ comments: ['a'], projectId: 'p1' }) as any)
+    await vi.advanceTimersByTimeAsync(2000)
+    const res: any = await p
+    expect(res.type).toContain('/fulfilled')
+    expect(res.payload.id).toBe('insight_1')
+    expect(res.payload.partial).toBe(false)
+    expect(apiRequest).toHaveBeenCalledWith('post', '/insights/analyze/', expect.objectContaining({ comments: ['a'], project_id: 'p1' }), true, false)
+  })
+
+  test('waitForAnalysisTask treats PARTIAL as terminal (no 30-min hang)', async () => {
+    route([
+      ['/insights/analyze/', { data: { data: { task_id: 'task-2' } } }],
+      ['/insights/task-status/', { data: { data: { status: 'PARTIAL', result: { insight_id: 'insight_2' } } } }],
+      ['/feedback/analysis/', { data: { data: { id: 'insight_2' } } }],
+    ])
+    const store = makeStore()
+    const p = store.dispatch(analyzeComments({ comments: ['a'] }) as any)
+    await vi.advanceTimersByTimeAsync(2000)
+    const res: any = await p
+    expect(res.type).toContain('/fulfilled')
+    expect(res.payload.partial).toBe(true)
+  })
+
+  test('analyzeComments rejects when the task FAILS', async () => {
+    route([
+      ['/insights/analyze/', { data: { data: { task_id: 'task-3' } } }],
+      ['/insights/task-status/', { data: { data: { status: 'FAILED', error: 'kaboom' } } }],
+    ])
+    const store = makeStore()
+    const p = store.dispatch(analyzeComments({ comments: ['a'] }) as any)
+    await vi.advanceTimersByTimeAsync(2000)
+    const res: any = await p
+    expect(res.type).toContain('/rejected')
+    expect(res.payload).toContain('kaboom')
+  })
+
+  test('retriggerAnalysis POSTs retrigger, polls, refreshes history, selects the run', async () => {
+    route([
+      ['/retrigger/', { data: { data: { task_id: 'task-r' } } }],
+      ['/insights/task-status/', { data: { data: { status: 'SUCCESS', result: { insight_id: 'insight_r' } } } }],
+      ['/feedback/analysis/', { data: { data: { id: 'insight_r' } } }],
+      ['/feedback/history/list/', { data: { data: { analyses: [{ id: 'insight_r', status: 'completed', created_at: '' }] } } }],
+    ])
+    const store = makeStore()
+    const p = store.dispatch(retriggerAnalysis({ analysisId: 'insight_r', projectId: 'p1' }) as any)
+    await vi.advanceTimersByTimeAsync(2000)
+    const res: any = await p
+    expect(res.type).toContain('/fulfilled')
+    expect(apiRequest).toHaveBeenCalledWith('post', '/insights/analyses/insight_r/retrigger/', undefined, true)
+    expect(store.getState().analysis.selectedAnalysisId).toBe('insight_r')
+    expect(store.getState().analysis.analysisHistory.some(e => e.id === 'insight_r')).toBe(true)
+  })
+
+  test('ingestFile POSTs /ingest/ (multipart), polls, refreshes history', async () => {
+    route([
+      ['/insights/ingest/', { data: { data: { task_id: 'task-i', comments: ['c1'] } } }],
+      ['/insights/task-status/', { data: { data: { status: 'SUCCESS', result: { insight_id: 'insight_i' } } } }],
+      ['/feedback/analysis/', { data: { data: { id: 'insight_i' } } }],
+      ['/feedback/history/list/', { data: { data: { analyses: [] } } }],
+    ])
+    const store = makeStore()
+    const file = new File(['x'], 'f.csv', { type: 'text/csv' })
+    const p = store.dispatch(ingestFile({ file, projectId: 'p1' }) as any)
+    await vi.advanceTimersByTimeAsync(2000)
+    const res: any = await p
+    expect(res.type).toContain('/fulfilled')
+    expect(res.payload.id).toBe('insight_i')
+    expect(apiRequest).toHaveBeenCalledWith('post', '/insights/ingest/', expect.any(FormData), true, true)
+  })
+
+  test('resumeInFlightTask polls an existing task to completion + refreshes history', async () => {
+    route([
+      ['/insights/task-status/', { data: { data: { status: 'SUCCESS', result: { insight_id: 'insight_z' } } } }],
+      ['/feedback/analysis/', { data: { data: { id: 'insight_z' } } }],
+      ['/feedback/history/list/', { data: { data: { analyses: [] } } }],
+    ])
+    const store = makeStore()
+    const p = store.dispatch(resumeInFlightTask({ taskId: 'task-z', projectId: 'p1' }) as any)
+    await vi.advanceTimersByTimeAsync(2000)
+    const res: any = await p
+    expect(res.type).toContain('/fulfilled')
+    expect(res.payload.id).toBe('insight_z')
+    expect(store.getState().analysis.selectedAnalysisId).toBe('insight_z')
   })
 })
