@@ -811,7 +811,10 @@ export const retriggerAnalysis = createAsyncThunk<
     const stateProjectId = state?.analysis?.projectId || projectId;
     if (stateProjectId) {
       await dispatch(fetchAnalysisHistory({ projectId: stateProjectId })).unwrap();
-      if (result?.id) {
+      // Only auto-select a real row id. The cache-evicted PARTIAL fallback yields a
+      // synthetic `analysis_<ts>` id that isn't in the refreshed history; selecting
+      // it would highlight nothing — let the refreshed list stand instead.
+      if (result?.id && !String(result.id).startsWith('analysis_')) {
         dispatch(setSelectedAnalysisId(result.id));
       }
     }

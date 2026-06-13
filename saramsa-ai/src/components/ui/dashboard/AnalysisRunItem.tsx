@@ -241,7 +241,7 @@ export function AnalysisRunItem({ entry, isActive, onClick, onRename, onDelete, 
                 role="button"
                 tabIndex={0}
                 onClick={handleRetry}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleRetry(e); }}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleRetry(e); }}
                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-saramsa-brand hover:bg-saramsa-brand/10 cursor-pointer"
                 title="Re-run this analysis"
               >
