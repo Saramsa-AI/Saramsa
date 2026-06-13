@@ -571,6 +571,14 @@ const analysisSlice = createSlice({
       state.deepAnalysis = null;
       state.loadedComments = null;
     },
+
+    // Clear all analysis error state (e.g. when dismissing an error banner or
+    // before starting a new run).
+    clearErrorAction: (state) => {
+      state.selectedAnalysisError = null;
+      state.historyError = null;
+      state.currentTaskError = null;
+    },
   },
 
   extraReducers: (builder) => {
@@ -741,6 +749,7 @@ export const {
   setLoadedCommentsAction,
   setGeneratingWorkItemsAction,
   clearAnalysisDataAction,
+  clearErrorAction,
 } = analysisSlice.actions;
 
 export default analysisSlice.reducer;
@@ -777,7 +786,8 @@ export const replaceInHistory = replaceInHistoryAction;
 // Clears the displayed analysis (not the history). See clearAnalysisDataAction.
 // The optional arg is ignored; kept for call-site compat.
 export const clearAnalysisData = (_params?: any) => clearAnalysisDataAction();
-export const clearError = (_params?: any) => ({ type: 'analysis/clearError' });
+// Clears analysis error state. See clearErrorAction.
+export const clearError = (_params?: any) => clearErrorAction();
 
 /**
  * Re-attach to an in-flight analysis task on cold mount (the hydration sweeper
@@ -803,16 +813,6 @@ export const resumeInFlightTask = createAsyncThunk<
   } catch (err: any) {
     return rejectWithValue(err?.message || 'Failed to resume task.');
   }
-});
-
-export const getConsolidatedDashboardData = createAsyncThunk('analysis/getConsolidatedDashboardData', async (_projectId?: string) => {
-  console.warn('[DEPRECATED] getConsolidatedDashboardData called - needs migration');
-  return null;
-});
-
-export const getLatestAnalysis = createAsyncThunk('analysis/getLatestAnalysis', async (_projectId?: string) => {
-  console.warn('[DEPRECATED] getLatestAnalysis called - needs migration');
-  return null;
 });
 
 export const ingestFile = createAsyncThunk<
@@ -1125,10 +1125,6 @@ export const selectAnalysisDisplayStatus = (state: { analysis: AnalysisState }, 
   return 'Processing...';
 };
 
-// No per-analysis "task" object exists; this slot is unused by consumers and
-// kept only to satisfy the legacy signature.
-export const selectTaskState = (_state: { analysis: AnalysisState }, _analysisId: string | null) => null;
-
 // Map the flat task status to the lifecycle enum. The granular backend phases
 // (queued/synthesizing/generating_workitems) are not tracked, so this is a
 // coarse mapping: it drives the progress UI while an analysis is active.
@@ -1150,16 +1146,6 @@ export const selectAnalysisLifecycleState = (
     default:
       return AnalysisLifecycleState.IDLE;
   }
-};
-
-// True when any analysis is uploading/analyzing or an "analyzing" placeholder
-// is present in history (mirrors selectIsProjectAnalyzing, project-agnostic).
-export const selectIsAnyAnalysisRunning = (state: { analysis: AnalysisState }) => {
-  const taskStatus = state.analysis.currentTaskStatus;
-  if (taskStatus === 'uploading' || taskStatus === 'analyzing') return true;
-  return state.analysis.analysisHistory.some(
-    entry => entry.id.startsWith('analyzing_') || entry.status === 'analyzing'
-  );
 };
 
 export const selectIsGeneratingWorkItems = (state?: { analysis: AnalysisState }) =>

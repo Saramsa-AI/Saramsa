@@ -6,7 +6,7 @@ import { Loader2, Pencil, Check, X, Trash2, RotateCw } from 'lucide-react';
 import type { AnalysisHistoryEntry } from '@/store/features/analysis/analysisSlice';
 import { useSelector } from 'react-redux';
 import type { RootState } from '@/store/store';
-import { selectTaskState, selectAnalysisDisplayStatus } from '@/store/features/analysis/analysisSlice';
+import { selectAnalysisDisplayStatus } from '@/store/features/analysis/analysisSlice';
 
 interface AnalysisRunItemProps {
   entry: AnalysisHistoryEntry;

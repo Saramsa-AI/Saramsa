@@ -12,7 +12,6 @@ import {
 import {
   fetchAnalysisHistory,
   fetchAnalysisById,
-  getLatestAnalysis,
   pollTaskStatus,
   prependToHistory,
   removeFromHistory,
@@ -223,7 +222,6 @@ export function SlackChannelPanel({
         dispatch(removeFromHistory(tempId));
       }
       dispatch(fetchFeedbackSources({ projectId }));
-      dispatch(getLatestAnalysis(projectId));
       dispatch(fetchAnalysisHistory({ projectId }));
       if (typeof window !== "undefined") {
         const target = document.getElementById("analysis-results-section");
