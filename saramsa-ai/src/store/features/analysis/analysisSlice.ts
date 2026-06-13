@@ -974,6 +974,7 @@ export const generateUserStories = createAsyncThunk<
     } else if (status === 401) errorMessage = apiDetail || 'Authentication required. Please login again.';
     else if (status === 400) errorMessage = body?.error || apiDetail || 'Invalid input data.';
     else if (status === 429) errorMessage = apiDetail || 'Quota exceeded.';
+    else if (status === 503) errorMessage = apiDetail || 'Service unavailable. Please try again later.';
     else if (status && status >= 500) errorMessage = apiDetail || 'Server error. Please try again later.';
     else if (err.message) errorMessage = err.message;
     return rejectWithValue(errorMessage);

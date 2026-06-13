@@ -296,8 +296,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             task_id: tid,
           }));
           dispatch(setSelectedAnalysisId(tempId));
-          // Re-attach to the running task; pending/fulfilled/rejected wired in
-          // the slice's extraReducers will drive isAnalyzing + status forward.
+          // Re-attach to the running task: resumeInFlightTask re-polls to
+          // completion then refreshes history (which replaces the placeholder
+          // row); the "analyzing" status row drives the spinner meanwhile.
           dispatch(resumeInFlightTask({ taskId: tid, projectId: currentProjectId }));
         }
       } catch {
