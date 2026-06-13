@@ -14,6 +14,7 @@ import { createSlice, PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
 import type { AnalysisData } from '@/types/analysis';
 import type { RootState } from '@/store/store';
+import { AnalysisLifecycleState } from '@/lib/analysisConstants';
 
 // ============================================================================
 // TYPES
@@ -48,6 +49,9 @@ interface AnalysisState {
   currentTaskStatus: 'idle' | 'uploading' | 'analyzing' | 'completed' | 'failed';
   currentTaskError: string | null;
 
+  // Whether a work-item (user-story) generation request is in flight
+  isGeneratingWorkItems: boolean;
+
   // Project context
   projectId: string | null;
 
@@ -70,6 +74,8 @@ const initialState: AnalysisState = {
   currentTaskId: null,
   currentTaskStatus: 'idle',
   currentTaskError: null,
+
+  isGeneratingWorkItems: false,
 
   projectId: null,
 
@@ -466,6 +472,50 @@ const analysisSlice = createSlice({
       state.analysisHistory = state.analysisHistory.filter(e => e.id !== action.payload);
     },
 
+    // Resolve an "analyzing" placeholder to a terminal state (cancelled / completed
+    // / failed). Used by the hydration sweeper and cancelAnalysisTask. Maps onto the
+    // flat v2 state: patch the placeholder row, swap its id to the real insight id
+    // when known, release the selection, and clear the current-task tracking.
+    resolveAnalyzingTaskAction: (
+      state,
+      action: PayloadAction<{ placeholderId?: string; taskId?: string; historyStatus?: string; insightId?: string | null }>
+    ) => {
+      const { placeholderId, taskId, historyStatus, insightId } = action.payload || {};
+      if (placeholderId) {
+        const row = state.analysisHistory.find(e => e.id === placeholderId);
+        if (row) {
+          if (historyStatus) row.status = historyStatus;
+          if (insightId) row.id = insightId;
+        }
+        if (state.selectedAnalysisId === placeholderId) {
+          state.selectedAnalysisId = insightId ?? null;
+        }
+      }
+      if (taskId && state.currentTaskId === taskId) {
+        state.currentTaskId = null;
+        state.currentTaskStatus = 'idle';
+      }
+    },
+
+    // Swap a history row (e.g. replace an "analyzing" placeholder with the real
+    // completed run). Used by the analyzeComments result handler.
+    replaceInHistoryAction: (state, action: PayloadAction<{ oldId: string; entry: AnalysisHistoryEntry }>) => {
+      const idx = state.analysisHistory.findIndex(e => e.id === action.payload.oldId);
+      if (idx >= 0) {
+        state.analysisHistory[idx] = action.payload.entry;
+      } else {
+        state.analysisHistory.unshift(action.payload.entry);
+      }
+    },
+
+    // Attach the real Celery task id to a placeholder row (so Cancel can target it).
+    setTaskIdForEntryAction: (state, action: PayloadAction<{ tempId: string; taskId: string }>) => {
+      const entry = state.analysisHistory.find(e => e.id === action.payload.tempId);
+      if (entry) {
+        entry.task_id = action.payload.taskId;
+      }
+    },
+
     // Reset entire state
     resetAnalysisState: () => {
       console.log(`[reset] Resetting all state`);
@@ -505,6 +555,22 @@ const analysisSlice = createSlice({
     setLoadedCommentsAction: (state, action: PayloadAction<string[] | null>) => {
       console.log(`[setLoadedComments] Setting ${action.payload?.length || 0} comments`);
       state.loadedComments = action.payload;
+    },
+
+    // Track in-flight work-item (user-story) generation so the UI can show a loader.
+    setGeneratingWorkItemsAction: (state, action: PayloadAction<boolean>) => {
+      state.isGeneratingWorkItems = action.payload;
+    },
+
+    // Clear the currently-displayed analysis WITHOUT touching the history list.
+    // Used on project switch / unmount to prevent a flash of the previous
+    // project's analysis. Deliberately leaves analysisHistory intact.
+    clearAnalysisDataAction: (state) => {
+      state.selectedAnalysisData = null;
+      state.selectedAnalysisError = null;
+      state.analysisData = null;
+      state.deepAnalysis = null;
+      state.loadedComments = null;
     },
   },
 
@@ -667,10 +733,15 @@ export const {
   clearCurrentTask,
   prependToHistoryAction,
   removeFromHistoryAction,
+  resolveAnalyzingTaskAction,
+  replaceInHistoryAction,
+  setTaskIdForEntryAction,
   resetAnalysisState,
   setAnalysisDataAction,
   setDeepAnalysisAction,
   setLoadedCommentsAction,
+  setGeneratingWorkItemsAction,
+  clearAnalysisDataAction,
 } = analysisSlice.actions;
 
 export default analysisSlice.reducer;
@@ -698,17 +769,42 @@ export const setAnalysisData = setAnalysisDataAction;
 export const setDeepAnalysis = setDeepAnalysisAction;
 export const setLoadedComments = setLoadedCommentsAction;
 
-// Dummy actions for components that haven't been migrated yet (no-ops)
-export const clearAnalysisData = (_params?: any) => ({ type: 'analysis/clearAnalysisData' });
-export const resolveAnalyzingTask = (_params?: any) => ({ type: 'analysis/resolveAnalyzingTask' });
-export const clearError = (_params?: any) => ({ type: 'analysis/clearError' });
-export const setTaskIdForEntry = (_params?: any) => ({ type: 'analysis/setTaskIdForEntry' });
-export const replaceInHistory = (_params?: any) => ({ type: 'analysis/replaceInHistory' });
+// Resolve a stale "analyzing" placeholder to its terminal state (real reducer).
+export const resolveAnalyzingTask = resolveAnalyzingTaskAction;
 
-// Dummy thunks
-export const resumeInFlightTask = createAsyncThunk('analysis/resumeInFlightTask', async (_params?: any) => {
-  console.warn('[DEPRECATED] resumeInFlightTask called - needs migration');
-  return null;
+// Restored real reducers (placeholder row management).
+export const setTaskIdForEntry = setTaskIdForEntryAction;
+export const replaceInHistory = replaceInHistoryAction;
+
+// Clears the displayed analysis (not the history). Real reducer — see
+// clearAnalysisDataAction. The optional arg is ignored; kept for call-site compat.
+export const clearAnalysisData = (_params?: any) => clearAnalysisDataAction();
+export const clearError = (_params?: any) => ({ type: 'analysis/clearError' });
+
+/**
+ * Re-attach to an in-flight analysis task on cold mount (the hydration sweeper
+ * dispatches this for the newest non-terminal task). Re-polls to completion and
+ * refreshes history so the placeholder resolves to the real run.
+ */
+export const resumeInFlightTask = createAsyncThunk<
+  any,
+  { taskId: string; projectId?: string },
+  { rejectValue: string }
+>('analysis/resumeInFlightTask', async ({ taskId, projectId }, { dispatch, rejectWithValue, getState }) => {
+  try {
+    const result = await waitForAnalysisTask(taskId, dispatch);
+    const state: any = getState();
+    const stateProjectId = state?.analysis?.projectId || projectId;
+    if (stateProjectId) {
+      await dispatch(fetchAnalysisHistory({ projectId: stateProjectId })).unwrap();
+      if (result?.id && !String(result.id).startsWith('analysis_')) {
+        dispatch(setSelectedAnalysisId(result.id));
+      }
+    }
+    return result;
+  } catch (err: any) {
+    return rejectWithValue(err?.message || 'Failed to resume task.');
+  }
 });
 
 export const getConsolidatedDashboardData = createAsyncThunk('analysis/getConsolidatedDashboardData', async (_projectId?: string) => {
@@ -834,24 +930,133 @@ export const retriggerAnalysis = createAsyncThunk<
   }
 });
 
-export const analyzeComments = createAsyncThunk('analysis/analyzeComments', async (_params?: any) => {
-  console.warn('[DEPRECATED] analyzeComments called - use uploadAndAnalyze instead');
-  return null;
+/**
+ * Analyze pasted/loaded comments (the "Analyze" button path, distinct from file
+ * upload which uses ingestFile). POSTs the comments, then polls to completion.
+ * Restored from the pre-v2 slice; the component swaps its placeholder via
+ * setTaskIdForEntry/replaceInHistory.
+ */
+export const analyzeComments = createAsyncThunk<
+  any,
+  { comments: string[]; projectId?: string; fileName?: string },
+  { rejectValue: string }
+>('analysis/analyzeComments', async (data, { dispatch, rejectWithValue }) => {
+  try {
+    const payload: any = { comments: data.comments };
+    if (data.projectId) payload.project_id = data.projectId;
+    if (data.fileName) payload.file_name = data.fileName;
+
+    const response = await apiRequest('post', '/insights/analyze/', payload, true, false);
+    const taskId = response.data?.data?.task_id;
+    if (!taskId) {
+      throw new Error('No task ID received from server');
+    }
+    return await waitForAnalysisTask(taskId, dispatch);
+  } catch (err: any) {
+    let errorMessage = 'Sentiment analysis failed. Please try again.';
+    if (err.response?.status === 401) errorMessage = 'Authentication required. Please login again.';
+    else if (err.response?.status === 400) errorMessage = err.response?.data?.detail || 'Invalid input data.';
+    else if (err.response?.status === 429) errorMessage = err.response?.data?.detail || 'Quota exceeded.';
+    else if (err.response?.status >= 500) errorMessage = 'Server error. Please try again later.';
+    else if (err.message) errorMessage = err.message;
+    return rejectWithValue(errorMessage);
+  }
 });
 
-export const generateUserStories = createAsyncThunk('analysis/generateUserStories', async (_params?: any) => {
-  console.warn('[DEPRECATED] generateUserStories called - needs migration');
-  return null;
+/**
+ * Generate work items / user stories from an analysis (the "Generate" button).
+ * Restored from the pre-v2 slice. `platform` is the work-item provider
+ * (azure/jira/asana/linear). Returns the work-items payload the panel renders.
+ */
+export const generateUserStories = createAsyncThunk<
+  any,
+  { analysisData: any; comments: string[]; platform: string; processTemplate?: string; projectId?: string; projectMetadata?: any },
+  { rejectValue: string }
+>('analysis/generateUserStories', async (data, { rejectWithValue, dispatch }) => {
+  dispatch(setGeneratingWorkItemsAction(true));
+  try {
+    const payload: any = {
+      analysis_data: data.analysisData,
+      comments: data.comments,
+      platform: data.platform,
+      process_template: data.processTemplate || 'Agile',
+    };
+    if (data.projectId) payload.project_id = data.projectId;
+    if (data.projectMetadata) payload.project_metadata = data.projectMetadata;
+
+    // LLM generation can be slow — 3-minute timeout.
+    const response = await apiRequest(
+      'post', '/insights/user-story-creation/', payload, true, false, { timeout: 180000 }
+    );
+    const innerData = response.data?.data || response.data;
+    return innerData?.user_stories?.[0] || innerData;
+  } catch (err: any) {
+    const status = err.response?.status;
+    const body = err.response?.data;
+    const apiDetail = typeof body?.detail === 'string' ? body.detail : body?.data?.detail;
+    let errorMessage = 'Work item generation failed. Please try again.';
+    if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+      errorMessage = 'Work item generation is taking longer than expected. Please try again or reduce the number of comments.';
+    } else if (status === 401) errorMessage = apiDetail || 'Authentication required. Please login again.';
+    else if (status === 400) errorMessage = body?.error || apiDetail || 'Invalid input data.';
+    else if (status === 429) errorMessage = apiDetail || 'Quota exceeded.';
+    else if (status === 503) errorMessage = apiDetail || 'Service unavailable. Please try again later.';
+    else if (status && status >= 500) errorMessage = apiDetail || 'Server error. Please try again later.';
+    else if (err.message) errorMessage = err.message;
+    return rejectWithValue(errorMessage);
+  } finally {
+    dispatch(setGeneratingWorkItemsAction(false));
+  }
 });
 
-export const submitUserStories = createAsyncThunk('analysis/submitUserStories', async (_params?: any) => {
-  console.warn('[DEPRECATED] submitUserStories called - needs migration');
-  return null;
+/**
+ * Submit/push generated work items to the external tracker (Jira/Azure/Asana/
+ * Linear). Restored from the pre-v2 slice. Returns the submission response.
+ */
+export const submitUserStories = createAsyncThunk<
+  any,
+  { userId: string; projectId: string; userStories: any[]; platform: string; processTemplate?: string; time?: string },
+  { rejectValue: string }
+>('analysis/submitUserStories', async (data, { rejectWithValue }) => {
+  try {
+    const payload = {
+      user_id: data.userId,
+      project_id: data.projectId,
+      user_stories: data.userStories,
+      platform: data.platform,
+      process_template: data.processTemplate || 'Agile',
+      time: data.time || new Date().toISOString(),
+    };
+    const response = await apiRequest('post', '/insights/user-story-submission/', payload, true, false);
+    return response.data;
+  } catch (err: any) {
+    let errorMessage = 'Work item submission failed. Please try again.';
+    if (err.response?.status === 401) errorMessage = 'Authentication required. Please login again.';
+    else if (err.response?.status === 400) errorMessage = err.response?.data?.error || err.response?.data?.detail || 'Invalid input data.';
+    else if (err.response?.status === 404) errorMessage = 'Project not found. Please check your project configuration.';
+    else if (err.response?.status >= 500) errorMessage = 'Server error. Please try again later.';
+    else if (err.message) errorMessage = err.message;
+    return rejectWithValue(errorMessage);
+  }
 });
 
-export const cancelAnalysisTask = createAsyncThunk('analysis/cancelAnalysisTask', async (_params?: any) => {
-  console.warn('[DEPRECATED] cancelAnalysisTask called - needs migration');
-  return null;
+/**
+ * Cancel a running analysis: tell the backend to stop the task, then mark the
+ * placeholder row cancelled and release the selection. `tempId` is the
+ * placeholder row id; `taskId` is the Celery task id.
+ */
+export const cancelAnalysisTask = createAsyncThunk<
+  { taskId: string; tempId: string },
+  { taskId: string; tempId: string },
+  { rejectValue: string }
+>('analysis/cancelAnalysisTask', async ({ taskId, tempId }, { dispatch, rejectWithValue }) => {
+  try {
+    await apiRequest('post', `/insights/task-cancel/${taskId}/`, undefined, true);
+    dispatch(resolveAnalyzingTaskAction({ placeholderId: tempId, taskId, historyStatus: 'cancelled' }));
+    return { taskId, tempId };
+  } catch (err: any) {
+    return rejectWithValue(err?.message || 'Failed to cancel task.');
+  }
 });
 
 // Backward compatibility wrappers
@@ -925,8 +1130,42 @@ export const selectAnalysisDisplayStatus = (state: { analysis: AnalysisState }, 
   return 'Processing...';
 };
 
-// Dummy selectors that aren't critical - match expected signatures
+// v2 has no per-analysis "task" object; this slot is unused by consumers and
+// kept only to satisfy the legacy signature.
 export const selectTaskState = (_state: { analysis: AnalysisState }, _analysisId: string | null) => null;
-export const selectAnalysisLifecycleState = (_state: { analysis: AnalysisState }, _analysisId: string | null) => 'idle';
-export const selectIsAnyAnalysisRunning = (_state: { analysis: AnalysisState }) => false;
-export const selectIsGeneratingWorkItems = (_state?: { analysis: AnalysisState }) => false;
+
+// Map the flat v2 task status to the lifecycle enum. v2 does not track the
+// granular backend phases (queued/synthesizing/generating_workitems), so this
+// is a coarse mapping: it drives the progress UI while an analysis is active.
+export const selectAnalysisLifecycleState = (
+  state: { analysis: AnalysisState },
+  analysisId: string | null,
+): AnalysisLifecycleState => {
+  if (!analysisId) return AnalysisLifecycleState.IDLE;
+  const taskStatus = state.analysis.currentTaskStatus;
+  switch (taskStatus) {
+    case 'uploading':
+      return AnalysisLifecycleState.INGESTING;
+    case 'analyzing':
+      return AnalysisLifecycleState.ANALYZING;
+    case 'failed':
+      return AnalysisLifecycleState.FAILED;
+    case 'completed':
+      return AnalysisLifecycleState.COMPLETED;
+    default:
+      return AnalysisLifecycleState.IDLE;
+  }
+};
+
+// True when any analysis is uploading/analyzing or an "analyzing" placeholder
+// is present in history (mirrors selectIsProjectAnalyzing, project-agnostic).
+export const selectIsAnyAnalysisRunning = (state: { analysis: AnalysisState }) => {
+  const taskStatus = state.analysis.currentTaskStatus;
+  if (taskStatus === 'uploading' || taskStatus === 'analyzing') return true;
+  return state.analysis.analysisHistory.some(
+    entry => entry.id.startsWith('analyzing_') || entry.status === 'analyzing'
+  );
+};
+
+export const selectIsGeneratingWorkItems = (state?: { analysis: AnalysisState }) =>
+  Boolean(state?.analysis?.isGeneratingWorkItems);
