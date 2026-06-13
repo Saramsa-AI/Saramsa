@@ -70,7 +70,9 @@ class TaskStatusView(APIView):
         if started_at:
             try:
                 started_dt = datetime.fromisoformat(started_at)
-                elapsed = (datetime.now() - started_dt).total_seconds()
+                if started_dt.tzinfo is None:
+                    started_dt = started_dt.replace(tzinfo=timezone.utc)
+                elapsed = (datetime.now(timezone.utc) - started_dt).total_seconds()
             except Exception:
                 elapsed = None
         if res.status in ("PENDING", "STARTED") and elapsed is not None and elapsed > max_runtime:

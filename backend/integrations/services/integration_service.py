@@ -687,7 +687,7 @@ class IntegrationService:
                     if not encrypted_pat:
                         missing.append('tokenEncrypted')
                     error_msg = f"Invalid Azure integration account: missing {', '.join(missing)}"
-                    logger.error(f"{error_msg}. Metadata: {metadata}, Credentials keys: {list(credentials.keys())}")
+                    logger.error(f"{error_msg}. Metadata keys: {list(metadata.keys())}, Credentials keys: {list(credentials.keys())}")
                     raise ValueError(error_msg)
                 pat_token = encryption_service.decrypt_token(encrypted_pat)
                 return self.external_api_service.fetch_azure_projects(organization, pat_token)
@@ -711,7 +711,6 @@ class IntegrationService:
                         missing.append('tokenEncrypted')
                     error_msg = f"Invalid Jira integration account: missing {', '.join(missing)}. Please reconfigure your Jira integration."
                     logger.error(f"{error_msg}. Account ID: {account_id}, Metadata keys: {list(metadata.keys())}, Credentials keys: {list(credentials.keys())}")
-                    logger.error(f"Full account data: {account}")
                     raise ValueError(error_msg)
                 
                 api_token = encryption_service.decrypt_token(encrypted_token)

@@ -68,15 +68,19 @@ class AzureOpenAIClient:
             raise ValueError(msg)
 
         try:
+            # Default timeout so callers that don't set with_options(timeout=...)
+            # (e.g. test_connection) can't hang on the SDK's ~600s default.
             self.client = AzureOpenAI(
                 azure_endpoint=config["ENDPOINT_URL"],
                 api_key=config["API_KEY"],
                 api_version=config["API_VERSION"],
+                timeout=60.0,
             )
             self.async_client = AsyncAzureOpenAI(
                 azure_endpoint=config["ENDPOINT_URL"],
                 api_key=config["API_KEY"],
                 api_version=config["API_VERSION"],
+                timeout=60.0,
             )
             logger.info("Azure OpenAI client initialized successfully (sync + async)")
         except Exception as e:
