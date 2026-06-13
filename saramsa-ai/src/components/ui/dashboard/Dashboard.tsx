@@ -267,7 +267,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                 ? HISTORY_STATUS.COMPLETED
                 : HISTORY_STATUS.FAILED,
               insightId: match?.analysis_id ? `insight_${match.analysis_id}` : null,
-              nextTaskStatus: match?.analysis_id && match?.status !== 'FAILED' ? 'success' : 'failure',
             }));
           }
           // If still RUNNING/PENDING, branch B below will re-attach (the

@@ -16,7 +16,12 @@ import analysisReducer, {
   retriggerAnalysis,
   resumeInFlightTask,
   ingestFile,
+  clearAnalysisData,
+  selectIsGeneratingWorkItems,
+  selectAnalysisLifecycleState,
+  selectIsAnyAnalysisRunning,
 } from './analysisSlice'
+import { AnalysisLifecycleState } from '@/lib/analysisConstants'
 
 // Full initial state (reducer with unknown action), to spread + override.
 const baseState = () => analysisReducer(undefined, { type: '@@init' } as any)
@@ -99,17 +104,27 @@ describe('analysisSlice thunks (restored)', () => {
     expect(res.payload.success).toBe(true)
   })
 
-  test('cancelAnalysisTask POSTs task-cancel and dispatches the resolve action (cancelled)', async () => {
+  test('cancelAnalysisTask POSTs task-cancel and transitions a real store to cancelled', async () => {
     ;(apiRequest as any).mockResolvedValue({ data: { success: true } })
-    const dispatch = vi.fn()
-    const res: any = await cancelAnalysisTask({ taskId: 'celery-9', tempId: 'analyzing_9' })(
-      dispatch, vi.fn(() => ({ analysis: {} })), undefined,
-    )
+    const store = configureStore({
+      reducer: { analysis: analysisReducer },
+      preloadedState: {
+        analysis: {
+          ...baseState(),
+          analysisHistory: [entry({ id: 'analyzing_9' })],
+          selectedAnalysisId: 'analyzing_9',
+          currentTaskId: 'celery-9',
+          currentTaskStatus: 'analyzing' as const,
+        },
+      },
+    })
+    const res: any = await store.dispatch(cancelAnalysisTask({ taskId: 'celery-9', tempId: 'analyzing_9' }) as any)
     expect(apiRequest).toHaveBeenCalledWith('post', '/insights/task-cancel/celery-9/', undefined, true)
-    const resolveCall = dispatch.mock.calls.find((c: any) => String(c[0]?.type).includes('resolveAnalyzingTask'))
-    expect(resolveCall).toBeTruthy()
-    expect(resolveCall![0].payload).toMatchObject({ placeholderId: 'analyzing_9', historyStatus: 'cancelled' })
     expect(res.type).toContain('/fulfilled')
+    // End state: placeholder marked cancelled, selection released, task cleared.
+    expect(store.getState().analysis.analysisHistory[0].status).toBe('cancelled')
+    expect(store.getState().analysis.selectedAnalysisId).toBeNull()
+    expect(store.getState().analysis.currentTaskId).toBeNull()
   })
 
   test('generateUserStories rejects with the API error message', async () => {
@@ -229,5 +244,69 @@ describe('analysisSlice polling thunks', () => {
     expect(res.type).toContain('/fulfilled')
     expect(res.payload.id).toBe('insight_z')
     expect(store.getState().analysis.selectedAnalysisId).toBe('insight_z')
+  })
+})
+
+describe('analysisSlice work-item generation flag + clearAnalysisData (I2)', () => {
+  const makeStore = () => configureStore({ reducer: { analysis: analysisReducer } })
+
+  test('generateUserStories sets isGeneratingWorkItems true in-flight, false after success', async () => {
+    let resolveReq: (v: any) => void = () => {}
+    ;(apiRequest as any).mockImplementation(() => new Promise(r => { resolveReq = r }))
+    const store = makeStore()
+    const p = store.dispatch(generateUserStories({ analysisData: {}, comments: [], platform: 'jira' }) as any)
+    // pending → loader on
+    expect(store.getState().analysis.isGeneratingWorkItems).toBe(true)
+    resolveReq({ data: { data: { work_items: [] } } })
+    await p
+    // finally → loader off
+    expect(store.getState().analysis.isGeneratingWorkItems).toBe(false)
+  })
+
+  test('generateUserStories resets isGeneratingWorkItems on error', async () => {
+    ;(apiRequest as any).mockRejectedValue({ response: { status: 500 } })
+    const store = makeStore()
+    await store.dispatch(generateUserStories({ analysisData: {}, comments: [], platform: 'jira' }) as any)
+    expect(store.getState().analysis.isGeneratingWorkItems).toBe(false)
+  })
+
+  test('clearAnalysisData clears displayed data but preserves history', () => {
+    const start = {
+      ...baseState(),
+      analysisHistory: [entry({ id: 'insight_keep' })],
+      analysisData: { id: 'x' } as any,
+      selectedAnalysisData: { id: 'x' } as any,
+      deepAnalysis: { work_items: [] },
+      loadedComments: ['c'],
+    }
+    const next = analysisReducer(start, clearAnalysisData())
+    expect(next.analysisData).toBeNull()
+    expect(next.selectedAnalysisData).toBeNull()
+    expect(next.deepAnalysis).toBeNull()
+    expect(next.loadedComments).toBeNull()
+    expect(next.analysisHistory).toHaveLength(1) // history untouched
+  })
+})
+
+describe('analysisSlice derived selectors (I2)', () => {
+  const mk = (over: any = {}) => ({ analysis: { ...baseState(), ...over } })
+
+  test('selectIsGeneratingWorkItems reflects the flag', () => {
+    expect(selectIsGeneratingWorkItems(mk({ isGeneratingWorkItems: true }))).toBe(true)
+    expect(selectIsGeneratingWorkItems(mk())).toBe(false)
+    expect(selectIsGeneratingWorkItems(undefined)).toBe(false)
+  })
+
+  test('selectAnalysisLifecycleState maps the flat task status to the enum', () => {
+    expect(selectAnalysisLifecycleState(mk({ currentTaskStatus: 'uploading' }), 'a')).toBe(AnalysisLifecycleState.INGESTING)
+    expect(selectAnalysisLifecycleState(mk({ currentTaskStatus: 'analyzing' }), 'a')).toBe(AnalysisLifecycleState.ANALYZING)
+    expect(selectAnalysisLifecycleState(mk({ currentTaskStatus: 'failed' }), 'a')).toBe(AnalysisLifecycleState.FAILED)
+    expect(selectAnalysisLifecycleState(mk({ currentTaskStatus: 'analyzing' }), null)).toBe(AnalysisLifecycleState.IDLE)
+  })
+
+  test('selectIsAnyAnalysisRunning is true while analyzing or with an analyzing placeholder', () => {
+    expect(selectIsAnyAnalysisRunning(mk({ currentTaskStatus: 'analyzing' }))).toBe(true)
+    expect(selectIsAnyAnalysisRunning(mk({ analysisHistory: [entry({ status: 'analyzing' })] }))).toBe(true)
+    expect(selectIsAnyAnalysisRunning(mk({ analysisHistory: [entry({ id: 'insight_done', status: 'completed' })] }))).toBe(false)
   })
 })

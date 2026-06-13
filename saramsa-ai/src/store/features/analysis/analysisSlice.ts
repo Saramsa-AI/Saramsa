@@ -14,6 +14,7 @@ import { createSlice, PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
 import type { AnalysisData } from '@/types/analysis';
 import type { RootState } from '@/store/store';
+import { AnalysisLifecycleState } from '@/lib/analysisConstants';
 
 // ============================================================================
 // TYPES
@@ -48,6 +49,9 @@ interface AnalysisState {
   currentTaskStatus: 'idle' | 'uploading' | 'analyzing' | 'completed' | 'failed';
   currentTaskError: string | null;
 
+  // Whether a work-item (user-story) generation request is in flight
+  isGeneratingWorkItems: boolean;
+
   // Project context
   projectId: string | null;
 
@@ -70,6 +74,8 @@ const initialState: AnalysisState = {
   currentTaskId: null,
   currentTaskStatus: 'idle',
   currentTaskError: null,
+
+  isGeneratingWorkItems: false,
 
   projectId: null,
 
@@ -472,7 +478,7 @@ const analysisSlice = createSlice({
     // when known, release the selection, and clear the current-task tracking.
     resolveAnalyzingTaskAction: (
       state,
-      action: PayloadAction<{ placeholderId?: string; taskId?: string; historyStatus?: string; insightId?: string | null; nextTaskStatus?: string }>
+      action: PayloadAction<{ placeholderId?: string; taskId?: string; historyStatus?: string; insightId?: string | null }>
     ) => {
       const { placeholderId, taskId, historyStatus, insightId } = action.payload || {};
       if (placeholderId) {
@@ -549,6 +555,22 @@ const analysisSlice = createSlice({
     setLoadedCommentsAction: (state, action: PayloadAction<string[] | null>) => {
       console.log(`[setLoadedComments] Setting ${action.payload?.length || 0} comments`);
       state.loadedComments = action.payload;
+    },
+
+    // Track in-flight work-item (user-story) generation so the UI can show a loader.
+    setGeneratingWorkItemsAction: (state, action: PayloadAction<boolean>) => {
+      state.isGeneratingWorkItems = action.payload;
+    },
+
+    // Clear the currently-displayed analysis WITHOUT touching the history list.
+    // Used on project switch / unmount to prevent a flash of the previous
+    // project's analysis. Deliberately leaves analysisHistory intact.
+    clearAnalysisDataAction: (state) => {
+      state.selectedAnalysisData = null;
+      state.selectedAnalysisError = null;
+      state.analysisData = null;
+      state.deepAnalysis = null;
+      state.loadedComments = null;
     },
   },
 
@@ -718,6 +740,8 @@ export const {
   setAnalysisDataAction,
   setDeepAnalysisAction,
   setLoadedCommentsAction,
+  setGeneratingWorkItemsAction,
+  clearAnalysisDataAction,
 } = analysisSlice.actions;
 
 export default analysisSlice.reducer;
@@ -752,8 +776,9 @@ export const resolveAnalyzingTask = resolveAnalyzingTaskAction;
 export const setTaskIdForEntry = setTaskIdForEntryAction;
 export const replaceInHistory = replaceInHistoryAction;
 
-// Dummy actions for components that haven't been migrated yet (no-ops)
-export const clearAnalysisData = (_params?: any) => ({ type: 'analysis/clearAnalysisData' });
+// Clears the displayed analysis (not the history). Real reducer — see
+// clearAnalysisDataAction. The optional arg is ignored; kept for call-site compat.
+export const clearAnalysisData = (_params?: any) => clearAnalysisDataAction();
 export const clearError = (_params?: any) => ({ type: 'analysis/clearError' });
 
 /**
@@ -947,7 +972,8 @@ export const generateUserStories = createAsyncThunk<
   any,
   { analysisData: any; comments: string[]; platform: string; processTemplate?: string; projectId?: string; projectMetadata?: any },
   { rejectValue: string }
->('analysis/generateUserStories', async (data, { rejectWithValue }) => {
+>('analysis/generateUserStories', async (data, { rejectWithValue, dispatch }) => {
+  dispatch(setGeneratingWorkItemsAction(true));
   try {
     const payload: any = {
       analysis_data: data.analysisData,
@@ -978,6 +1004,8 @@ export const generateUserStories = createAsyncThunk<
     else if (status && status >= 500) errorMessage = apiDetail || 'Server error. Please try again later.';
     else if (err.message) errorMessage = err.message;
     return rejectWithValue(errorMessage);
+  } finally {
+    dispatch(setGeneratingWorkItemsAction(false));
   }
 });
 
@@ -1102,8 +1130,42 @@ export const selectAnalysisDisplayStatus = (state: { analysis: AnalysisState }, 
   return 'Processing...';
 };
 
-// Dummy selectors that aren't critical - match expected signatures
+// v2 has no per-analysis "task" object; this slot is unused by consumers and
+// kept only to satisfy the legacy signature.
 export const selectTaskState = (_state: { analysis: AnalysisState }, _analysisId: string | null) => null;
-export const selectAnalysisLifecycleState = (_state: { analysis: AnalysisState }, _analysisId: string | null) => 'idle';
-export const selectIsAnyAnalysisRunning = (_state: { analysis: AnalysisState }) => false;
-export const selectIsGeneratingWorkItems = (_state?: { analysis: AnalysisState }) => false;
+
+// Map the flat v2 task status to the lifecycle enum. v2 does not track the
+// granular backend phases (queued/synthesizing/generating_workitems), so this
+// is a coarse mapping: it drives the progress UI while an analysis is active.
+export const selectAnalysisLifecycleState = (
+  state: { analysis: AnalysisState },
+  analysisId: string | null,
+): AnalysisLifecycleState => {
+  if (!analysisId) return AnalysisLifecycleState.IDLE;
+  const taskStatus = state.analysis.currentTaskStatus;
+  switch (taskStatus) {
+    case 'uploading':
+      return AnalysisLifecycleState.INGESTING;
+    case 'analyzing':
+      return AnalysisLifecycleState.ANALYZING;
+    case 'failed':
+      return AnalysisLifecycleState.FAILED;
+    case 'completed':
+      return AnalysisLifecycleState.COMPLETED;
+    default:
+      return AnalysisLifecycleState.IDLE;
+  }
+};
+
+// True when any analysis is uploading/analyzing or an "analyzing" placeholder
+// is present in history (mirrors selectIsProjectAnalyzing, project-agnostic).
+export const selectIsAnyAnalysisRunning = (state: { analysis: AnalysisState }) => {
+  const taskStatus = state.analysis.currentTaskStatus;
+  if (taskStatus === 'uploading' || taskStatus === 'analyzing') return true;
+  return state.analysis.analysisHistory.some(
+    entry => entry.id.startsWith('analyzing_') || entry.status === 'analyzing'
+  );
+};
+
+export const selectIsGeneratingWorkItems = (state?: { analysis: AnalysisState }) =>
+  Boolean(state?.analysis?.isGeneratingWorkItems);
