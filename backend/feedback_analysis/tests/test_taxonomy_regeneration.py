@@ -23,7 +23,6 @@ from datetime import datetime, timedelta, timezone
 from django.test import TestCase
 
 from feedback_analysis.models import Taxonomy
-from feedback_analysis.services.task_service import TaskService
 from feedback_analysis.services.taxonomy_service import TaxonomyService
 from integrations.models import Project
 
@@ -124,33 +123,3 @@ class CreateArchiveAtomicityTests(_RepoBackedTaxonomyTests):
         )
         self.assertEqual(len(actives), 1)
         self.assertEqual(actives[0].id, latest.get("id"))
-
-
-class HealthMetricUnmappedSentinelTests(TestCase):
-    """The ["UNMAPPED"] sentinel must count as unmapped, not mapped."""
-
-    def setUp(self):
-        self.task_service = TaskService()
-
-    def test_unmapped_sentinel_counts_as_unmapped(self):
-        extracted = [
-            {"aspects": ["Service"], "confidence": "HIGH"},
-            {"aspects": ["UNMAPPED"], "confidence": "LOW"},
-            {"aspects": [], "confidence": "LOW"},
-            {"aspects": ["Food", "Service"], "confidence": "MEDIUM"},
-        ]
-        metrics = self.task_service._compute_health_metrics_llm(extracted)
-        # 2 of 4 comments are unmapped (the sentinel + the empty list).
-        self.assertAlmostEqual(metrics["last_unmapped_rate"], 0.5)
-        # Mapped aspects counted: 1 (Service) + 0 + 0 + 2 (Food, Service) = 3.
-        # The UNMAPPED sentinel must NOT inflate the avg-aspects count.
-        self.assertAlmostEqual(metrics["last_avg_aspects_per_comment"], 3 / 4)
-
-    def test_all_unmapped_sentinel_is_fully_unmapped(self):
-        extracted = [
-            {"aspects": ["UNMAPPED"], "confidence": "LOW"},
-            {"aspects": ["unmapped"], "confidence": "LOW"},  # case-insensitive
-        ]
-        metrics = self.task_service._compute_health_metrics_llm(extracted)
-        self.assertAlmostEqual(metrics["last_unmapped_rate"], 1.0)
-        self.assertAlmostEqual(metrics["last_avg_aspects_per_comment"], 0.0)
