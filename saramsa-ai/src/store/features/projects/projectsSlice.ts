@@ -182,16 +182,6 @@ export const deleteProject = createAsyncThunk(
   }
 );
 
-export const syncProjectWithExternal = createAsyncThunk(
-  'projects/syncWithExternal',
-  async (data: { projectId: string; provider: WorkProvider }) => {
-    const response = await apiRequest('post', `/integrations/projects/${data.projectId}/sync`, {
-      provider: data.provider,
-    }, true);
-    return response.data;
-  }
-);
-
 const projectsSlice = createSlice({
   name: 'projects',
   initialState,
@@ -314,18 +304,6 @@ const projectsSlice = createSlice({
         state.projects = state.projects.filter(p => p.id !== action.payload);
         if (state.currentProject?.id === action.payload) {
           state.currentProject = null;
-        }
-      })
-      
-      // Sync with external
-      .addCase(syncProjectWithExternal.fulfilled, (state, action) => {
-        const project = state.projects.find(p => p.id === action.meta.arg.projectId);
-        if (project) {
-          const link = project.externalLinks.find((l: ProjectExternalLink) => l.provider === action.meta.arg.provider);
-          if (link) {
-            link.status = 'ok';
-            link.lastSyncedAt = new Date().toISOString();
-          }
         }
       });
   },

@@ -338,58 +338,6 @@ export const renameAnalysis = createAsyncThunk<
 );
 
 /**
- * Upload file and start analysis
- */
-export const uploadAndAnalyze = createAsyncThunk<
-  { taskId: string; analysisId: string },
-  { file: File; projectId: string },
-  { rejectValue: string }
->(
-  'analysis/uploadAndAnalyze',
-  async ({ file, projectId }, { rejectWithValue }) => {
-    try {
-      console.log(`[upload] Starting upload: ${file.name}`);
-
-      // Step 1: Upload file
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('project_id', projectId);
-
-      const uploadResponse = await apiRequest('POST', '/ingest/', formData, true);
-
-      if (uploadResponse.status < 200 || uploadResponse.status >= 300) {
-        throw new Error(`Upload failed: ${uploadResponse.statusText}`);
-      }
-
-      const uploadData = uploadResponse.data;
-      console.log(`[upload] File uploaded, analysis ID: ${uploadData.analysis_id}`);
-
-      // Step 2: Start analysis
-      const analyzeResponse = await apiRequest('POST', '/analyze/', {
-        project_id: projectId,
-        analysis_id: uploadData.analysis_id,
-        file_name: file.name,
-      });
-
-      if (analyzeResponse.status < 200 || analyzeResponse.status >= 300) {
-        throw new Error(`Analysis failed: ${analyzeResponse.statusText}`);
-      }
-
-      const analyzeData = analyzeResponse.data;
-      console.log(`[upload] Analysis started, task ID: ${analyzeData.task_id}`);
-
-      return {
-        taskId: analyzeData.task_id,
-        analysisId: uploadData.analysis_id,
-      };
-    } catch (error: any) {
-      console.error('[upload] Error:', error);
-      return rejectWithValue(error.message || 'Upload failed');
-    }
-  }
-);
-
-/**
  * Poll task status
  */
 export const pollTaskStatus = createAsyncThunk<
@@ -653,26 +601,6 @@ const analysisSlice = createSlice({
       }
 
       console.log(`[rename.fulfilled] Renamed ${analysisId}`);
-    });
-
-    // ========================================
-    // uploadAndAnalyze
-    // ========================================
-    builder.addCase(uploadAndAnalyze.pending, (state) => {
-      state.currentTaskStatus = 'uploading';
-      state.currentTaskError = null;
-    });
-
-    builder.addCase(uploadAndAnalyze.fulfilled, (state, action) => {
-      state.currentTaskId = action.payload.taskId;
-      state.currentTaskStatus = 'analyzing';
-      console.log(`[upload.fulfilled] Task ${action.payload.taskId} started`);
-    });
-
-    builder.addCase(uploadAndAnalyze.rejected, (state, action) => {
-      state.currentTaskStatus = 'failed';
-      state.currentTaskError = action.payload || 'Upload failed';
-      console.error(`[upload.rejected]`, action.payload);
     });
 
     // ========================================

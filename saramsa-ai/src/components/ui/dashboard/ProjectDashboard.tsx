@@ -7,7 +7,6 @@ import {
   fetchProjects, 
   createProject, 
   updateProject,
-  syncProjectWithExternal,
   setCurrentProject,
   clearError,
   deleteProject,
@@ -63,7 +62,6 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
   const [selectedProvider, setSelectedProvider] = useState<WorkProvider | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
-  const [syncingProjectId, setSyncingProjectId] = useState<string | null>(null);
   const hasFetchedRef = useRef(false);
 
   useEffect(() => {
@@ -161,21 +159,6 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
       console.error('Failed to update project:', err);
       toast.error(err?.message || 'Failed to update project. Please try again.');
       throw err;
-    }
-  };
-
-  const handleSyncProject = async (project: Project, provider: WorkProvider) => {
-    try {
-      setSyncingProjectId(project.id);
-      await dispatch(syncProjectWithExternal({ projectId: project.id, provider })).unwrap();
-      // Refresh projects to get updated data
-      await dispatch(fetchProjects());
-      alert(`Successfully synced "${project.name}" with ${getProviderLabel(provider)}`);
-    } catch (err: any) {
-      console.error('Failed to sync project:', err);
-      alert(err?.message || 'Failed to sync project. Please try again.');
-    } finally {
-      setSyncingProjectId(null);
     }
   };
 
@@ -391,12 +374,10 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
                     project={project}
                     onClick={() => dispatch(setCurrentProject(project))}
                     onEdit={handleEditProject}
-                    onSync={handleSyncProject}
                     onDelete={handleDeleteProject}
                     onGoToProject={onGoToProject}
                     isSelected={currentProject?.id === project.id}
                     deleteLoading={deletingProjectId === project.id}
-                    syncLoading={syncingProjectId === project.id}
                   />
                 </motion.div>
               ))}
