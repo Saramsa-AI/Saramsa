@@ -104,7 +104,7 @@ class AnalyzeCommentsView(APIView):
                 if user_data:
                     company_name = user_data.get('company_name')
             except Exception:
-                logger.exception("Failed to look up company name for user")
+                logger.warning("Could not look up company name; proceeding without it")
 
         try:
             project_id, project_doc, _ = analysis_service.ensure_project_context(
@@ -170,7 +170,7 @@ class AnalyzeCommentsView(APIView):
             })
             cache.set(tasks_key, existing[:15], ttl=86400)
         except Exception:
-            logger.exception("Failed to record task history")
+            logger.warning("Failed to record task history (best-effort)")
         hour_key = datetime.now().strftime("%Y-%m-%d-%H")
         cache.incr(f"analyses_hour:{project_id}:{hour_key}", 1, ttl=3600)
 
@@ -256,7 +256,7 @@ class UpdateKeywordsView(APIView):
                 if user_data:
                     company_name = user_data.get('company_name')
             except Exception:
-                logger.exception("Failed to look up company name for user")
+                logger.warning("Could not look up company name; proceeding without it")
 
         # Add keyword context to the feedback data
         keyword_context = "UPDATED KEYWORDS:\n"

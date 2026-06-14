@@ -122,7 +122,11 @@ class IntegrationService:
                 self.organization_service.require_membership(str(organization_id), str(user_id))
                 return self.integrations_repo.get_by_organization(str(organization_id))
             return self.integrations_repo.get_integration_accounts_by_user(user_id)
-        except Exception as e:
+        except ValueError:
+            # Expected domain rejection (e.g. not a member); the view maps it to a
+            # 4xx. Re-raise without a stack-trace log.
+            raise
+        except Exception:
             logger.exception("Failed to get integration accounts", extra={"user_id": user_id})
             raise
 

@@ -139,13 +139,26 @@ def setup_otel():
             logger_provider = LoggerProvider(resource=resource)
             logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
 
-            # Attach OTel handler to Python root logger so ALL logger.info() etc.
-            # flow to App Insights as traces table entries.
+            # Attach OTel handler so logger.info() etc. flow to App Insights as
+            # traces-table entries, stamped with the correlation/context fields.
             otel_handler = LoggingHandler(
                 level=logging.INFO,
                 logger_provider=logger_provider,
             )
+            try:
+                from apis.core.request_context import CorrelationIdFilter
+                otel_handler.addFilter(CorrelationIdFilter())
+            except Exception:
+                pass
             logging.getLogger().addHandler(otel_handler)
+            # App loggers are configured with propagate=False (they have their own
+            # console/file handlers), so they never reach the root handler above.
+            # Attach the exporter to them directly so their records — the bulk of
+            # our logs — also reach App Insights. propagate=False means no record
+            # double-exports (it won't also bubble to root).
+            for _lg in list(logging.root.manager.loggerDict.values()):
+                if isinstance(_lg, logging.Logger) and not _lg.propagate and _lg.handlers:
+                    _lg.addHandler(otel_handler)
 
             # Break the OTel feedback loop: the Azure SDK and exporter log every
             # outbound HTTP call at INFO level. Those logs would flow through the

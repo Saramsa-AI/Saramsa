@@ -149,8 +149,10 @@ class CandidateApproveView(APIView):
                 service.repo.update_candidate_status(candidate_id, project_id, push_updates)
                 candidate.update(push_updates)
         except Exception as e:
-            logger.exception(
-                "Failed to auto-push candidate",
+            # Auto-push to an external tracker failing is a handled operational
+            # outcome (recorded as push_status=failed below), not a server error.
+            logger.warning(
+                "Auto-push to external tracker failed; recorded as failed",
                 extra={"candidate_id": candidate_id, "project_id": project_id},
             )
             try:
