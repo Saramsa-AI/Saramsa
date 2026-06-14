@@ -11,7 +11,6 @@ import {
   Trash2,
   ArrowRight,
   Edit,
-  RefreshCw,
   Settings
 } from 'lucide-react';
 import type { Project } from '@/store/features/projects/projectsSlice';
@@ -29,20 +28,16 @@ interface ProjectCardProps {
   onClick: () => void;
   onDelete: (projectId: string) => void;
   onEdit?: (project: Project) => void;
-  onSync?: (project: Project, provider: WorkProvider) => void;
   onGoToProject?: (project: Project) => void;
   isSelected?: boolean;
   deleteLoading?: boolean;
-  syncLoading?: boolean;
 }
 
-export function ProjectCard({ project, onClick, onDelete, onEdit, onSync, onGoToProject, isSelected = false, deleteLoading = false, syncLoading = false }: ProjectCardProps) {
+export function ProjectCard({ project, onClick, onDelete, onEdit, onGoToProject, isSelected = false, deleteLoading = false }: ProjectCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
-  
-  const hasExternalLinks = project.externalLinks && project.externalLinks.length > 0;
   
   // Close menu when clicking outside
   useEffect(() => {
@@ -148,22 +143,6 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onSync, onGoTo
                   >
                     <Edit className="w-4 h-4" />
                     Edit
-                  </Button>
-                )}
-                {hasExternalLinks && onSync && (
-                  <Button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowMenu(false);
-                      const provider = project.externalLinks[0].provider;
-                      onSync(project, provider);
-                    }}
-                    disabled={syncLoading}
-                    variant="ghost"
-                  className="flex items-center gap-2 w-full px-3 py-2 text-sm text-foreground hover:bg-secondary/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    <RefreshCw className={`w-4 h-4 ${syncLoading ? 'animate-spin' : ''}`} />
-                    Sync with {getProviderLabel(project.externalLinks[0].provider)}
                   </Button>
                 )}
                 <Button
