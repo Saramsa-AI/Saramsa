@@ -16,8 +16,6 @@ care about.
 
 from __future__ import annotations
 
-import unittest
-
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -71,24 +69,13 @@ class LogoutViewBlacklistTest(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
 
-    @unittest.expectedFailure
     def test_blacklisted_refresh_token_rejected_on_next_refresh(self) -> None:
-        """Pinned as expectedFailure so the gap is visible.
+        """The actual security guarantee: logout → the same refresh token is
+        rejected at /api/auth/refresh/ (it can't mint new access tokens).
 
-        The intent: logout → try the same refresh token at /api/auth/refresh/
-        → expect 401 'Token is blacklisted'. This is the actual security
-        guarantee of LogoutView; without it, the refresh token stays valid
-        for its full 7-day TTL even after logout.
-
-        It fails because SimpleJWT's `RefreshToken.blacklist()` creates an
-        OutstandingToken row whose `user` FK expects a numeric Django
-        auth-User pk, but our `UserAccount.id` is a string. The blacklist
-        call raises silently inside `LogoutView` (which catches the
-        exception) and inside `AppTokenRefreshSerializer.validate` (which
-        debug-logs and continues). The LogoutView returns 200 as if it
-        worked, but the token is not actually blacklisted and can be reused.
-        It will pass once custom blacklist models that accept string user
-        IDs are wired up.
+        Implemented via the cache deny-list in `authentication.token_denylist`
+        (SimpleJWT's DB blacklist is incompatible with our string user ids).
+        The serializer raises a ValidationError → HTTP 400.
         """
         self.client.post(
             "/api/auth/logout/",
@@ -100,7 +87,8 @@ class LogoutViewBlacklistTest(TestCase):
             {"refresh": self.refresh},
             format="json",
         )
-        self.assertEqual(refresh_resp.status_code, 401)
+        self.assertGreaterEqual(refresh_resp.status_code, 400)
+        self.assertLess(refresh_resp.status_code, 500)
 
     def test_double_logout_does_not_error(self) -> None:
         """Idempotent: calling logout twice with the same refresh token

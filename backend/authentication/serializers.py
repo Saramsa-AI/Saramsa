@@ -100,6 +100,11 @@ class AppTokenRefreshSerializer(serializers.Serializer):
         except TokenError:
             raise serializers.ValidationError("Invalid or expired refresh token")
 
+        # Reject tokens revoked via logout/rotation (cache deny-list).
+        from .token_denylist import is_refresh_token_denied
+        if is_refresh_token_denied(old_refresh):
+            raise serializers.ValidationError("Invalid or expired refresh token")
+
         user_id = old_refresh.get('user_id')
         if not user_id:
             raise serializers.ValidationError("Invalid refresh token")
@@ -112,17 +117,11 @@ class AppTokenRefreshSerializer(serializers.Serializer):
         if not user_data.get('is_active', True):
             raise serializers.ValidationError("User account is disabled")
 
-        # Blacklist the old refresh token (skip if user model incompatible).
-        # OutstandingToken FK expects numeric user_id and ours are strings,
-        # so this is expected to fail today — debug-log so it isn't entirely
-        # invisible if the failure mode changes.
-        try:
-            old_refresh.blacklist()
-        except Exception as _blacklist_exc:
-            import logging as _logging
-            _logging.getLogger(__name__).debug(
-                "Refresh token blacklist skipped: %s", _blacklist_exc,
-            )
+        # Rotation: revoke the old refresh token so it can't be reused (the
+        # SimpleJWT DB blacklist is incompatible with our string user ids, so
+        # we use the cache deny-list).
+        from .token_denylist import deny_refresh_token
+        deny_refresh_token(old_refresh)
 
         from .org_context import build_user_with_org_context
 

@@ -141,7 +141,9 @@ class LocalProcessingService:
                          company_name: str = "Company", run_id: str = None,
                          is_cancelled: Optional[Callable[[], bool]] = None,
                          user_id: Optional[str] = None,
-                         regenerate_callback: Optional[Callable[[List[str]], List[str]]] = None) -> ProcessingResult:
+                         regenerate_callback: Optional[Callable[[List[str]], List[str]]] = None,
+                         project_id: Optional[str] = None,
+                         analysis_id: Optional[str] = None) -> ProcessingResult:
         """Run the full pipeline and return a ProcessingResult.
 
         Args:
@@ -248,7 +250,8 @@ class LocalProcessingService:
         # Step 4: Unified narration (single GPT entrypoint)
         with phase("narrate", n_aspects=len(aspects)):
             insights, features, work_items, narratives, candidates = self._narrate_with_service(
-                combined_matches, aggregated_stats, aspects, company_name, user_id=user_id
+                combined_matches, aggregated_stats, aspects, company_name, user_id=user_id,
+                project_id=project_id, analysis_id=analysis_id,
             )
 
         processing_time = time.time() - start_time
@@ -503,7 +506,8 @@ class LocalProcessingService:
     # Unified narration (single GPT entrypoint)
     # ------------------------------------------------------------------
 
-    def _narrate_with_service(self, matches, aggregated_stats, aspects, company_name, user_id: Optional[str] = None):
+    def _narrate_with_service(self, matches, aggregated_stats, aspects, company_name, user_id: Optional[str] = None,
+                              project_id: Optional[str] = None, analysis_id: Optional[str] = None):
         """Call unified NarrationService with lean payload.
 
         Generates work item candidates deterministically BEFORE the GPT call
@@ -570,8 +574,9 @@ class LocalProcessingService:
         logger.info(f"Generated {len(candidates)} work item candidates for narration")
 
         narration_input = {
-            "project_id": None,
-            "analysis_id": None,
+            # Real ids so per-project narration cost caps + usage metering apply.
+            "project_id": project_id,
+            "analysis_id": analysis_id,
             "taxonomy_id": None,
             "taxonomy_version": None,
             "overall": aggregated_stats.overall_sentiment,

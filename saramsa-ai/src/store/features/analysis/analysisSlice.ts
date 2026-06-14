@@ -92,62 +92,64 @@ const initialState: AnalysisState = {
 /**
  * Poll task status until completion and fetch the analysis result.
  */
-async function waitForAnalysisTask(taskId: string, dispatch: any): Promise<any> {
+async function waitForAnalysisTask(taskId: string, dispatch: any, signal?: AbortSignal): Promise<any> {
   return new Promise((resolve, reject) => {
     let pollCount = 0;
     const maxPolls = 900; // 30 minutes max (2s interval)
+    let pollInterval: ReturnType<typeof setInterval>;
 
-    const pollInterval = setInterval(async () => {
+    // Single teardown path: stop polling + detach the abort listener so the
+    // interval can't keep running (and dispatching) after the caller is gone.
+    const finish = (fn: (v: any) => void, arg: any) => {
+      clearInterval(pollInterval);
+      signal?.removeEventListener('abort', onAbort);
+      fn(arg);
+    };
+    const onAbort = () => finish(reject, new DOMException('Analysis polling aborted', 'AbortError'));
+
+    pollInterval = setInterval(async () => {
       try {
         pollCount++;
-        console.log(`[waitForAnalysisTask] Poll #${pollCount} for task ${taskId}`);
-
         const response = await apiRequest('get', `/insights/task-status/${taskId}/`, undefined, true);
         const statusData = response.data.data;
         const status = statusData.status;
 
-        console.log(`[waitForAnalysisTask] Status: ${status}`);
-
         // PARTIAL is terminal too — a partial run produced results (some comments
         // failed). Without this branch it would poll until the 30-min timeout.
         if (status === 'COMPLETED' || status === 'SUCCESS' || status === 'PARTIAL') {
-          clearInterval(pollInterval);
           const isPartial = status === 'PARTIAL';
-
-          // Fetch the full analysis data
           const insightId = statusData.result?.insight_id;
           if (insightId) {
             const analysisRes = await apiRequest('get', `/feedback/analysis/${insightId}/`, undefined, true);
-            const analysisData = analysisRes.data?.data;
-
-            console.log(`[waitForAnalysisTask] Analysis loaded:`, insightId, isPartial ? '(partial)' : '');
-            resolve({
-              id: insightId,
-              analysisData: analysisData,
-              taskId: taskId,
-              partial: isPartial,
-            });
+            finish(resolve, { id: insightId, analysisData: analysisRes.data?.data, taskId, partial: isPartial });
           } else {
-            resolve({
-              id: `analysis_${Date.now()}`,
-              analysisData: statusData.result,
-              taskId: taskId,
-              partial: isPartial,
-            });
+            finish(resolve, { id: `analysis_${Date.now()}`, analysisData: statusData.result, taskId, partial: isPartial });
           }
         } else if (status === 'FAILURE' || status === 'FAILED') {
-          clearInterval(pollInterval);
-          reject(new Error(statusData.error || 'Analysis failed'));
+          finish(reject, new Error(statusData.error || 'Analysis failed'));
         } else if (pollCount >= maxPolls) {
-          clearInterval(pollInterval);
-          reject(new Error('Analysis timeout'));
+          finish(reject, new Error('Analysis timeout'));
         }
       } catch (error) {
-        clearInterval(pollInterval);
-        reject(error);
+        finish(reject, error);
       }
     }, 2000); // Poll every 2 seconds
+
+    if (signal) {
+      if (signal.aborted) return onAbort();
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
   });
+}
+
+/**
+ * Guard against an out-of-order completion yanking the selection away from a
+ * deliberate user choice: only auto-select the finished run if the user is still
+ * on its placeholder, hasn't selected anything, or is already on it.
+ */
+function shouldSelect(getState: () => any, newId: string): boolean {
+  const cur = getState()?.analysis?.selectedAnalysisId;
+  return !cur || cur === newId || String(cur).startsWith('analyzing_');
 }
 
 /**
@@ -158,7 +160,6 @@ function normalizeAnalysisData(input: any): AnalysisData {
   if (!input) return input;
 
   console.log('[normalizeAnalysisData] Input keys:', Object.keys(input));
-  console.log('[normalizeAnalysisData] Full input:', input);
 
   // Extract the core analysis data from various possible structures
   let analysisData = input.analysisData || input.analysis?.analysisData || input;
@@ -265,12 +266,9 @@ export const fetchAnalysisById = createAsyncThunk<
       const response = await apiRequest('get', `/feedback/analysis/${analysisId}/`, undefined, true);
 
       const data = response.data?.data ?? response.data;
-      console.log(`[fetchById] RAW response.data:`, response.data);
-      console.log(`[fetchById] Extracted data:`, data);
 
       // CRITICAL: API returns {exists, analysis} - extract the analysis object!
       const analysisData = data.analysis ?? data;
-      console.log(`[fetchById] Analysis object:`, analysisData);
       console.log(`[fetchById] Loaded analysis ID:`, analysisData.id);
 
       return analysisData as AnalysisData;
@@ -398,23 +396,18 @@ export const uploadAndAnalyze = createAsyncThunk<
  * Poll task status
  */
 export const pollTaskStatus = createAsyncThunk<
-  { status: string; state: string },
+  { status: string; result?: any; error?: string },
   { taskId: string },
   { rejectValue: string }
 >(
   'analysis/pollStatus',
   async ({ taskId }, { rejectWithValue }) => {
     try {
-      const response = await apiRequest('GET', `/tasks/${taskId}/status/`, {});
-
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error(`Failed to poll status`);
-      }
-
-      const data = response.data;
-      return { status: data.status, state: data.state };
+      // Canonical status endpoint (same as waitForAnalysisTask); payload nests under data.data.
+      const response = await apiRequest('get', `/insights/task-status/${taskId}/`, undefined, true);
+      const data = response.data?.data ?? {};
+      return { status: data.status, result: data.result, error: data.error };
     } catch (error: any) {
-      console.error('[poll] Error:', error);
       return rejectWithValue(error.message || 'Failed to poll status');
     }
   }
@@ -537,10 +530,8 @@ const analysisSlice = createSlice({
         console.log(`[setAnalysisData] ✅ Setting deepAnalysis from work_items (${data.work_items.length} items)`);
         state.deepAnalysis = { work_items: data.work_items };
       } else {
-        console.log(`[setAnalysisData] ⚠️  No work_items, using userStories:`, data?.userStories);
         state.deepAnalysis = data?.userStories ?? null;
       }
-      console.log(`[setAnalysisData] deepAnalysis set to:`, state.deepAnalysis);
       state.loadedComments = data?.comments ?? null;
     },
 
@@ -691,15 +682,13 @@ const analysisSlice = createSlice({
     // pollTaskStatus
     // ========================================
     builder.addCase(pollTaskStatus.fulfilled, (state, action) => {
-      const { status, state: taskState } = action.payload;
+      const { status } = action.payload;
 
-      if (status === 'COMPLETED' || taskState === 'completed') {
+      if (status === 'COMPLETED' || status === 'SUCCESS' || status === 'PARTIAL') {
         state.currentTaskStatus = 'completed';
       } else if (status === 'FAILURE' || status === 'FAILED') {
         state.currentTaskStatus = 'failed';
       }
-
-      console.log(`[poll.fulfilled] Status: ${status}, State: ${taskState}`);
     });
 
     // ========================================
@@ -798,14 +787,14 @@ export const resumeInFlightTask = createAsyncThunk<
   any,
   { taskId: string; projectId?: string },
   { rejectValue: string }
->('analysis/resumeInFlightTask', async ({ taskId, projectId }, { dispatch, rejectWithValue, getState }) => {
+>('analysis/resumeInFlightTask', async ({ taskId, projectId }, { dispatch, rejectWithValue, getState, signal }) => {
   try {
-    const result = await waitForAnalysisTask(taskId, dispatch);
+    const result = await waitForAnalysisTask(taskId, dispatch, signal);
     const state: any = getState();
     const stateProjectId = state?.analysis?.projectId || projectId;
     if (stateProjectId) {
       await dispatch(fetchAnalysisHistory({ projectId: stateProjectId })).unwrap();
-      if (result?.id && !String(result.id).startsWith('analysis_')) {
+      if (result?.id && !String(result.id).startsWith('analysis_') && shouldSelect(getState, result.id)) {
         dispatch(setSelectedAnalysisId(result.id));
       }
     }
@@ -819,10 +808,8 @@ export const ingestFile = createAsyncThunk<
   any,
   { file: File; projectId?: string },
   { rejectValue: string }
->('analysis/ingestFile', async ({ file, projectId }, { dispatch, rejectWithValue, getState }) => {
+>('analysis/ingestFile', async ({ file, projectId }, { dispatch, rejectWithValue, getState, signal }) => {
   try {
-    console.log('[ingestFile] Starting upload:', file.name);
-
     const form = new FormData();
     form.append('file', file);
     if (projectId) {
@@ -832,8 +819,6 @@ export const ingestFile = createAsyncThunk<
     const response = await apiRequest('post', '/insights/ingest/', form, true, true);
     const data = response.data.data;
     const taskId = data?.task_id;
-
-    console.log('[ingestFile] Upload complete, task ID:', taskId);
 
     if (!taskId) {
       throw new Error('No task ID received from server');
@@ -845,27 +830,22 @@ export const ingestFile = createAsyncThunk<
     }
 
     // Poll until analysis completes
-    console.log('[ingestFile] Starting to poll for completion...');
-    const result = await waitForAnalysisTask(taskId, dispatch);
+    const result = await waitForAnalysisTask(taskId, dispatch, signal);
 
     // Refresh history after completion so new analysis appears in sidebar
     const state: any = getState();
     const stateProjectId = state?.analysis?.projectId || projectId;
     if (stateProjectId) {
-      console.log('[ingestFile] Refreshing history after completion');
       await dispatch(fetchAnalysisHistory({ projectId: stateProjectId })).unwrap();
-      console.log('[ingestFile] History refreshed successfully');
 
       // Auto-select the new analysis so center panel displays it
-      if (result?.id) {
-        console.log('[ingestFile] Auto-selecting new analysis:', result.id);
+      if (result?.id && shouldSelect(getState, result.id)) {
         dispatch(setSelectedAnalysisId(result.id));
       }
     }
 
     return result;
   } catch (err: any) {
-    console.error('[ingestFile] Error:', err);
     let errorMessage = 'File ingestion failed. Please try again.';
     if (err.response?.status === 401) {
       errorMessage = 'Authentication required. Please login again.';
@@ -891,7 +871,7 @@ export const retriggerAnalysis = createAsyncThunk<
   any,
   { analysisId: string; projectId?: string },
   { rejectValue: string }
->('analysis/retrigger', async ({ analysisId, projectId }, { dispatch, rejectWithValue, getState }) => {
+>('analysis/retrigger', async ({ analysisId, projectId }, { dispatch, rejectWithValue, getState, signal }) => {
   try {
     const response = await apiRequest('post', `/insights/analyses/${analysisId}/retrigger/`, undefined, true);
     const taskId = response.data?.data?.task_id;
@@ -899,7 +879,7 @@ export const retriggerAnalysis = createAsyncThunk<
       throw new Error('No task ID received from retrigger');
     }
 
-    const result = await waitForAnalysisTask(taskId, dispatch);
+    const result = await waitForAnalysisTask(taskId, dispatch, signal);
 
     const state: any = getState();
     const stateProjectId = state?.analysis?.projectId || projectId;
@@ -908,7 +888,7 @@ export const retriggerAnalysis = createAsyncThunk<
       // Only auto-select a real row id. The cache-evicted PARTIAL fallback yields a
       // synthetic `analysis_<ts>` id that isn't in the refreshed history; selecting
       // it would highlight nothing — let the refreshed list stand instead.
-      if (result?.id && !String(result.id).startsWith('analysis_')) {
+      if (result?.id && !String(result.id).startsWith('analysis_') && shouldSelect(getState, result.id)) {
         dispatch(setSelectedAnalysisId(result.id));
       }
     }
@@ -937,7 +917,7 @@ export const analyzeComments = createAsyncThunk<
   any,
   { comments: string[]; projectId?: string; fileName?: string },
   { rejectValue: string }
->('analysis/analyzeComments', async (data, { dispatch, rejectWithValue }) => {
+>('analysis/analyzeComments', async (data, { dispatch, rejectWithValue, signal }) => {
   try {
     const payload: any = { comments: data.comments };
     if (data.projectId) payload.project_id = data.projectId;
@@ -948,7 +928,7 @@ export const analyzeComments = createAsyncThunk<
     if (!taskId) {
       throw new Error('No task ID received from server');
     }
-    return await waitForAnalysisTask(taskId, dispatch);
+    return await waitForAnalysisTask(taskId, dispatch, signal);
   } catch (err: any) {
     let errorMessage = 'Sentiment analysis failed. Please try again.';
     if (err.response?.status === 401) errorMessage = 'Authentication required. Please login again.';

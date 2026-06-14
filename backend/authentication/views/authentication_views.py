@@ -396,11 +396,13 @@ class LogoutView(APIView):
         if refresh_token:
             try:
                 token = RefreshToken(refresh_token)
-                token.blacklist()
+                # Revoke via the cache deny-list (SimpleJWT's DB blacklist is
+                # incompatible with our string user ids). Rejected on next refresh.
+                from authentication.token_denylist import deny_refresh_token
+                deny_refresh_token(token)
             except Exception:
-                # Token already invalid, blacklisted, malformed, or
-                # belongs to a deleted user. None of these are failures
-                # from the user's perspective — they're logging out.
+                # Token already invalid, malformed, or belongs to a deleted
+                # user. None of these are failures from the user's perspective.
                 pass
 
         return StandardResponse.success(

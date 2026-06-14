@@ -114,8 +114,8 @@ class FeedbackChunkingService:
                 data = json.loads(feedback_data)
                 if isinstance(data, list):
                     return [str(item) for item in data if item]
-            except:
-                pass
+            except (ValueError, TypeError):
+                pass  # not JSON — fall through to delimiter-based splitting
         
         # Try line separation with common delimiters
         lines = feedback_data.split('\n')

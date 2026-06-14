@@ -227,10 +227,11 @@ class UpdateKeywordsView(APIView):
 
         analysis_service = get_analysis_service()
 
-        project_id, project_doc, is_draft = analysis_service.ensure_project_context(
-            incoming_project_id,
-            user_id_str,
-        )
+        # ensure_project_context hits the Django ORM; @async_to_sync above puts us
+        # inside a running event loop, so it must be wrapped (mirrors file_upload_views).
+        project_id, project_doc, is_draft = await sync_to_async(
+            analysis_service.ensure_project_context, thread_sensitive=True
+        )(incoming_project_id, user_id_str)
         project_context = {
             'project_id': project_id,
             'project_status': project_doc.get("status", "draft" if is_draft else "active"),
@@ -255,7 +256,7 @@ class UpdateKeywordsView(APIView):
         company_name = None
         if hasattr(request, 'user') and request.user.is_authenticated:
             try:
-                user_data = analysis_service.get_user_by_id(str(request.user.id))
+                user_data = await sync_to_async(analysis_service.get_user_by_id, thread_sensitive=True)(str(request.user.id))
                 if user_data:
                     company_name = user_data.get('company_name')
             except Exception as e:
@@ -269,8 +270,11 @@ class UpdateKeywordsView(APIView):
         # Build feedback data with keyword context
         feedback_data = f"{keyword_context}\n\nFEEDBACK DATA:\n" + "\n".join([str(c) for c in comments])
         
-        # Create prompt using structured system
-        prompt = getSentAnalysisPrompt(
+        # Create prompt using structured system. getSentAnalysisPrompt resolves
+        # project prompt overrides via the ORM, so it must run on a sync thread
+        # here — otherwise it raises in the async context and silently falls back
+        # to the default (ignoring the override).
+        prompt = await sync_to_async(getSentAnalysisPrompt, thread_sensitive=True)(
             company_name=company_name, feedback_data=feedback_data, project_id=project_id,
         )
         
@@ -348,11 +352,12 @@ class UpdateKeywordsView(APIView):
             'negative_keywords': neg_keys,
         }
 
-        # Resolve taxonomy for versioned linkage (Phase-1)
+        # Resolve taxonomy for versioned linkage. These hit the ORM, so they
+        # must be wrapped (we're inside @async_to_sync).
         taxonomy_service = get_taxonomy_service()
-        taxonomy = taxonomy_service.get_active_taxonomy(project_id, comments=None)
+        taxonomy = await sync_to_async(taxonomy_service.get_active_taxonomy, thread_sensitive=True)(project_id, comments=None)
         if not taxonomy and updated_keywords:
-            taxonomy = taxonomy_service.create_initial_taxonomy(
+            taxonomy = await sync_to_async(taxonomy_service.create_initial_taxonomy, thread_sensitive=True)(
                 project_id,
                 list(updated_keywords.keys()),
                 source="user"
@@ -379,9 +384,9 @@ class UpdateKeywordsView(APIView):
                 }
             }
             
-            saved_analysis = analysis_service.save_analysis_data(analysis_data)
+            saved_analysis = await sync_to_async(analysis_service.save_analysis_data, thread_sensitive=True)(analysis_data)
             if saved_analysis:
-                analysis_service.update_project_last_analysis(project_id, saved_analysis['id'])
+                await sync_to_async(analysis_service.update_project_last_analysis, thread_sensitive=True)(project_id, saved_analysis['id'])
         except Exception as e:
             logger.error(f"Error saving updated analysis: {e}")
 

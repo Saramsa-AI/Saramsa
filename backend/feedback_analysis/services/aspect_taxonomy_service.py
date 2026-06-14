@@ -311,10 +311,12 @@ class AspectTaxonomyService:
         Returns:
             Dict with reuse decision and reasoning
         """
-        from datetime import datetime, timedelta
-        
-        current_time = datetime.utcnow()
+        from datetime import datetime, timedelta, timezone
+
+        current_time = datetime.now(timezone.utc)
         created_time = datetime.fromisoformat(taxonomy.created_at.replace('Z', '+00:00'))
+        if created_time.tzinfo is None:
+            created_time = created_time.replace(tzinfo=timezone.utc)
         age_days = (current_time - created_time).days
         
         # Always reuse if user pinned it
