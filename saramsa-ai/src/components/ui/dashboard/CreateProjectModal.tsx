@@ -5,7 +5,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch, RootState } from '@/store/store';
 import { fetchExternalProjects, clearExternalProjects } from '@/store/features/integrations/integrationsSlice';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FolderPlus, Cloud, Loader2, Search, ExternalLink, Link2 } from 'lucide-react';
+import { X, FolderPlus, Cloud, Loader2, Search, ExternalLink, Link2, Check } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -268,8 +268,7 @@ export function CreateProjectModal({ onClose, onCreate, onImport, integrations, 
                         <p className="text-xs text-muted-foreground">
                           {filteredProjects.filter(p => getLinkedProject(p.id)).length > 0 ? (
                             <>
-                              <strong>{filteredProjects.filter(p => getLinkedProject(p.id)).length}</strong> project(s) already linked. 
-                              They are disabled and show which Saramsa project they're connected to.
+                              <strong>{filteredProjects.filter(p => getLinkedProject(p.id)).length}</strong> already linked — shown disabled below.
                             </>
                           ) : (
                             'All projects are available to link.'
@@ -296,49 +295,56 @@ export function CreateProjectModal({ onClose, onCreate, onImport, integrations, 
                           {filteredProjects.map((project) => {
                             const linkedProject = getLinkedProject(project.id);
                             const isAlreadyLinked = !!linkedProject;
-                            
+                            const isSelected = selectedExternalProject?.id === project.id && !isAlreadyLinked;
+
                             return (
-                              <Button
+                              <button
                                 key={project.id}
                                 type="button"
                                 onClick={() => !isAlreadyLinked && setSelectedExternalProject(project)}
-                                variant="ghost"
-                                className={`w-full px-3 py-2 text-left transition-colors ${
+                                disabled={loading || isAlreadyLinked}
+                                aria-pressed={isSelected}
+                                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors focus:outline-none ${
                                   isAlreadyLinked
-                                    ? 'opacity-60 cursor-not-allowed bg-secondary/60'
-                                    : selectedExternalProject?.id === project.id
-                                    ? 'bg-saramsa-brand/10 dark:bg-saramsa-brand/20'
+                                    ? 'cursor-not-allowed bg-muted/40'
+                                    : isSelected
+                                    ? 'bg-saramsa-brand/10'
                                     : 'hover:bg-accent/60'
                                 }`}
-                                disabled={loading || isAlreadyLinked}
                               >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium text-foreground truncate">
-                                      {project.name}
+                                {/* Selection indicator */}
+                                <span
+                                  className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border ${
+                                    isSelected
+                                      ? 'border-saramsa-brand bg-saramsa-brand text-white'
+                                      : 'border-border'
+                                  } ${isAlreadyLinked ? 'opacity-40' : ''}`}
+                                >
+                                  {isSelected && <Check className="h-3 w-3" />}
+                                </span>
+
+                                {/* Name + secondary line */}
+                                <div className="min-w-0 flex-1">
+                                  <p className={`truncate text-sm font-medium ${isAlreadyLinked ? 'text-muted-foreground' : 'text-foreground'}`}>
+                                    {project.name}
+                                  </p>
+                                  {isAlreadyLinked ? (
+                                    <p className="truncate text-xs text-muted-foreground">
+                                      Linked to {linkedProject.name}
                                     </p>
-                                    {project.key && (
-                                      <p className="text-xs text-muted-foreground">
-                                        {project.key}
-                                      </p>
-                                    )}
-                                    {isAlreadyLinked && (
-                                      <p className="text-xs text-orange-600 dark:text-orange-400 mt-1">
-                                        Already linked to "{linkedProject.name}"
-                                      </p>
-                                    )}
-                                  </div>
-                                  {selectedExternalProject?.id === project.id && !isAlreadyLinked && (
-                                    <div className="w-2 h-2 bg-saramsa-brand rounded-full ml-2 flex-shrink-0"></div>
-                                  )}
-                                  {isAlreadyLinked && (
-                                    <span className="flex items-center gap-1 text-xs px-2 py-1 bg-amber-100/80 dark:bg-amber-900/30 text-orange-700 dark:text-orange-400 rounded flex-shrink-0">
-                                      <Link2 className="w-3 h-3" />
-                                      Linked
-                                    </span>
-                                  )}
+                                  ) : project.key ? (
+                                    <p className="truncate text-xs text-muted-foreground">{project.key}</p>
+                                  ) : null}
                                 </div>
-                              </Button>
+
+                                {/* Trailing "Linked" badge */}
+                                {isAlreadyLinked && (
+                                  <span className="flex flex-shrink-0 items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                                    <Link2 className="h-3 w-3" />
+                                    Linked
+                                  </span>
+                                )}
+                              </button>
                             );
                           })}
                         </div>
