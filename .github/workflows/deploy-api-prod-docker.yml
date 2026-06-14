@@ -157,6 +157,12 @@ jobs:
             --name saramsa-api-prod \
             --resource-group saramsa \
             --startup-file ""
+          # Tag logs/telemetry with the deployed commit + environment so the
+          # `release` / `environment` log fields populate (see LOGGING.md).
+          az webapp config appsettings set \
+            --name saramsa-api-prod \
+            --resource-group saramsa \
+            --settings ENVIRONMENT=production RELEASE=${{ github.sha }}
 
       - name: Restart API app to pull new image
         run: |
