@@ -99,7 +99,7 @@ class FilteredAnalysisView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"Error filtering analysis: {e}", exc_info=True)
+            logger.exception("Failed to filter analysis")
             return StandardResponse.error(
                 title='Filtered Analysis Failed',
                 detail=str(e),

@@ -135,7 +135,7 @@ class LocalProcessingService:
 
     def __init__(self):
         self.aspect_service = get_aspect_service()
-        logger.info("LocalProcessingService initialized (LLM aspect + sentiment, no local models)")
+        logger.debug("LocalProcessingService initialized (LLM aspect + sentiment, no local models)")
 
     def process_comments(self, comments: List[str], aspects: List[str],
                          company_name: str = "Company", run_id: str = None,
@@ -160,7 +160,10 @@ class LocalProcessingService:
         if run_id is None:
             run_id = f"run_{int(time.time())}"
 
-        logger.info(f"Processing {len(comments)} comments with {len(aspects)} aspects (run: {run_id})")
+        logger.debug(
+            "Processing comments",
+            extra={"comment_count": len(comments), "aspect_count": len(aspects), "run_id": run_id},
+        )
         reset_pipeline_summary()
 
         # Strip bracket metadata before classification (20-30% token reduction).
@@ -184,24 +187,27 @@ class LocalProcessingService:
 
             if unmapped_rate > self.AUTO_REGENERATE_THRESHOLD:
                 logger.warning(
-                    f"🔄 LOW MAPPING DETECTED: {mapping_rate:.1%} mapped "
-                    f"({len(similarity_results) - unmapped_count}/{len(similarity_results)}). "
-                    f"Attempting adaptive taxonomy update..."
+                    "Low aspect mapping rate; attempting adaptive taxonomy update",
+                    extra={
+                        "mapping_rate": mapping_rate,
+                        "mapped_count": len(similarity_results) - unmapped_count,
+                        "total_count": len(similarity_results),
+                    },
                 )
                 try:
                     with phase("taxonomy_regen", mapped_pct=f"{mapping_rate:.1%}"):
                         new_aspects = regenerate_callback(comments, mapping_rate)
                     if new_aspects is None:
                         # Locked taxonomy - don't re-run, just continue
-                        logger.info("🔒 Taxonomy locked; keeping original aspects (will produce limited features).")
+                        logger.info("Taxonomy locked; keeping original aspects")
                     elif len(new_aspects) > 0:
-                        logger.info(f"✅ Got {len(new_aspects)} aspects from callback: {new_aspects[:5]}...")
+                        logger.info("Received aspects from regenerate callback", extra={"aspect_count": len(new_aspects)})
                         aspects = new_aspects
 
                         # Free pass1 results before pass2 — they're replaced anyway
                         # and can be large for big datasets.
                         del similarity_results
-                        logger.info("[MEMORY] Cleaned up pass1 results before pass2")
+                        logger.debug("Cleaned up pass1 results before pass2")
 
                         # Re-run aspect classification with updated aspects
                         with phase("aspect_classify_pass2", n_items=len(stripped_comments), n_aspects=len(aspects)):
@@ -211,11 +217,14 @@ class LocalProcessingService:
                         scored_after = [r for r in similarity_results if not r.get("errored")]
                         new_unmapped = sum(1 for r in scored_after if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])
                         new_rate = new_unmapped / max(len(scored_after), 1)
-                        logger.info(f"📈 After taxonomy update: {(1-new_rate):.1%} mapped (was {mapping_rate:.1%})")
+                        logger.info(
+                            "Taxonomy update applied",
+                            extra={"mapping_rate": 1 - new_rate, "previous_mapping_rate": mapping_rate},
+                        )
                     else:
-                        logger.warning("Regenerate callback returned no aspects; keeping original taxonomy.")
-                except Exception as e:
-                    logger.exception(f"Adaptive taxonomy update failed: {e}. Continuing with original taxonomy.")
+                        logger.warning("Regenerate callback returned no aspects; keeping original taxonomy")
+                except Exception:
+                    logger.exception("Adaptive taxonomy update failed; continuing with original taxonomy")
 
         # Restore original comment text (with brackets) in similarity results for display + LLM narration
         for i, result in enumerate(similarity_results):
@@ -242,9 +251,12 @@ class LocalProcessingService:
 
         if aggregated_stats.unmapped_percentage > self.UNMAPPED_WARNING_THRESHOLD:
             logger.warning(
-                f"High unmapped rate: {aggregated_stats.unmapped_percentage:.1%} "
-                f"({aggregated_stats.unmapped_count}/{aggregated_stats.total_comments}). "
-                "Consider updating the aspect taxonomy."
+                "High unmapped rate; consider updating the aspect taxonomy",
+                extra={
+                    "unmapped_percentage": aggregated_stats.unmapped_percentage,
+                    "unmapped_count": aggregated_stats.unmapped_count,
+                    "total_comments": aggregated_stats.total_comments,
+                },
             )
 
         # Step 4: Unified narration (single GPT entrypoint)
@@ -255,7 +267,7 @@ class LocalProcessingService:
             )
 
         processing_time = time.time() - start_time
-        logger.info(f"Pipeline completed in {processing_time:.2f}s")
+        logger.info("Pipeline completed", extra={"duration_s": round(processing_time, 2)})
         emit_pipeline_summary(label=f"run={run_id} n_comments={len(comments)}")
 
         return ProcessingResult(
@@ -571,7 +583,7 @@ class LocalProcessingService:
         candidates = candidate_service.generate_candidates(
             analysis_for_candidates, previous_analysis=None
         )
-        logger.info(f"Generated {len(candidates)} work item candidates for narration")
+        logger.debug("Generated work item candidates for narration", extra={"candidate_count": len(candidates)})
 
         narration_input = {
             # Real ids so per-project narration cost caps + usage metering apply.
@@ -705,7 +717,10 @@ class LocalProcessingService:
             samples.extend(selected[:take])
             budget -= take
 
-        logger.info(f"Evidence samples: {len(samples)} total across {len(aspect_buckets)} aspects")
+        logger.debug(
+            "Selected evidence samples",
+            extra={"sample_count": len(samples), "aspect_count": len(aspect_buckets)},
+        )
         return samples
 
     def _build_evidence(self, matches: List[AspectMatch]) -> List[Dict[str, Any]]:

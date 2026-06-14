@@ -157,6 +157,11 @@ jobs:
             --name saramsa-api-prod \
             --resource-group saramsa \
             --startup-file ""
+          # Populate the environment/release log fields.
+          az webapp config appsettings set \
+            --name saramsa-api-prod \
+            --resource-group saramsa \
+            --settings ENVIRONMENT=production RELEASE=${{ github.sha }}
 
       - name: Restart API app to pull new image
         run: |

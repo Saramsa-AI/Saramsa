@@ -24,7 +24,7 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
-    logger.error("Redis dependency is not installed.")
+    logger.error("Redis dependency is not installed")
 
 
 def _resilience_kwargs() -> dict:
@@ -62,7 +62,7 @@ class CacheService:
 
         if not REDIS_AVAILABLE:
             if self.allow_in_memory_fallback:
-                logger.warning("Redis not available, using in-memory cache because ALLOW_IN_MEMORY_CACHE=true.")
+                logger.warning("Redis not available; using in-memory cache because ALLOW_IN_MEMORY_CACHE is true")
                 return
             raise RuntimeError("Redis dependency is not installed and ALLOW_IN_MEMORY_CACHE is false.")
 
@@ -71,7 +71,7 @@ class CacheService:
 
             if not redis_url:
                 if self.allow_in_memory_fallback:
-                    logger.warning("REDIS_URL not set; using in-memory cache because ALLOW_IN_MEMORY_CACHE=true.")
+                    logger.warning("REDIS_URL not set; using in-memory cache because ALLOW_IN_MEMORY_CACHE is true")
                     return
                 raise RuntimeError("REDIS_URL environment variable is required when ALLOW_IN_MEMORY_CACHE=false.")
 
@@ -101,7 +101,7 @@ class CacheService:
                     ssl_keyfile=None,
                     **_resilience_kwargs(),
                 )
-                logger.info("Connecting to Azure Redis (SSL)...")
+                logger.info("Connecting to Azure Redis (SSL)")
             else:
                 # Local Redis without SSL
                 if not redis_url.startswith('redis://'):
@@ -112,14 +112,17 @@ class CacheService:
                     decode_responses=True,
                     **_resilience_kwargs(),
                 )
-                logger.info("Connecting to local Redis (non-SSL)...")
+                logger.info("Connecting to local Redis (non-SSL)")
 
             # Test connection
             self.redis_client.ping()
-            logger.info(f"Redis cache initialized successfully ({'SSL' if is_ssl else 'non-SSL'})")
+            logger.info("Redis cache initialized", extra={"ssl": is_ssl})
         except Exception as e:
             if self.allow_in_memory_fallback:
-                logger.warning(f"Redis connection failed, using in-memory cache because ALLOW_IN_MEMORY_CACHE=true: {e}")
+                logger.warning(
+                    "Redis connection failed; using in-memory cache because ALLOW_IN_MEMORY_CACHE is true",
+                    exc_info=True,
+                )
                 self.redis_client = None
                 return
             raise RuntimeError(f"Redis connection failed and ALLOW_IN_MEMORY_CACHE=false: {e}") from e
@@ -172,8 +175,8 @@ class CacheService:
             self.cache_stats['misses'] += 1
             return default
             
-        except Exception as e:
-            logger.error(f"Cache get error for key {key}: {e}")
+        except Exception:
+            logger.exception("Failed to get cache key", extra={"cache_key": key})
             self.cache_stats['misses'] += 1
             return default
     
@@ -208,8 +211,8 @@ class CacheService:
                 self.cache_stats['sets'] += 1
                 return True
                 
-        except Exception as e:
-            logger.error(f"Cache set error for key {key}: {e}")
+        except Exception:
+            logger.exception("Failed to set cache key", extra={"cache_key": key})
             return False
     
     def delete(self, key: str) -> bool:
@@ -237,8 +240,8 @@ class CacheService:
                     return True
                 return False
                 
-        except Exception as e:
-            logger.error(f"Cache delete error for key {key}: {e}")
+        except Exception:
+            logger.exception("Failed to delete cache key", extra={"cache_key": key})
             return False
 
     def incr(self, key: str, amount: int = 1, ttl: int = 3600) -> int:
@@ -260,8 +263,8 @@ class CacheService:
                 'expires_at': datetime.now() + timedelta(seconds=ttl)
             }
             return current
-        except Exception as e:
-            logger.error(f"Cache incr error for key {key}: {e}")
+        except Exception:
+            logger.exception("Failed to increment cache key", extra={"cache_key": key})
             return 0
     
     def clear_pattern(self, pattern: str) -> int:
@@ -292,8 +295,8 @@ class CacheService:
             self.cache_stats['deletes'] += deleted_count
             return deleted_count
             
-        except Exception as e:
-            logger.error(f"Cache clear pattern error for pattern {pattern}: {e}")
+        except Exception:
+            logger.exception("Failed to clear cache pattern", extra={"cache_pattern": pattern})
             return 0
     
     def _matches_pattern(self, key: str, pattern: str) -> bool:
@@ -321,9 +324,9 @@ class CacheService:
                     'connected_clients': info.get('connected_clients'),
                     'total_commands_processed': info.get('total_commands_processed')
                 }
-            except Exception as e:
-                logger.error(f"Error getting Redis info: {e}")
-        
+            except Exception:
+                logger.exception("Failed to get Redis info")
+
         return stats
     
     def health_check(self) -> Dict[str, Any]:
@@ -375,7 +378,7 @@ class CacheService:
 
             return result
         except Exception as e:
-            logger.error(f"Redis health check failed: {e}")
+            logger.exception("Redis health check failed")
             return {
                 'status': 'unhealthy',
                 'backend': 'redis',

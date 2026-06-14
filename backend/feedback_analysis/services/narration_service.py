@@ -67,28 +67,30 @@ class NarrationService:
         candidates = trimmed.get("work_item_candidates", [])
         candidate_count = len(candidates)
         expected_ids = [c.get("candidate_id") for c in candidates]
-        logger.info(f"Narration: calling GPT with {candidate_count} work item candidates")
-        logger.info(f"Narration: expected candidate_ids: {expected_ids}")
-        logger.info(f"Narration: prompt length = {len(prompt)} chars, ~{len(prompt)//4} tokens (approx)")
+        logger.info("Starting narration", extra={"candidate_count": candidate_count})
+        logger.debug(
+            "Narration prompt prepared",
+            extra={"prompt_chars": len(prompt), "approx_tokens": len(prompt) // 4},
+        )
 
         # Wrap the GPT call in a heartbeat so the 60-90s reasoning wait isn't
         # invisible. Without this, the log shows "calling GPT" and then nothing
         # for a minute+, which is indistinguishable from a hang.
         with Heartbeat("narration_gpt", interval_s=10):
             raw, actual_usage = self._call_generate_completions(prompt, user_id=user_id, project_id=project_id)
-        logger.info(f"Narration: GPT returned {len(raw)} chars. Checking for work_items in response...")
+        logger.debug("Narration response received", extra={"response_chars": len(raw)})
 
-        # Debug: check if GPT returned work_items
         try:
             import json
             raw_parsed = json.loads(raw)
             raw_work_items = raw_parsed.get("work_items", [])
             raw_work_items_count = len(raw_work_items)
-            returned_ids = [wi.get("candidate_id") for wi in raw_work_items if isinstance(wi, dict)]
-            logger.info(f"Narration: GPT response contains {raw_work_items_count} work_items before validation")
-            logger.info(f"Narration: GPT returned candidate_ids: {returned_ids}")
-        except Exception as e:
-            logger.warning(f"Narration: could not parse raw GPT response for debug: {e}")
+            logger.debug(
+                "Narration response work_items before validation",
+                extra={"work_item_count": raw_work_items_count},
+            )
+        except Exception:
+            logger.warning("Failed to parse raw narration response for inspection")
 
         # Aspect keys can come from either feature analytics or work-item
         # candidates (e.g. __taxonomy__, __overall__ sentinels). Narration
@@ -108,7 +110,10 @@ class NarrationService:
             raise RuntimeError(f"Narration validation failed: {errors}")
 
         validated_work_items_count = len(parsed.get("work_items", []))
-        logger.info(f"Narration: After validation, {validated_work_items_count} work_items remain")
+        logger.debug(
+            "Narration validation completed",
+            extra={"work_item_count": validated_work_items_count},
+        )
 
         self.last_status = "OK"
         self.last_errors = None

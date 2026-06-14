@@ -34,8 +34,13 @@ class TaskService:
             suggested_aspects: Optional list of frozen aspects (if None, will generate)
             dimensions: Optional list of dimension dicts per comment (structured-dimensions feature)
         """
-        logger.info(f"📈 Background task started: feedback analysis for project {project_id}")
-        logger.info(f"🔍 Input: {len(comments)} comments, user: {user_id_str}, project: {project_id}")
+        try:
+            from apis.core.request_context import analysis_id_var, set_request_identity
+            analysis_id_var.set(str(analysis_id))
+            set_request_identity(user_id_str)
+        except Exception:
+            logger.debug("Failed to bind analysis identity to logging context")
+        logger.info("Starting feedback analysis", extra={"comment_count": len(comments)})
         max_comments = int(os.getenv("MAX_COMMENTS_PER_ANALYSIS", "50000"))
         health = PipelineHealth(analysis_id=analysis_id, task_id=task_id)
         cache = get_cache_service()
@@ -64,8 +69,8 @@ class TaskService:
                     analysis_id, status, task_id=task_id, error=error,
                     project_id=project_id, user_id=user_id_str, **extra,
                 )
-            except Exception as _e:
-                logger.warning(f"durable status write failed ({status}): {_e}")
+            except Exception:
+                logger.warning("Failed to write durable status", extra={"status": status})
 
         if len(comments) > max_comments:
             health.mark_failed("max_comments_per_analysis exceeded")
@@ -89,10 +94,10 @@ class TaskService:
             # the work but before ack), it reprocesses again — a bounded, rare
             # extra run, acceptable for an explicit user-initiated retrigger.
             if not force_regenerate and get_analysis_service().analysis_has_result(analysis_id):
-                logger.info(f"♻️ Analysis {analysis_id} already complete — skipping re-delivered task (idempotent)")
+                logger.info("Skipping re-delivered task: analysis already complete")
                 return {"insight_id": analysis_id, "project_id": project_id, "status": "already_complete"}
-        except Exception as e:
-            logger.warning(f"Idempotency guard check failed (proceeding): {e}")
+        except Exception:
+            logger.warning("Idempotency guard check failed; proceeding")
 
         # A retrigger reuses the same analysis_id; clear the prior run's failure
         # flag and narration-call counter so the per-analysis narration guards
@@ -115,7 +120,7 @@ class TaskService:
                 from .narration_service import get_narration_service
                 narration_status = getattr(get_narration_service(), "last_status", None)
                 if narration_status and narration_status != "OK":
-                    logger.warning(f"Narration status: {narration_status}")
+                    logger.warning("Narration completed with non-OK status", extra={"narration_status": narration_status})
             except Exception:
                 pass
 
@@ -141,7 +146,7 @@ class TaskService:
             return result
                 
         except Exception as e:
-            logger.error(f"Error in feedback analysis task: {str(e)}", exc_info=True)
+            logger.exception("Failed to run feedback analysis task")
             health.mark_failed(str(e))
             cache.set(f"pipeline_health:{analysis_id}", health.to_dict(), ttl=3600)
             if task_id:
@@ -157,16 +162,16 @@ class TaskService:
         Uses LLM aspect classification and sentiment, with a single GPT call for
         final synthesis.
         """
-        logger.info("🤖 Processing feedback (LLM pipeline)")
+        logger.debug("Processing feedback through LLM pipeline")
 
         # Lazy load the processing service
         if self.local_processing_service is None:
             try:
                 from .local_processing_service import LocalProcessingService
                 self.local_processing_service = LocalProcessingService()
-                logger.info("✅ LocalProcessingService initialized successfully")
+                logger.debug("LocalProcessingService initialized")
             except Exception as e:
-                logger.error(f"❌ Failed to initialize LocalProcessingService: {e}", exc_info=True)
+                logger.exception("Failed to initialize LocalProcessingService")
                 raise RuntimeError("Pipeline initialization failed; fallback is disabled.") from e
 
         # 1. Resolve aspect taxonomy (cached → last analysis → GPT suggestion)
@@ -174,7 +179,7 @@ class TaskService:
 
         # 2. Process through the LLM pipeline
         run_id = str(uuid.uuid4())
-        logger.info(f"🚀 Processing {len(comments)} comments through the LLM pipeline (run: {run_id})")
+        logger.debug("Processing comments through LLM pipeline", extra={"comment_count": len(comments), "run_id": run_id})
 
         # Build cooperative cancellation checker (Windows solo pool ignores SIGTERM)
         is_cancelled = self._build_cancel_checker(analysis_id)
@@ -216,9 +221,12 @@ class TaskService:
                         last_regen = taxonomy.get("last_regenerated_at")
                         uploads_since = taxonomy.get("uploads_since_regen", 0)
                         logger.info(
-                            f"⏳ Regen cooldown active for domain '{current_domain}' "
-                            f"(last_regen={last_regen}, uploads_since={uploads_since}). "
-                            f"Falling back to additive growth."
+                            "Taxonomy regeneration cooldown active; falling back to additive growth",
+                            extra={
+                                "domain": current_domain,
+                                "last_regenerated_at": last_regen,
+                                "uploads_since_regen": uploads_since,
+                            },
                         )
                         # Fall through to additive growth path below.
                         partial = True
@@ -242,8 +250,8 @@ class TaskService:
             # Additive growth: 30-70% partial matches, OR drift+cooldown fallback.
             if partial and taxonomy:
                 logger.info(
-                    f"📈 PARTIAL MATCH ({mapping_rate:.0%}). Adding aspects additively. "
-                    f"Domain: {current_domain} + extending"
+                    "Partial taxonomy match; adding aspects additively",
+                    extra={"domain": current_domain, "mapping_rate": mapping_rate},
                 )
                 try:
                     taxonomy_service.add_aspects_to_taxonomy(project_id, taxonomy, new_aspects)
@@ -252,8 +260,8 @@ class TaskService:
                         if isinstance(a, dict) and a.get("label")
                     ]
                     return all_aspects
-                except Exception as e:
-                    logger.warning(f"Additive growth failed: {e}. Falling back to replacement.")
+                except Exception:
+                    logger.warning("Additive growth failed; falling back to replacement")
 
             # Full replacement. Catastrophic mismatch bypasses cooldown; the
             # explicit force_regenerate flag bypasses it too.
@@ -270,8 +278,13 @@ class TaskService:
                     "cooldown cleared"
                 )
                 logger.info(
-                    f"💾 Regenerated taxonomy. Domain: '{current_domain}' → '{new_domain}'. "
-                    f"Source: {source}. Reason: {bypass_reason}."
+                    "Regenerated taxonomy",
+                    extra={
+                        "from_domain": current_domain,
+                        "to_domain": new_domain,
+                        "source": source,
+                        "reason": bypass_reason,
+                    },
                 )
                 # Explicitly arm the cooldown on the freshly created taxonomy so a
                 # full regeneration always damps the next adapt attempt. Makes the
@@ -279,8 +292,8 @@ class TaskService:
                 # relying solely on the implicit stamp inside create_initial_taxonomy.
                 if created:
                     taxonomy_service.record_full_regeneration(project_id, created)
-            except Exception as e:
-                logger.warning(f"Failed to save new taxonomy: {e}")
+            except Exception:
+                logger.exception("Failed to save new taxonomy")
             return new_aspects
 
         pipeline_result = self.local_processing_service.process_comments(
@@ -295,15 +308,22 @@ class TaskService:
             analysis_id=analysis_id,
         )
         
-        logger.info(f"✅ Pipeline completed in {pipeline_result.processing_time:.2f}s")
-        logger.info(f"📊 Results: {len(pipeline_result.features)} features, {len(pipeline_result.insights)} insights, {len(pipeline_result.work_items)} work items")
+        logger.info(
+            "Pipeline completed",
+            extra={
+                "duration_s": round(pipeline_result.processing_time, 2),
+                "feature_count": len(pipeline_result.features),
+                "insight_count": len(pipeline_result.insights),
+                "work_item_count": len(pipeline_result.work_items),
+            },
+        )
 
         # 3. Convert pipeline result to expected format
         normalized_result = self._convert_pipeline_result_to_schema(pipeline_result, comments)
         try:
             validate_analysis_data(normalized_result)
         except Exception as e:
-            logger.error(f"Invalid analysisData schema (pipeline): {e}")
+            logger.exception("Failed to validate analysisData schema (pipeline)")
             raise ValueError(f"Invalid analysisData schema (pipeline): {e}")
         
         # 4. Save to database
@@ -355,13 +375,13 @@ class TaskService:
             analysis_service.mark_analysis_status(analysis_id, Analysis.STATUS_PARTIALLY_COMPLETED)
         
         if saved_result:
-            logger.info(f"✅ Analysis saved to PostgreSQL with ID: {saved_result.get('id')}")
+            logger.info("Analysis saved", extra={"saved_id": saved_result.get("id")})
             try:
                 analysis_service.update_project_last_analysis(project_id, insight_data["id"])
-            except Exception as e:
-                logger.warning(f"Could not update project last_analysis: {e}")
+            except Exception:
+                logger.warning("Failed to update project last_analysis")
         else:
-            logger.error(f"❌ Failed to save analysis data to PostgreSQL")
+            logger.error("Failed to save analysis data")
         
         self._record_taxonomy_health(taxonomy, project_id, self._compute_health_metrics_local(pipeline_result))
 
@@ -397,7 +417,7 @@ class TaskService:
                 if celery_task_id:
                     val = cache.get(f"saramsa:cancelled:{celery_task_id}")
                     if val:
-                        logger.info(f"Task {celery_task_id} cancelled via Redis flag")
+                        logger.info("Task cancelled via Redis flag", extra={"task_id": celery_task_id})
                         return True
                 return False
             except Exception as exc:
@@ -436,8 +456,11 @@ class TaskService:
             aspects = [a.get("label") or a.get("key") for a in existing.get("aspects", []) if isinstance(a, dict)]
             if aspects:
                 logger.info(
-                    f"📂 Reusing existing taxonomy (domain={existing.get('domain', 'unknown')}, "
-                    f"uploads_since_regen={existing.get('uploads_since_regen', 0)})"
+                    "Reusing existing taxonomy",
+                    extra={
+                        "domain": existing.get("domain", "unknown"),
+                        "uploads_since_regen": existing.get("uploads_since_regen", 0),
+                    },
                 )
                 taxonomy_service.increment_upload_counter(project_id, existing)
                 return existing, aspects
@@ -450,8 +473,12 @@ class TaskService:
                 template_aspects = get_template_aspects(domain_name)
                 if template_aspects:
                     logger.info(
-                        f"🎯 PHASE 4: Auto-detected domain '{domain_name}' "
-                        f"(score={score:.2f}). Seeding from template ({len(template_aspects)} aspects)"
+                        "Auto-detected domain; seeding taxonomy from template",
+                        extra={
+                            "domain": domain_name,
+                            "score": round(score, 2),
+                            "aspect_count": len(template_aspects),
+                        },
                     )
                     new_taxonomy = taxonomy_service.create_initial_taxonomy(
                         project_id, template_aspects,
@@ -495,8 +522,8 @@ class TaskService:
                 "last_avg_aspects_per_comment": avg_aspects,
                 "last_confidence_p95": confidence_p95,
             }
-        except Exception as e:
-            logger.warning(f"Failed to compute local taxonomy health metrics: {e}")
+        except Exception:
+            logger.warning("Failed to compute local taxonomy health metrics")
             return None
 
     @staticmethod

@@ -60,10 +60,10 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     if args.cmd != "serve":
-        logger.error("Unknown command. Use: celery-ops serve -A apis")
+        logger.error("Unknown command; use: celery-ops serve -A apis")
         sys.exit(1)
     if not args.app:
-        logger.error("Celery app required. Use: celery-ops serve -A apis")
+        logger.error("Celery app required; use: celery-ops serve -A apis")
         sys.exit(1)
 
     celery_app = _load_celery_app(args.app)

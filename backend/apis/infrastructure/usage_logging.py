@@ -123,14 +123,8 @@ def log_token_usage(
             pass
 
         # ── 2. Python log (→ file + console + OTel log exporter → App Insights traces table) ──
-        ctx_parts = [p for p in [user_id, project_id, task_type] if p]
-        ctx_label = " | ".join(ctx_parts) if ctx_parts else "no-context"
         logger.info(
-            "Token usage: %s/%s - %s tokens (in=%s out=%s cost=$%s latency=%sms) [%s]",
-            vendor, model, total_tokens, _in, _out,
-            f"{cost_usd:.6f}" if cost_usd is not None else "n/a",
-            f"{latency_ms:.0f}" if latency_ms is not None else "n/a",
-            ctx_label,
+            "Token usage recorded",
             extra={"token_usage": usage},
         )
 

@@ -47,7 +47,7 @@ def fix_json_string(faulty_json: str) -> str:
     # Step 0: Try direct parsing first - if it works, return as-is (no aggressive cleaning needed)
     try:
         json.loads(faulty_json)
-        logger.info("JSON successfully validated without cleaning")
+        logger.debug("JSON validated without cleaning")
         return faulty_json
     except json.JSONDecodeError:
         pass  # Continue with cleaning
@@ -121,29 +121,28 @@ def fix_json_string(faulty_json: str) -> str:
         # Step 7: Final validation
         try:
             parsed = json.loads(cleaned_json)
-            logger.info("JSON successfully cleaned and validated")
+            logger.debug("JSON cleaned and validated")
             # Return the cleaned JSON string
             return cleaned_json
         except json.JSONDecodeError as e:
             # Last resort: try to extract JSON using extract_json_from_text
-            logger.warning(f"JSON validation failed after cleaning: {e}")
+            logger.warning("JSON validation failed after cleaning; attempting extraction")
             extracted = extract_json_from_text(faulty_json)
             if extracted:
                 try:
                     json.loads(extracted)
-                    logger.info("JSON successfully extracted from text")
+                    logger.debug("JSON extracted from text")
                     return extracted
                 except json.JSONDecodeError:
                     pass
             
-            # If all else fails, log the raw content but still return the cleaned version
-            # This allows the validator to see the raw content and handle it
-            logger.error(f"Failed to parse JSON after all cleaning attempts. Raw content (first 500 chars): {faulty_json[:500]}")
+            # If all else fails, return the cleaned version so the validator can handle it
+            logger.error("Failed to parse JSON after all cleaning attempts")
             # Don't return an error dict - return the cleaned JSON so validator can handle it
             return cleaned_json
         
-    except Exception as e:
-        logger.error(f"Error fixing JSON string: {e}")
+    except Exception:
+        logger.exception("Failed to fix JSON string")
         # Return original on exception - let validator handle it
         return faulty_json
 
@@ -175,8 +174,8 @@ def fix_unterminated_strings(json_str: str) -> str:
                     json_str = json_str[:last_quote_pos + 1] + '"' + remaining
         
         return json_str
-    except Exception as e:
-        logger.warning(f"Error fixing unterminated strings: {e}")
+    except Exception:
+        logger.exception("Failed to fix unterminated strings")
         return json_str
 
 def fix_common_json_issues(json_str: str) -> str:
@@ -205,8 +204,8 @@ def fix_common_json_issues(json_str: str) -> str:
         json_str = re.sub(r"'([^']*)'", r'"\1"', json_str)
         
         return json_str
-    except Exception as e:
-        logger.warning(f"Error fixing common JSON issues: {e}")
+    except Exception:
+        logger.exception("Failed to fix common JSON issues")
         return json_str
 
 def validate_json_structure(cleaned_json: str, validation_type: int = 0) -> Optional[Dict[str, Any]]:
@@ -240,7 +239,7 @@ def validate_json_structure(cleaned_json: str, validation_type: int = 0) -> Opti
             if field not in parsed_json and not (field == "features" and ("feature_asba" in parsed_json or "featureasba" in parsed_json))
         ]
         if missing_fields:
-            logger.warning(f"Missing required root-level fields: {missing_fields}")
+            logger.warning("Missing required root-level fields", extra={"missing_fields": missing_fields})
             return None
 
         # Validate sentiment_summary structure (for sentiment analysis)
@@ -248,7 +247,7 @@ def validate_json_structure(cleaned_json: str, validation_type: int = 0) -> Opti
             sentiment_summary = parsed_json["sentiment_summary"]
             required_sentiment_keys = ["positive", "negative", "neutral"]
             if not all(isinstance(sentiment_summary.get(k), str) for k in required_sentiment_keys):
-                logger.warning("Invalid sentiment_summary structure")
+                logger.warning("Invalid sentiment summary structure")
                 return None
 
             # Validate features structure (with fallback to legacy key)
@@ -259,12 +258,12 @@ def validate_json_structure(cleaned_json: str, validation_type: int = 0) -> Opti
                         continue
                     required_feature_keys = ["feature", "sentiment", "keywords", "explanations"]
                     if not all(k in feature for k in required_feature_keys):
-                        logger.warning(f"Missing keys in feature entry {i}: {feature.get('feature', 'unknown')}")
+                        logger.warning("Missing keys in feature entry", extra={"feature_index": i})
                         continue
-                    
+
                     feature_sentiment = feature.get("sentiment", {})
                     if not all(isinstance(feature_sentiment.get(k), str) for k in required_sentiment_keys):
-                        logger.warning(f"Invalid sentiment structure for feature: {feature.get('feature')}")
+                        logger.warning("Invalid sentiment structure for feature", extra={"feature_index": i})
                         continue
 
             # Validate emoji_analysis
@@ -272,7 +271,7 @@ def validate_json_structure(cleaned_json: str, validation_type: int = 0) -> Opti
                 emoji_analysis = parsed_json["emoji_analysis"]
                 if not (isinstance(emoji_analysis.get("top_emojis"), list) and 
                         isinstance(emoji_analysis.get("overall_sentiment"), str)):
-                    logger.warning("Invalid emoji_analysis structure")
+                    logger.warning("Invalid emoji analysis structure")
                     return None
 
         # Validate action_items (for both types)
@@ -281,18 +280,18 @@ def validate_json_structure(cleaned_json: str, validation_type: int = 0) -> Opti
             required_action_categories = ["feature_requests", "bugs", "change_requests"]
             if not all(k in action_items and isinstance(action_items[k], list) 
                       for k in required_action_categories):
-                logger.warning("Invalid action_items structure")
+                logger.warning("Invalid action items structure")
                 return None
 
         # If all checks pass
-        logger.info("JSON structure validation passed")
+        logger.debug("JSON structure validation passed")
         return parsed_json
 
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error: {e}")
+    except json.JSONDecodeError:
+        logger.exception("Failed to parse JSON during validation")
         return None
-    except Exception as e:
-        logger.error(f"Validation error: {e}")
+    except Exception:
+        logger.exception("Failed to validate JSON structure")
         return None
 
 def sanitize_llm_output(output: str, max_length: int = 10000) -> str:

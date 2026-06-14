@@ -106,8 +106,12 @@ class FeedbackExtractionService:
 
         signal = sum(1 for r in results if r and r["has_signal"])
         logger.info(
-            "Feedback extraction: %d/%d have signal (%.0f%%); %d filtered as noise",
-            signal, len(comments), 100 * signal / len(comments), len(comments) - signal,
+            "Feedback extraction completed",
+            extra={
+                "signal_count": signal,
+                "comment_count": len(comments),
+                "filtered_count": len(comments) - signal,
+            },
         )
         return results  # type: ignore[return-value]
 

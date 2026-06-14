@@ -66,8 +66,8 @@ class AzureEmailBackend(BaseEmailBackend):
                 poller = self.client.begin_send(message)
                 poller.result()
                 sent_count += 1
-            except Exception as exc:
-                logger.error("AzureEmailBackend failed to send email: %s", exc)
+            except Exception:
+                logger.exception("Failed to send email via AzureEmailBackend")
                 if not self.fail_silently:
                     raise
 

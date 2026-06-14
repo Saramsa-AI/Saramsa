@@ -285,15 +285,15 @@ class LatestAnalysisView(APIView):
         analysis_service = get_analysis_service()
         devops_service = get_devops_service()
 
-        logger.info("LatestAnalysisView.get | project_id=%s user=%s", project_id, getattr(request.user, 'id', None))
+        logger.debug("Getting latest analysis", extra={"project_id": project_id, "user_id": getattr(request.user, 'id', None)})
 
         # Get the latest comment analysis using analysis service
         latest_analysis = analysis_service.get_latest_analysis_for_project(stored_project_id)
-        logger.info("LatestAnalysisView.get | latest_analysis found=%s id=%s", latest_analysis is not None, latest_analysis.get('id') if latest_analysis else None)
+        logger.debug("Latest analysis lookup completed", extra={"found": latest_analysis is not None, "analysis_id": latest_analysis.get('id') if latest_analysis else None})
 
         # Get the latest user story collection (work items) using work items service
         latest_user_stories = devops_service.get_work_items_by_project(stored_project_id)
-        logger.info("LatestAnalysisView.get | user_stories count=%s", len(latest_user_stories) if isinstance(latest_user_stories, list) else (1 if latest_user_stories else 0))
+        logger.debug("Work items lookup completed", extra={"count": len(latest_user_stories) if isinstance(latest_user_stories, list) else (1 if latest_user_stories else 0)})
 
         if not latest_analysis:
             return StandardResponse.success(
@@ -315,7 +315,7 @@ class LatestAnalysisView(APIView):
             # Get the most recent user story collection
             latest_stories = latest_user_stories[0] if isinstance(latest_user_stories, list) else latest_user_stories
 
-            logger.info("LatestAnalysisView.get | enriching work items")
+            logger.debug("Enriching work items")
             # Get submission status for work items
             work_items_with_submission_status = self._enrich_work_items_with_submission_status(
                 latest_stories.get('work_items', []),
@@ -337,7 +337,7 @@ class LatestAnalysisView(APIView):
         # Add comments data using analysis service
         if user_id:
             try:
-                logger.info("LatestAnalysisView.get | fetching user_data project=%s user=%s", stored_project_id, user_id)
+                logger.debug("Fetching user data", extra={"project_id": stored_project_id, "user_id": user_id})
                 user_data = analysis_service.get_user_data_by_project(str(user_id), stored_project_id)
                 if user_data:
                     response_data['analysis']['comments'] = {
@@ -349,10 +349,10 @@ class LatestAnalysisView(APIView):
                 else:
                     response_data['analysis']['comments'] = None
             except Exception as e:
-                logger.error(f"Error fetching comments: {e}")
+                logger.exception("Failed to fetch comments")
                 response_data['analysis']['comments'] = None
 
-        logger.info("LatestAnalysisView.get | returning success project_id=%s", project_id)
+        logger.debug("Returning latest analysis", extra={"project_id": project_id})
         return StandardResponse.success(
             data=response_data,
             message="Latest analysis retrieved successfully"
@@ -374,7 +374,7 @@ class LatestAnalysisView(APIView):
             return work_items
         for item in work_items:
             if item.get('submitted'):
-                logger.info(f"Work item {item.get('id')} is submitted: {item.get('submitted_to')} at {item.get('submitted_at')}")
+                logger.debug("Work item is submitted", extra={"work_item_id": item.get('id'), "submitted_to": item.get('submitted_to'), "submitted_at": item.get('submitted_at')})
         return work_items
 
 

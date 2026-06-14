@@ -42,8 +42,12 @@ class GPURoutingService:
         self.cpu_queue = 'celery'  # Default queue
 
         logger.info(
-            f"GPU Routing: {'ENABLED' if self.gpu_enabled else 'DISABLED'} | "
-            f"Timeout: {self.gpu_timeout}s | Priority: {self.gpu_priority}/10"
+            "GPU routing configured",
+            extra={
+                "gpu_enabled": self.gpu_enabled,
+                "gpu_timeout_s": self.gpu_timeout,
+                "gpu_priority": self.gpu_priority,
+            },
         )
 
     def route_task(self, task_name: str, args: tuple, kwargs: dict,
@@ -69,12 +73,12 @@ class GPURoutingService:
 
         # Route to CPU if GPU disabled or not preferred
         if not self.gpu_enabled or not prefer_gpu:
-            logger.info(f"⚙️  Routing task to CPU: {task_name}")
+            logger.info("Routing task to CPU", extra={"task_name": task_name})
             return self._dispatch_to_cpu(task_name, args, kwargs)
 
         # Try GPU first
         try:
-            logger.info(f"⚡ Attempting GPU routing: {task_name}")
+            logger.info("Attempting GPU routing", extra={"task_name": task_name})
             result = self._dispatch_to_gpu(task_name, args, kwargs)
 
             # Quick check: Is GPU worker available?
@@ -85,14 +89,14 @@ class GPURoutingService:
                 # Task is running or queued - good!
                 pass
 
-            logger.info(f"✅ Task routed to GPU: {result.id}")
+            logger.info("Task routed to GPU", extra={"task_id": result.id})
             return result
 
         except (OperationalError, TimeoutError, Exception) as e:
             # GPU unavailable - fallback to CPU
             logger.warning(
-                f"⚠️  GPU routing failed ({type(e).__name__}), "
-                f"falling back to CPU: {task_name}"
+                "GPU routing failed; falling back to CPU",
+                extra={"task_name": task_name, "error_type": type(e).__name__},
             )
             return self._dispatch_to_cpu(task_name, args, kwargs)
 
@@ -150,7 +154,7 @@ class GPURoutingService:
                 'cpu_queue': self.cpu_queue,
             }
         except Exception as e:
-            logger.error(f"Failed to get worker stats: {e}")
+            logger.exception("Failed to get worker stats")
             return {'error': str(e)}
 
 

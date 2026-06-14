@@ -54,7 +54,7 @@ class AnalyzeCommentsView(APIView):
 
     @handle_service_errors
     def post(self, request):
-        logger.info("AnalyzeCommentsView called (Background Mode)")
+        logger.info("Starting feedback analysis (background mode)")
 
         comments = request.data.get("comments")
         incoming_project_id = request.data.get("project_id")
@@ -103,8 +103,8 @@ class AnalyzeCommentsView(APIView):
                 user_data = analysis_service.get_user_by_id(str(request.user.id))
                 if user_data:
                     company_name = user_data.get('company_name')
-            except Exception as e:
-                logger.warning(f"Could not get company_name for user: {e}")
+            except Exception:
+                logger.warning("Could not look up company name; proceeding without it")
 
         try:
             project_id, project_doc, _ = analysis_service.ensure_project_context(
@@ -137,11 +137,7 @@ class AnalyzeCommentsView(APIView):
             err_msg = str(e).lower()
             # Redis/Celery broker connection refused (e.g. Redis not running on localhost:6379)
             if "6379" in err_msg or "refused" in err_msg or "redis" in err_msg or (hasattr(e, "errno") and getattr(e, "errno") == 10061):
-                logger.error(
-                    "Redis/Celery broker unavailable for analysis. Start Redis and Celery (e.g. saramsa start all dev). Error: %s",
-                    e,
-                    exc_info=True,
-                )
+                logger.exception("Failed to enqueue analysis: Redis/Celery broker unavailable")
                 return StandardResponse.error(
                     title="Service unavailable",
                     detail=(
@@ -173,8 +169,8 @@ class AnalyzeCommentsView(APIView):
                 "comment_count": len(comments),
             })
             cache.set(tasks_key, existing[:15], ttl=86400)
-        except Exception as e:
-            logger.warning(f"Failed to record task history: {e}")
+        except Exception:
+            logger.warning("Failed to record task history (best-effort)")
         hour_key = datetime.now().strftime("%Y-%m-%d-%H")
         cache.incr(f"analyses_hour:{project_id}:{hour_key}", 1, ttl=3600)
 
@@ -259,9 +255,9 @@ class UpdateKeywordsView(APIView):
                 user_data = await sync_to_async(analysis_service.get_user_by_id, thread_sensitive=True)(str(request.user.id))
                 if user_data:
                     company_name = user_data.get('company_name')
-            except Exception as e:
-                logger.warning(f"Could not get company_name for user: {e}")
-        
+            except Exception:
+                logger.warning("Could not look up company name; proceeding without it")
+
         # Add keyword context to the feedback data
         keyword_context = "UPDATED KEYWORDS:\n"
         for feature_name, keywords in updated_keywords.items():
@@ -387,8 +383,8 @@ class UpdateKeywordsView(APIView):
             saved_analysis = await sync_to_async(analysis_service.save_analysis_data, thread_sensitive=True)(analysis_data)
             if saved_analysis:
                 await sync_to_async(analysis_service.update_project_last_analysis, thread_sensitive=True)(project_id, saved_analysis['id'])
-        except Exception as e:
-            logger.error(f"Error saving updated analysis: {e}")
+        except Exception:
+            logger.exception("Failed to save updated analysis")
 
         # Format response in the new structure only
         formatted = {
@@ -443,38 +439,31 @@ class GetUserCommentsView(APIView):
         
         # Try to get comments from analysis data first
         if project_id and not explicit_personal:
-            logger.info(f"DEBUG: Starting analysis data lookup for project {project_id}, user {user_id_str}")
-            
+            logger.debug("Starting analysis data lookup for comments retrieval")
+
             # Check if there's a recent analysis ID in the request or session
             recent_analysis_id = request.query_params.get('analysis_id')
-            
+
             try:
-                logger.info("Attempting to get analysis data using service method...")
-                
                 # If we have a specific analysis ID, try to get that first
                 if recent_analysis_id:
-                    logger.info(f"Looking for specific analysis ID: {recent_analysis_id}")
+                    logger.debug("Looking up specific analysis by id")
                     try:
                         specific_analysis = analysis_service.get_analysis_by_id(recent_analysis_id, user_id_str)
                         if specific_analysis:
                             analysis_data = specific_analysis
-                            logger.info("Found specific analysis by ID")
+                            logger.debug("Found specific analysis by id")
                         else:
-                            logger.info("Specific analysis ID not found, falling back to latest")
+                            logger.debug("Specific analysis id not found; falling back to latest")
                             analysis_data = analysis_service.get_latest_analysis_by_project(project_id, user_id_str)
-                    except Exception as e:
-                        logger.warning(f"Error getting specific analysis: {e}")
+                    except Exception:
+                        logger.exception("Failed to get specific analysis; falling back to latest")
                         analysis_data = analysis_service.get_latest_analysis_by_project(project_id, user_id_str)
                 else:
                     # Get latest analysis for the project
                     analysis_data = analysis_service.get_latest_analysis_by_project(project_id, user_id_str)
-                
-                logger.info(f"Analysis data result: {analysis_data is not None}")
-                
+
                 if analysis_data:
-                    logger.info(f"Analysis data keys: {list(analysis_data.keys()) if isinstance(analysis_data, dict) else 'Not a dict'}")
-                    logger.info(f"Analysis ID: {analysis_data.get('id')}, Created: {analysis_data.get('createdAt')}")
-                    
                     # Extract comments from analysis data with comprehensive search
                     comments = []
                     source_field = None
@@ -496,7 +485,10 @@ class GetUserCommentsView(APIView):
                             if cleaned_comments:
                                 comments = cleaned_comments
                                 source_field = field_name
-                                logger.info(f"Found {len(comments)} valid comments in '{field_name}' (after cleaning)")
+                                logger.debug(
+                                    "Found valid comments in analysis field",
+                                    extra={"comment_count": len(comments), "source_field": field_name},
+                                )
                                 break
                     
                     if comments:
@@ -514,13 +506,7 @@ class GetUserCommentsView(APIView):
                         }, message="Comments retrieved from analysis data")
                     else:
                         logger.warning("Analysis data found but no valid comments in any expected field")
-                        logger.info(f"Available fields: {list(analysis_data.keys())}")
-                        # Log a sample of the data structure for debugging
-                        if 'analysisData' in analysis_data:
-                            logger.info(f"analysisData keys: {list(analysis_data['analysisData'].keys())}")
-                        if 'result' in analysis_data:
-                            logger.info(f"result keys: {list(analysis_data['result'].keys())}")
-                        
+
                         # Return empty result with helpful message
                         return StandardResponse.success(data={
                             "success": True,
@@ -536,7 +522,7 @@ class GetUserCommentsView(APIView):
                             "analysis_id": analysis_data.get('id')
                         }, message="Analysis found but no comments available")
                 else:
-                    logger.info("No analysis data found")
+                    logger.debug("No analysis data found")
                     # Return helpful message when no analysis is found
                     return StandardResponse.success(data={
                         "success": True,
@@ -550,8 +536,8 @@ class GetUserCommentsView(APIView):
                         "message": "No analysis found for this project. Please upload a feedback file or run an analysis first.",
                         "error_type": "no_analysis_found"
                     }, message="No analysis found for this project")
-            except Exception as e:
-                logger.error(f"Error getting comments from analysis data: {e}", exc_info=True)
+            except Exception:
+                logger.exception("Failed to get comments from analysis data")
         
         # Fallback to original logic for user data
         if not project_id or explicit_personal:
@@ -693,8 +679,8 @@ class AnalysisByIdView(APIView):
                     }
                 else:
                     response_data['analysis']['comments'] = None
-            except Exception as e:
-                logger.error(f"Error fetching comments: {e}")
+            except Exception:
+                logger.exception("Failed to fetch comments for analysis")
                 response_data['analysis']['comments'] = None
 
         return StandardResponse.success(
@@ -740,7 +726,10 @@ class AnalysisByIdView(APIView):
             return work_items
         for item in work_items:
             if item.get('submitted'):
-                logger.info(f"Work item {item.get('id')} is submitted: {item.get('submitted_to')} at {item.get('submitted_at')}")
+                logger.debug(
+                    "Work item already submitted",
+                    extra={"work_item_id": item.get('id'), "submitted_to": item.get('submitted_to')},
+                )
         return work_items
 
 

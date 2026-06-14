@@ -4,9 +4,29 @@ import sys
 import logging
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import worker_process_init, beat_init, setup_logging
+from celery.signals import worker_process_init, beat_init, setup_logging, task_prerun, task_postrun
 
 from .otel import setup_otel
+
+
+@task_prerun.connect
+def _bind_task_log_context(task_id=None, **_kwargs):
+    """Bind the Celery task id to the logging context."""
+    try:
+        from apis.core.request_context import task_id_var
+        task_id_var.set(task_id)
+    except Exception:
+        pass
+
+
+@task_postrun.connect
+def _clear_task_log_context(**_kwargs):
+    try:
+        from apis.core.request_context import task_id_var, analysis_id_var, user_id_var, organization_id_var
+        for var in (task_id_var, analysis_id_var, user_id_var, organization_id_var):
+            var.set(None)
+    except Exception:
+        pass
 
 
 @setup_logging.connect

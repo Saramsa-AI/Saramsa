@@ -105,7 +105,7 @@ def getSentAnalysisPrompt(company_name: str = None, feedback_data: str = None,
     )
 
     # Log original template before substitution
-    logger.debug("Sentiment prompt template (before substitution): %s", prompt_template[:200] + "...")
+    logger.debug("Resolved sentiment prompt template", extra={"template_length": len(prompt_template)})
 
     # Format aspect list for {aspects} placeholder
     if suggested_aspects and len(suggested_aspects) > 0:
@@ -119,18 +119,28 @@ def getSentAnalysisPrompt(company_name: str = None, feedback_data: str = None,
         # Format comments with global indexes for better LLM parsing
         # comment_start_index ensures correct mapping across batches
         formatted_comments = format_comments_for_prompt(feedback_data, start_index=comment_start_index)
-        logger.info(f"🔍 Formatted {len(formatted_comments.split('COMMENT')) - 1} comments with start_index={comment_start_index}")
-        logger.debug(f"🔍 First 3 formatted comments:\n{chr(10).join(formatted_comments.split(chr(10))[:3])}")
+        logger.info(
+            "Formatted comments for prompt",
+            extra={
+                "comment_count": len(formatted_comments.split('COMMENT')) - 1,
+                "comment_start_index": comment_start_index,
+            },
+        )
     else:
         formatted_comments = "(No comments provided)"
-        logger.warning("⚠️ No feedback_data provided to prompt")
+        logger.warning("No feedback data provided to prompt")
 
     # Replace placeholders with actual values
     prompt_template = prompt_template.replace("{aspects}", aspect_list_text)
     prompt_template = prompt_template.replace("{comments}", formatted_comments)
 
     # Log final template after substitution
-    logger.info(f"🔍 Prompt template ready - Length: {len(prompt_template)} chars, Aspects: {len(suggested_aspects) if suggested_aspects else 0}")
-    logger.debug(f"🔍 Prompt preview (first 500 chars):\n{prompt_template[:500]}...")
+    logger.info(
+        "Prompt template ready",
+        extra={
+            "template_length": len(prompt_template),
+            "aspect_count": len(suggested_aspects) if suggested_aspects else 0,
+        },
+    )
 
     return prompt_template

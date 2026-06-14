@@ -80,6 +80,14 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8CDDA0EE23EE4F6186145892542CA1A2 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_6E7B017B418A430AB1197545CF11F07F }}
 
+      - name: Tag deploy (environment + release) for log/telemetry fields
+        run: |
+          # Populate the environment/release log fields.
+          az webapp config appsettings set \
+            --name saramsa-celery-prod-2 \
+            --resource-group saramsa \
+            --settings ENVIRONMENT=production RELEASE=${{ github.sha }}
+
       - name: Restart Celery app to pull new image
         run: |
           az webapp restart --name saramsa-celery-prod-2 --resource-group saramsa

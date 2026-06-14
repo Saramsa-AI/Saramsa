@@ -14,7 +14,7 @@ from .infrastructure.otel import setup_otel
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'apis.settings')
 
-# Initialize OpenTelemetry
-setup_otel()
-
+# setup_otel() must run AFTER get_wsgi_application() (which applies the LOGGING
+# config) so it can wire the app loggers' export handler.
 application = get_wsgi_application()
+setup_otel()

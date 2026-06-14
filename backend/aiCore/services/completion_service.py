@@ -27,7 +27,7 @@ def get_azure_client_instance():
             raise RuntimeError("Azure OpenAI client is not initialized")
         return azure_client
     except Exception as e:
-        logger.error(f"Failed to get Azure OpenAI client: {e}")
+        logger.exception("Failed to get Azure OpenAI client")
         raise ConnectionError(f"Azure OpenAI service unavailable: {str(e)}")
 
 def get_async_azure_client_instance():
@@ -42,7 +42,7 @@ def get_async_azure_client_instance():
     except ConnectionError:
         raise
     except Exception as e:
-        logger.error("Failed to get Azure OpenAI async client: %s", e)
+        logger.exception("Failed to get Azure OpenAI async client")
         raise ConnectionError(
             str(e) if "Missing" in str(e) or "Set these env" in str(e) else f"Azure OpenAI service unavailable: {e}"
         )
@@ -93,11 +93,8 @@ def _project_org_id_for_billing(project_id: str) -> Optional[str]:
                         _project_org_cache.pop(next(iter(_project_org_cache)), None)
                     _project_org_cache[project_id] = str(org_id)
                 return str(org_id)
-    except Exception as exc:
-        logger.warning(
-            "Could not resolve project org for billing (project_id=%s): %s",
-            project_id, exc,
-        )
+    except Exception:
+        logger.exception("Failed to resolve project org for billing")
     return None
 
 
@@ -141,7 +138,10 @@ async def generate_completions(
     # If using default and it's too low, increase it (better to err on the side of more tokens)
     if effective_max_tokens < 3000:
         effective_max_tokens = max(effective_max_tokens, 4000)  # Minimum 4000 for batch processing
-        logger.info(f"Adjusted max_tokens to {effective_max_tokens} for batch processing (was {max_tokens or DEFAULT_MAX_TOKENS})")
+        logger.debug(
+            "Adjusted max_tokens for batch processing",
+            extra={"effective_max_tokens": effective_max_tokens},
+        )
 
     chat_prompt = [
         {
@@ -149,7 +149,7 @@ async def generate_completions(
             "content": prompt_instruction
         }
     ]
-    logger.info("Analysing Sentiments...")
+    logger.info("Starting sentiment analysis")
 
     try:
         azure_client = get_async_azure_client_instance()
@@ -164,13 +164,16 @@ async def generate_completions(
         )
         latency_ms = (time.perf_counter() - t0) * 1_000
 
-        logger.info("Analysis Complete (%.0fms)", latency_ms)
+        logger.info("Sentiment analysis completed", extra={"latency_ms": round(latency_ms, 1)})
 
         # Check for empty response (GPT-5-mini may use all tokens for reasoning)
         raw_content = completion.choices[0].message.content
         if not raw_content or len(raw_content.strip()) == 0:
             finish_reason = completion.choices[0].finish_reason
-            logger.error(f"Empty response from Azure OpenAI. Finish reason: {finish_reason}, Max tokens: {effective_max_tokens}")
+            logger.error(
+                "Azure OpenAI returned empty content",
+                extra={"finish_reason": finish_reason, "max_tokens": effective_max_tokens},
+            )
             raise ValueError("Azure OpenAI returned empty content. Increase max_completion_tokens.")
 
         result = fix_json_string(raw_content)
@@ -199,8 +202,9 @@ async def generate_completions(
                 if completion_details:
                     reasoning_tokens = getattr(completion_details, "reasoning_tokens", 0)
                     if reasoning_tokens > 0:
-                        logger.info(
-                            f"GPT-5-mini used {reasoning_tokens} reasoning tokens (included in completion_tokens)"
+                        logger.debug(
+                            "Model used reasoning tokens",
+                            extra={"reasoning_tokens": reasoning_tokens},
                         )
                         actual_usage["reasoning_tokens"] = reasoning_tokens
 
@@ -237,9 +241,8 @@ async def generate_completions(
                                 # record_usage will fall back to the user's
                                 # active org. Log so audits can correlate.
                                 logger.info(
-                                    "Billing fallback: no org for project_id=%s, "
-                                    "charging user's active org instead",
-                                    project_id,
+                                    "No org for project; charging user's active org instead",
+                                    extra={"project_id": project_id},
                                 )
 
                         # Use sync_to_async because record_usage touches the ORM
@@ -249,22 +252,18 @@ async def generate_completions(
                             actual_usage["total_tokens"],
                             organization_id=billing_org_id,
                         )
-                    except Exception as billing_err:
+                    except Exception:
                         # Don't fail the request if billing tracking fails, but log the root cause
-                        logger.warning(
-                            "Failed to record billing token usage for user %s: %s",
-                            user_id,
-                            billing_err,
-                        )
-        except Exception as e:
-            logger.warning(f"Failed to log token usage: {e}")
+                        logger.exception("Failed to record billing token usage")
+        except Exception:
+            logger.exception("Failed to log token usage")
 
         # Return result and actual usage so callers can record precise tokens
         return result, actual_usage
 
     except Exception as e:
         err_msg = str(e).strip()
-        logger.error("GPT/Azure OpenAI completion failed: %s", err_msg, exc_info=True)
+        logger.exception("Azure OpenAI completion failed")
         if "rate limit" in err_msg.lower() or "429" in err_msg:
             raise ConnectionError("Azure OpenAI rate limit exceeded. Please try again later.")
         if "authentication" in err_msg.lower() or "401" in err_msg or "invalid" in err_msg.lower() and "key" in err_msg.lower():

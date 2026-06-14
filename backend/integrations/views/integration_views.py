@@ -42,7 +42,7 @@ def get_integration_accounts(request):
     """Get all integration accounts for the authenticated user."""
     user_id = request.user.id
     organization_id = _get_active_organization_id(request)
-    logger.info(f"Getting integration accounts for user_id: {user_id}")
+    logger.debug("Getting integration accounts", extra={"user_id": user_id})
 
     if not organization_id:
         return StandardResponse.success(

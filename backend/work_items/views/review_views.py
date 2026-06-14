@@ -47,14 +47,27 @@ class ReviewQueueListView(APIView):
         else:
             candidates = service.repo.get_candidates_by_status(project_id, status_filter)
 
-        # DEBUG logging
-        logger.info(f"ReviewQueue: project_id={project_id}, status={status_filter}, filters={filters}, count={len(candidates)}")
+        logger.debug(
+            "Listing review queue",
+            extra={
+                "project_id": project_id,
+                "status": status_filter,
+                "filter_keys": list(filters.keys()),
+                "count": len(candidates),
+            },
+        )
         if len(candidates) == 0:
             # Check if any candidates exist at all for this project
             all_candidates = service.repo.get_all_work_items_flat(project_id)
-            logger.warning(f"ReviewQueue returned 0 candidates, but {len(all_candidates)} total candidates exist for project {project_id}")
+            logger.warning(
+                "Review queue returned no candidates; project has other candidates",
+                extra={"project_id": project_id, "total_candidates": len(all_candidates)},
+            )
             if all_candidates:
-                logger.warning(f"Sample candidate: {all_candidates[0]}")
+                logger.debug(
+                    "Sample candidate fields",
+                    extra={"candidate_keys": list(all_candidates[0].keys())},
+                )
 
         return StandardResponse.success(data={
             'candidates': candidates,
@@ -73,7 +86,10 @@ class ReviewQueueStatsView(APIView):
             return StandardResponse.validation_error(detail="project_id is required.", instance=request.path)
 
         stats = get_review_service().get_stats(project_id)
-        logger.info(f"ReviewQueue Stats: project_id={project_id}, stats={stats}")
+        logger.debug(
+            "Computed review queue stats",
+            extra={"project_id": project_id, "stat_keys": list(stats.keys())},
+        )
         return StandardResponse.success(data=stats)
 
 
@@ -133,7 +149,11 @@ class CandidateApproveView(APIView):
                 service.repo.update_candidate_status(candidate_id, project_id, push_updates)
                 candidate.update(push_updates)
         except Exception as e:
-            logger.warning(f"Auto-push failed for candidate {candidate_id}: {e}")
+            # Handled outcome (recorded as push_status=failed below), not a server error.
+            logger.warning(
+                "Auto-push to external tracker failed; recorded as failed",
+                extra={"candidate_id": candidate_id, "project_id": project_id},
+            )
             try:
                 service.repo.update_candidate_status(candidate_id, project_id, {
                     'push_status': 'failed',

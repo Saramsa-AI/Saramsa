@@ -152,7 +152,7 @@ class AspectTaxonomyService:
             
             self.taxonomies[taxonomy_id] = taxonomy
         
-        logger.info(f"Loaded {len(self.DEFAULT_TAXONOMIES)} default taxonomies")
+        logger.debug("Loaded default taxonomies", extra={"count": len(self.DEFAULT_TAXONOMIES)})
     
     def create_taxonomy(self, domain: str, aspects: List[str], 
                        created_by: str, description: Optional[str] = None) -> AspectTaxonomy:
@@ -198,8 +198,11 @@ class AspectTaxonomyService:
         )
         
         self.taxonomies[taxonomy_id] = taxonomy
-        logger.info(f"Created new taxonomy '{taxonomy_id}' for domain '{domain}' with {len(aspects)} aspects")
-        
+        logger.info(
+            "Created taxonomy",
+            extra={"taxonomy_id": taxonomy_id, "domain": domain, "aspect_count": len(aspects)},
+        )
+
         return taxonomy
     
     def get_taxonomy(self, taxonomy_id: str) -> Optional[AspectTaxonomy]:
@@ -290,8 +293,11 @@ class AspectTaxonomyService:
         if description is not None:
             current_taxonomy.description = description
         
-        logger.info(f"Updated taxonomy '{taxonomy_id}' to version {new_version} with {len(aspects)} aspects")
-        
+        logger.info(
+            "Updated taxonomy",
+            extra={"taxonomy_id": taxonomy_id, "version": new_version, "aspect_count": len(aspects)},
+        )
+
         return current_taxonomy
     
     def should_reuse_taxonomy(self, taxonomy: AspectTaxonomy, max_age_days: int = 30) -> Dict[str, Any]:
@@ -372,7 +378,7 @@ class AspectTaxonomyService:
             avg_aspects_per_comment: Average aspects per comment from last run
         """
         if taxonomy_id not in self.taxonomies:
-            logger.warning(f"Cannot update metrics for unknown taxonomy: {taxonomy_id}")
+            logger.warning("Skipping metrics update: unknown taxonomy", extra={"taxonomy_id": taxonomy_id})
             return
         
         taxonomy = self.taxonomies[taxonomy_id]
@@ -380,9 +386,13 @@ class AspectTaxonomyService:
         taxonomy.last_avg_aspects_per_comment = avg_aspects_per_comment
         taxonomy.updated_at = datetime.utcnow().isoformat()
         
-        logger.info(
-            f"Updated taxonomy '{taxonomy_id}' metrics: "
-            f"unmapped_rate={unmapped_rate:.1%}, avg_aspects={avg_aspects_per_comment:.2f}"
+        logger.debug(
+            "Updated taxonomy metrics",
+            extra={
+                "taxonomy_id": taxonomy_id,
+                "unmapped_rate": unmapped_rate,
+                "avg_aspects_per_comment": avg_aspects_per_comment,
+            },
         )
     
     def pin_taxonomy(self, taxonomy_id: str, pinned: bool = True) -> AspectTaxonomy:
@@ -407,8 +417,8 @@ class AspectTaxonomyService:
         taxonomy.updated_at = datetime.utcnow().isoformat()
         
         action = "pinned" if pinned else "unpinned"
-        logger.info(f"Taxonomy '{taxonomy_id}' {action}")
-        
+        logger.info("Taxonomy pin state changed", extra={"taxonomy_id": taxonomy_id, "action": action})
+
         return taxonomy
 
     def validate_aspects_for_processing(self, aspects):

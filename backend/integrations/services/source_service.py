@@ -173,7 +173,7 @@ class SourceService:
         try:
             return self.repo.delete_feedback_source(source_id)
         except Exception as e:
-            logger.error(f"Error deleting source {source_id}: {e}")
+            logger.exception("Failed to delete source", extra={"source_id": source_id})
             return False
 
     def update_sync_cursor(

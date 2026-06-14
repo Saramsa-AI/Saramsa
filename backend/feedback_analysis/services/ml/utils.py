@@ -170,11 +170,15 @@ def sample_representative_comments(
         # Simple selection without diversity constraints
         selected = [comment for _, comment in indexed_comments[:max_samples]]
     
-    logger.info(
-        f"Sampled {len(selected)} representative comments from {len(comments)} total. "
-        f"Sentiment distribution: {dict(sentiment_counts)}"
+    logger.debug(
+        "Sampled representative comments",
+        extra={
+            "sample_count": len(selected),
+            "total_comments": len(comments),
+            "sentiment_distribution": dict(sentiment_counts),
+        },
     )
-    
+
     return selected
 
 

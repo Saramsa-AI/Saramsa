@@ -348,11 +348,11 @@ class TaskListView(APIView):
                     if aid:
                         cache.set(f"analysis_failed:{aid}", True, ttl=86400)
                 logger.info(
-                    "Marked %s stale task(s) as FAILED for user %s: %s",
-                    len(stale_task_ids), user_id_str, stale_task_ids,
+                    "Marked stale tasks as failed",
+                    extra={"stale_task_count": len(stale_task_ids)},
                 )
             except Exception:
-                logger.warning("Failed to clean stale tasks from cache for user %s", user_id_str, exc_info=True)
+                logger.exception("Failed to clean stale tasks from cache")
 
         return StandardResponse.success(data={"tasks": enriched})
 
@@ -391,8 +391,8 @@ class TaskCancelView(APIView):
         try:
             from apis.infrastructure.celery import celery_app
             celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
-        except Exception as e:
-            logger.warning(f"Failed to revoke Celery task {task_id}: {e}")
+        except Exception:
+            logger.exception("Failed to revoke Celery task")
 
         # Mark as cancelled in cache task list
         updated = []
@@ -426,8 +426,8 @@ class TaskCancelView(APIView):
                     "cancelled_at": datetime.now().isoformat(),
                     "result": {},
                 })
-            except Exception as e:
-                logger.warning(f"Failed to persist cancelled analysis {analysis_id} to DB: {e}")
+            except Exception:
+                logger.exception("Failed to persist cancelled analysis to database")
 
         return StandardResponse.success(data={"task_id": task_id, "status": "CANCELLED"})
 
@@ -487,8 +487,8 @@ class RetriggerAnalysisView(APIView):
                 comments, company_name, user_id_str, project_id, bare_analysis_id,
                 None, dimensions, True,  # suggested_aspects, dimensions, force_regenerate
             )
-        except Exception as e:
-            logger.error(f"Failed to enqueue retrigger for analysis {bare_analysis_id}: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Failed to enqueue retrigger for analysis")
             return StandardResponse.error(
                 title="Service unavailable",
                 detail="Could not queue the re-run — the task broker is unreachable.",
@@ -518,8 +518,8 @@ class RetriggerAnalysisView(APIView):
                     "retrigger": True,
                 })
                 cache.set(tasks_key, existing[:15], ttl=86400)
-            except Exception as e:
-                logger.warning(f"Failed to record retrigger task history: {e}")
+            except Exception:
+                logger.exception("Failed to record retrigger task history")
 
         analysis_service.mark_analysis_status(
             bare_analysis_id, Analysis.STATUS_IN_PROGRESS,
@@ -529,8 +529,8 @@ class RetriggerAnalysisView(APIView):
         # Meter the re-run (fails gracefully if the quota system is unavailable).
         try:
             record_usage(user_id_str, "analysis", organization_id=project_org_id)
-        except Exception as e:
-            logger.warning(f"Failed to record retrigger usage: {e}")
+        except Exception:
+            logger.exception("Failed to record retrigger usage")
 
         return StandardResponse.success(
             data={"task_id": task.id, "analysis_id": bare_analysis_id},

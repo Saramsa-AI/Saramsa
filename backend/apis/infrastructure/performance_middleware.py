@@ -65,18 +65,25 @@ class PerformanceTrackingMiddleware(MiddlewareMixin):
                 'db_success_rate': db_stats.get('success_rate_percent', 0),
                 'cache_hit_rate': cache_stats.get('hit_rate_percent', 0)
             })
-        except Exception as e:
-            logger.debug(f"Could not gather service stats: {e}")
+        except Exception:
+            logger.debug("Failed to gather service stats", exc_info=True)
         
         # Log based on performance thresholds
         if duration >= self.very_slow_request_threshold:
-            logger.warning(f"Very slow request: {json.dumps(perf_data)}")
+            logger.warning("Very slow request", extra={"perf": perf_data})
         elif duration >= self.slow_request_threshold:
-            logger.info(f"Slow request: {json.dumps(perf_data)}")
+            logger.info("Slow request", extra={"perf": perf_data})
         elif response.status_code >= 400:
-            logger.info(f"Error request: {json.dumps(perf_data)}")
+            logger.info("Error response", extra={"perf": perf_data})
         else:
-            logger.debug(f"Request completed: {perf_data['method']} {perf_data['path']} - {perf_data['duration_ms']}ms")
+            logger.debug(
+                "Request completed",
+                extra={
+                    "method": perf_data['method'],
+                    "path": perf_data['path'],
+                    "duration_ms": perf_data['duration_ms'],
+                },
+            )
         
         # Store performance data in cache for monitoring dashboard
         self._store_performance_data(perf_data)
@@ -115,8 +122,8 @@ class PerformanceTrackingMiddleware(MiddlewareMixin):
             # Update aggregate stats
             self._update_aggregate_stats(perf_data)
             
-        except Exception as e:
-            logger.error(f"Failed to store performance data: {e}")
+        except Exception:
+            logger.exception("Failed to store performance data")
 
     def _update_aggregate_stats(self, perf_data: Dict[str, Any]):
         """Update aggregate performance statistics."""
@@ -168,8 +175,8 @@ class PerformanceTrackingMiddleware(MiddlewareMixin):
             # Store for 24 hours
             self.cache_service.set(stats_key, stats, ttl=86400)
             
-        except Exception as e:
-            logger.error(f"Failed to update aggregate stats: {e}")
+        except Exception:
+            logger.exception("Failed to update aggregate stats")
 
 
 class DatabaseQueryCountMiddleware(MiddlewareMixin):
@@ -186,8 +193,12 @@ class DatabaseQueryCountMiddleware(MiddlewareMixin):
         """Log query count if significant."""
         if hasattr(request, 'db_query_count') and request.db_query_count > 10:
             logger.warning(
-                f"High PostgreSQL query count: {request.db_query_count} queries "
-                f"for {request.method} {request.path}"
+                "High PostgreSQL query count",
+                extra={
+                    "query_count": request.db_query_count,
+                    "method": request.method,
+                    "path": request.path,
+                },
             )
         return response
 

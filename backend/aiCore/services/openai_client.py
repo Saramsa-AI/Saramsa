@@ -64,7 +64,7 @@ class AzureOpenAIClient:
                 f"Missing Azure OpenAI configuration. Set these env vars in backend/.env: {', '.join(missing)}. "
                 "Then restart Django and Celery."
             )
-            logger.error("Azure OpenAI: %s", msg)
+            logger.error("Missing Azure OpenAI configuration", extra={"missing_env_vars": missing})
             raise ValueError(msg)
 
         try:
@@ -82,9 +82,9 @@ class AzureOpenAIClient:
                 api_version=config["API_VERSION"],
                 timeout=60.0,
             )
-            logger.info("Azure OpenAI client initialized successfully (sync + async)")
+            logger.info("Azure OpenAI client initialized (sync and async)")
         except Exception as e:
-            logger.error("Failed to initialize Azure OpenAI client: %s", e)
+            logger.exception("Failed to initialize Azure OpenAI client")
             raise ConnectionError(f"Failed to initialize Azure OpenAI client: {e}")
 
     def get_client(self):
@@ -121,10 +121,10 @@ class AzureOpenAIClient:
                 messages=[{"role": "user", "content": "test connection to Azure OpenAI"}],
                 max_completion_tokens=16
             )
-            logger.info("Azure OpenAI connection test successful")
+            logger.info("Azure OpenAI connection test passed")
             return True
         except Exception as e:
-            logger.error(f"Azure OpenAI connection test failed: {e}")
+            logger.exception("Azure OpenAI connection test failed")
             raise ConnectionError(f"Azure OpenAI connection test failed: {e}")
 
 

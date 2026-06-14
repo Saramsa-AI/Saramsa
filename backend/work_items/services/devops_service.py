@@ -44,7 +44,7 @@ class DevOpsService:
             cached_candidates = analysis_data.get("work_item_candidates") if isinstance(analysis_data, dict) else None
             if isinstance(cached_candidates, list) and cached_candidates:
                 candidates = cached_candidates
-                logger.info("Reusing %s cached work item candidates from analysis_data", len(candidates))
+                logger.info("Reusing cached work item candidates", extra={"candidate_count": len(candidates)})
             else:
                 candidate_service = get_work_item_candidate_service()
                 candidates = candidate_service.generate_candidates(analysis_data, previous_analysis=None)
@@ -86,18 +86,15 @@ class DevOpsService:
             if isinstance(cached_narration, dict) and cached_narration.get("work_items"):
                 narratives = cached_narration
                 logger.info(
-                    "Reusing cached narration from analysis_data (%s work_items) — skipping GPT call",
-                    len(cached_narration.get("work_items", [])),
+                    "Reusing cached narration; skipping narration generation",
+                    extra={"work_item_count": len(cached_narration.get("work_items", []))},
                 )
             else:
                 try:
                     narration_service = get_narration_service()
                     narratives = narration_service.generate_narratives(narration_input, user_id=user_id)
-                except Exception as narration_err:
-                    logger.warning(
-                        "Narration failed, falling back to deterministic text: %s",
-                        narration_err,
-                    )
+                except Exception:
+                    logger.warning("Narration failed; falling back to deterministic text")
                     narratives = None
             work_items_llm = narratives.get("work_items", []) if isinstance(narratives, dict) else []
             result = narratives
@@ -117,7 +114,7 @@ class DevOpsService:
             # Generate summary in code (not from LLM)
             summary = self._generate_summary(work_items)
             if work_items:
-                logger.info("Successfully generated %s work items", len(work_items))
+                logger.info("Generated work items", extra={"work_item_count": len(work_items)})
 
             # Add metadata to each work item
             # CRITICAL: Set analysis_id on each item so they link to the source analysis
@@ -140,8 +137,8 @@ class DevOpsService:
                 'raw_llm_response': result
             }
             
-        except Exception as e:
-            logger.error(f"Error generating work items from analysis: {e}")
+        except Exception:
+            logger.exception("Failed to generate work items from analysis")
             raise
     
     def create_work_items(self, user_id: str, work_items: List[Dict[str, Any]],
@@ -189,8 +186,8 @@ class DevOpsService:
                 return self.work_item_repo.upsert_by_id(work_items_doc["id"], project_id, work_items_doc)
             return self.work_item_repo.create(work_items_doc)
 
-        except Exception as e:
-            logger.error(f"Error creating work items: {e}")
+        except Exception:
+            logger.exception("Failed to create work items")
             raise
 
     def _deduplicate_against_existing(self, new_items: List[Dict[str, Any]],
@@ -223,23 +220,23 @@ class DevOpsService:
             # Check aspect_key match
             ak = item.get("aspect_key")
             if ak and str(ak).lower().strip() in existing_aspect_keys:
-                logger.info("Dedup: skipping work item '%s' — aspect_key '%s' already exists in project %s",
-                            item.get("title", ""), ak, project_id)
+                logger.debug("Skipping duplicate work item: aspect_key already exists",
+                             extra={"aspect_key": ak, "project_id": project_id})
                 continue
 
             # Check title similarity
             new_title = self._normalize_title(item.get("title", ""))
             if new_title and any(self._titles_similar(new_title, et) for et in existing_titles):
-                logger.info("Dedup: skipping work item '%s' — similar title already exists in project %s",
-                            item.get("title", ""), project_id)
+                logger.debug("Skipping duplicate work item: similar title already exists",
+                             extra={"project_id": project_id})
                 continue
 
             kept.append(item)
 
         skipped = len(new_items) - len(kept)
         if skipped:
-            logger.info("Cross-analysis dedup: kept %d, skipped %d duplicates (project=%s)",
-                        len(kept), skipped, project_id)
+            logger.debug("Cross-analysis dedup completed",
+                         extra={"kept_count": len(kept), "skipped_count": skipped, "project_id": project_id})
         return kept
 
     @staticmethod
@@ -276,8 +273,8 @@ class DevOpsService:
         """Update embedded work item - consolidated from analysis service."""
         try:
             return self.work_item_repo.update_embedded_work_item(work_item_id, user_id, updated_data, project_id=project_id)
-        except Exception as e:
-            logger.error(f"Error updating work item {work_item_id}: {e}")
+        except Exception:
+            logger.exception("Failed to update work item", extra={"work_item_id": work_item_id})
             return None
     
     def remove_work_items(self, work_item_ids: List[str], user_id: str, user_story_id: str = None, project_id: Optional[str] = None) -> Dict[str, Any]:
@@ -294,8 +291,8 @@ class DevOpsService:
                         removed_count += 1
                     else:
                         failed_ids.append(work_item_id)
-                except Exception as e:
-                    logger.error(f"Error removing work item {work_item_id}: {e}")
+                except Exception:
+                    logger.exception("Failed to remove work item", extra={"work_item_id": work_item_id})
                     failed_ids.append(work_item_id)
             
             return {
@@ -306,8 +303,8 @@ class DevOpsService:
                 "user_story_id": user_story_id
             }
             
-        except Exception as e:
-            logger.error(f"Error removing work items: {e}")
+        except Exception:
+            logger.exception("Failed to remove work items")
             raise
     
     def submit_to_external_platform(self, user_id: str, work_items: List[Dict[str, Any]], 
@@ -322,8 +319,8 @@ class DevOpsService:
                 project_config=project_config,
             )
                 
-        except Exception as e:
-            logger.error(f"Error submitting to {platform}: {e}")
+        except Exception:
+            logger.exception("Failed to submit to external platform", extra={"platform": platform})
             raise
 
     @staticmethod
@@ -505,8 +502,8 @@ class DevOpsService:
                 "results": results,
             }
             
-        except Exception as e:
-            logger.error(f"Error submitting to Azure DevOps: {e}")
+        except Exception:
+            logger.exception("Failed to submit to Azure DevOps")
             raise
     
     def _submit_to_jira(self, user_id: str, work_items: List[Dict[str, Any]],
@@ -589,8 +586,8 @@ class DevOpsService:
                 "results": results,
             }
             
-        except Exception as e:
-            logger.error(f"Error submitting to Jira: {e}")
+        except Exception:
+            logger.exception("Failed to submit to Jira")
             raise
 
     def _submit_to_asana(self, work_items: List[Dict[str, Any]], project_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -606,8 +603,8 @@ class DevOpsService:
                 saramsa_project_id=str(project_id),
                 work_items=work_items,
             )
-        except Exception as e:
-            logger.error(f"Error submitting to Asana: {e}")
+        except Exception:
+            logger.exception("Failed to submit to Asana")
             raise
 
     def _normalize_linear_priority(self, work_item: Dict[str, Any]) -> int:
@@ -721,8 +718,8 @@ class DevOpsService:
                 "results": results,
             }
 
-        except Exception as e:
-            logger.error(f"Error submitting to Linear: {e}")
+        except Exception:
+            logger.exception("Failed to submit to Linear")
             raise
 
     def _post_linear_with_rate_limit_retry(self, headers: Dict[str, str], payload: Dict[str, Any],
@@ -807,26 +804,26 @@ class DevOpsService:
                 # Try direct JSON parsing first
                 try:
                     return json.loads(result)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Direct JSON parsing failed: {e}")
-                    
+                except json.JSONDecodeError:
+                    logger.warning("Direct JSON parsing failed; attempting cleaning")
+
                     # Try using the enhanced JSON cleaning utilities
                     from aiCore.services.utilities import fix_json_string
                     cleaned_result = fix_json_string(result)
                     
                     try:
                         parsed = json.loads(cleaned_result)
-                        logger.info("Successfully parsed JSON after cleaning")
+                        logger.info("Parsed JSON after cleaning")
                         return parsed
                     except json.JSONDecodeError as e2:
-                        logger.error(f"JSON parsing failed even after cleaning: {e2}")
+                        logger.exception("Failed to parse JSON after cleaning")
                         return {"work_items": [], "summary": {}, "parse_error": str(e2)}
             
-            logger.warning(f"Unexpected result type: {type(result)}")
+            logger.warning("Unexpected result type", extra={"result_type": type(result).__name__})
             return {"work_items": [], "summary": {}}
             
         except Exception as e:
-            logger.error(f"Error parsing LLM response: {e}")
+            logger.exception("Failed to parse LLM response")
             return {"work_items": [], "summary": {}, "error": str(e)}
     
     def _validate_and_clean_work_items(self, work_items: List[Dict], process_template: str) -> List[Dict]:
@@ -852,20 +849,23 @@ class DevOpsService:
             
             # Validate required fields
             if not item.get("title") or not item.get("description"):
-                logger.warning(f"Skipping work item with missing title or description: {item}")
+                logger.warning(
+                    "Skipping work item: missing title or description",
+                    extra={"item_keys": sorted(item.keys())},
+                )
                 continue
             
             # Clean and validate work item type
             item_type = item.get("type", "task").lower()
             if item_type not in valid_types:
-                logger.info(f"Invalid work item type '{item_type}', defaulting to 'task'")
+                logger.debug("Invalid work item type; defaulting to task", extra={"item_type": item_type})
                 item["type"] = "task"
             
             # Clean and validate priority
             valid_priorities = ["critical", "high", "medium", "low"]
             priority = item.get("priority", "medium").lower()
             if priority not in valid_priorities:
-                logger.info(f"Invalid priority '{priority}', defaulting to 'medium'")
+                logger.debug("Invalid priority; defaulting to medium", extra={"priority": priority})
                 item["priority"] = "medium"
             
             # Ensure required fields have reasonable defaults
@@ -881,7 +881,10 @@ class DevOpsService:
             
             valid_work_items.append(item)
         
-        logger.info(f"Validated {len(valid_work_items)} out of {len(work_items)} work items")
+        logger.debug(
+            "Validated work items",
+            extra={"valid_count": len(valid_work_items), "input_count": len(work_items)},
+        )
         return valid_work_items
 
     # ------------------------------------------------------------------
@@ -960,8 +963,8 @@ class DevOpsService:
         if not truncated:
             truncated = text[:max_len]
         logger.warning(
-            "LLM %s truncated from %d to %d chars: '%s...'",
-            field_name, len(text), len(truncated), truncated[:60],
+            "LLM field truncated",
+            extra={"field": field_name, "original_length": len(text), "truncated_length": len(truncated)},
         )
         return truncated
 
@@ -975,19 +978,17 @@ class DevOpsService:
         missing = candidate_ids - llm_ids if llm_ids else set()
         if introduced:
             logger.warning(
-                "CONTRACT VIOLATION (Phase-2): LLM attempted to add candidates: %s",
-                sorted(introduced),
+                "LLM attempted to add candidates outside the deterministic set",
+                extra={"introduced_count": len(introduced)},
             )
         if missing and llm_ids:
             logger.warning(
-                "CONTRACT VIOLATION (Phase-2): LLM attempted to remove candidates: %s",
-                sorted(missing),
+                "LLM attempted to remove deterministic candidates",
+                extra={"missing_count": len(missing)},
             )
         for item in llm_items:
             if isinstance(item, dict) and item.get("priority"):
-                logger.warning(
-                    "CONTRACT VIOLATION (Phase-2): LLM attempted to set priority"
-                )
+                logger.warning("LLM attempted to set priority")
                 break
 
     @staticmethod

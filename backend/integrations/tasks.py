@@ -46,5 +46,5 @@ def cleanup_expired_invites() -> int:
     )
     count = queryset.update(status="expired")
     if count:
-        logger.info("cleanup_expired_invites: marked %s invite(s) as expired", count)
+        logger.info("Marked expired organization invites", extra={"count": count})
     return count

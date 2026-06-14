@@ -150,7 +150,7 @@ def stripe_webhook(request):
         webhook_event.updated_at = timezone.now()
         webhook_event.save()
     except Exception as e:
-        logger.exception("Stripe webhook processing failed: %s", e)
+        logger.exception("Failed to process Stripe webhook", extra={"event_type": event_type})
         webhook_event.event_type = event_type
         webhook_event.payload = event_payload
         webhook_event.livemode = bool(event.get("livemode"))

@@ -64,6 +64,12 @@ class AppJWTAuthentication(JWTAuthentication):
         if not user_data.get('is_active', True):
             raise AuthenticationFailed('User account is disabled')
 
+        try:
+            from apis.core.request_context import set_request_identity
+            set_request_identity(user_id, (user_data.get('profile') or {}).get('active_organization_id'))
+        except Exception:
+            pass
+
         return AppUser(user_data)
 
 
@@ -80,8 +86,8 @@ class AppAuthenticationBackend(BaseBackend):
             if user_data:
                 return AppUser(user_data)
             return None
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
+        except Exception:
+            logger.exception("Failed to authenticate user")
             return None
 
     def get_user(self, user_id):
@@ -93,6 +99,6 @@ class AppAuthenticationBackend(BaseBackend):
             if user_data:
                 return AppUser(user_data)
             return None
-        except Exception as e:
-            logger.error(f"Get user error: {e}")
+        except Exception:
+            logger.exception("Failed to get user")
             return None

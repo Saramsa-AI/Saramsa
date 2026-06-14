@@ -167,7 +167,7 @@ class ReviewService:
                         push_failed.append({"candidate_id": cid, "error": error_message})
                 approved += 1
             except Exception as e:
-                logger.error(f"Failed to approve candidate {cid}: {e}")
+                logger.exception("Failed to approve candidate", extra={"candidate_id": cid})
                 failed.append({'candidate_id': cid, 'error': str(e)})
         return {'approved': approved, 'failed': failed, 'pushed': pushed, 'push_failed': push_failed}
 
@@ -196,8 +196,11 @@ class ReviewService:
                 if cid and pid:
                     self.repo.update_candidate_status(cid, pid, updates)
                     count += 1
-            except Exception as e:
-                logger.error(f"Failed to unsnooze candidate: {e}")
+            except Exception:
+                logger.exception(
+                    "Failed to unsnooze candidate",
+                    extra={"candidate_id": candidate.get('id') or candidate.get('candidate_id')},
+                )
         return count
 
     def retry_push(self, candidate_id: str, project_id: str, user_id: str) -> Dict[str, Any]:

@@ -38,22 +38,21 @@ def _resolve_active_org_id(user_id: str) -> Optional[str]:
     try:
         user = UserAccount.objects.filter(id=str(user_id)).first()
         if not user:
-            logger.warning("quota: user_id=%s not found — quota will use user-keyed fallback", user_id)
+            logger.warning("User not found; quota will use user-keyed fallback", extra={"user_id": user_id})
             return None
         profile = user.profile or {}
         org_id = profile.get("active_organization_id")
         if not org_id:
             logger.warning(
-                "quota: user_id=%s has no active_organization_id — quota will use user-keyed fallback. "
-                "This usually means signup bootstrap failed.",
-                user_id,
+                "User has no active organization; quota will use user-keyed fallback",
+                extra={"user_id": user_id},
             )
             return None
         return str(org_id)
     except Exception:
         logger.exception(
-            "quota: active_organization lookup raised for user_id=%s — falling back to user-keyed quota",
-            user_id,
+            "Failed to resolve active organization; falling back to user-keyed quota",
+            extra={"user_id": user_id},
         )
         return None
 
@@ -111,8 +110,8 @@ def _get_limits(user_id: str, organization_id: Optional[str] = None) -> dict:
                     defaults[key] = int(overrides[key])
     except Exception:
         logger.exception(
-            "Quota limits lookup failed for user_id=%s org_id=%s — falling back to env defaults %s",
-            user_id, organization_id, defaults,
+            "Failed to look up quota limits; falling back to env defaults",
+            extra={"user_id": user_id, "organization_id": organization_id},
         )
     return defaults
 
@@ -150,8 +149,8 @@ def _resolve_limit(limits: dict, limit_key: str) -> int:
     if limit_key in limits:
         return int(limits[limit_key])
     logger.error(
-        "quota: limit_key=%s missing from resolved limits %s — failing closed (deny)",
-        limit_key, limits,
+        "Limit key missing from resolved limits; failing closed (deny)",
+        extra={"limit_key": limit_key, "limit_keys": list(limits.keys())},
     )
     return 0
 

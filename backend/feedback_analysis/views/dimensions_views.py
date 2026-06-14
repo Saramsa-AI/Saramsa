@@ -146,7 +146,7 @@ class DimensionDiscoveryView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"Error discovering dimensions for project {project_id}: {e}", exc_info=True)
+            logger.exception("Failed to discover dimensions for project")
             return StandardResponse.error(
                 title='Dimension Discovery Failed',
                 detail=str(e),
@@ -222,7 +222,7 @@ class DimensionQueryView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"Error querying with dimensions: {e}", exc_info=True)
+            logger.exception("Failed to query analyses with dimensions")
             return StandardResponse.error(
                 title='Dimension Query Failed',
                 detail=str(e),
@@ -395,7 +395,7 @@ class DimensionBreakdownView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"Error generating dimension breakdown: {e}", exc_info=True)
+            logger.exception("Failed to generate dimension breakdown")
             return StandardResponse.error(
                 title='Dimension Breakdown Failed',
                 detail=str(e),

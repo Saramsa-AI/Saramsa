@@ -54,8 +54,8 @@ class AnalysisService:
             
             return self.analysis_repo.create(analysis_doc)
             
-        except Exception as e:
-            logger.error(f"Error creating analysis: {e}")
+        except Exception:
+            logger.exception("Failed to create analysis")
             raise
     
     def get_latest_project_analysis(self, project_id: str) -> Optional[Dict[str, Any]]:
@@ -92,8 +92,8 @@ class AnalysisService:
             
             return result
             
-        except Exception as e:
-            logger.error(f"Error getting user analysis summary: {e}")
+        except Exception:
+            logger.exception("Failed to get user analysis summary")
             raise
     
     def create_sentiment_analysis(self, user_id: str, feedback_data: str, 
@@ -123,8 +123,8 @@ class AnalysisService:
             
             return self.create_analysis(user_id, analysis_data, project_id)
             
-        except Exception as e:
-            logger.error(f"Error creating sentiment analysis: {e}")
+        except Exception:
+            logger.exception("Failed to create sentiment analysis")
             raise
     
     def create_deep_analysis(self, user_id: str, feedback_data: str, 
@@ -157,8 +157,8 @@ class AnalysisService:
             
             return self.create_analysis(user_id, analysis_data, project_id)
             
-        except Exception as e:
-            logger.error(f"Error creating deep analysis: {e}")
+        except Exception:
+            logger.exception("Failed to create deep analysis")
             raise
     
     def _generate_work_items_summary(self, work_items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -192,7 +192,7 @@ class AnalysisService:
         try:
             return self.chunking_service.get_chunk_info(feedback_data)
         except Exception as e:
-            logger.error(f"Error getting chunking info: {e}")
+            logger.exception("Failed to get chunking info")
             return {
                 "error": str(e),
                 "total_tokens": 0,
@@ -204,16 +204,16 @@ class AnalysisService:
         """Get user by primary key."""
         try:
             return self.auth_service.get_user_by_id(user_id)
-        except Exception as e:
-            logger.error(f"Error getting user by id: {e}")
+        except Exception:
+            logger.exception("Failed to get user by id")
             return None
     
     def ensure_project_context(self, project_id: str, user_id: str) -> tuple:
         """Ensure project context exists."""
         try:
             return self.project_service.ensure_project_context(project_id, user_id)
-        except Exception as e:
-            logger.error(f"Error ensuring project context: {e}")
+        except Exception:
+            logger.exception("Failed to ensure project context")
             raise
     
     # Insights Methods
@@ -221,103 +221,90 @@ class AnalysisService:
         """Get all insights."""
         try:
             return self.analysis_repo.get_all_insights()
-        except Exception as e:
-            logger.error(f"Error getting all insights: {e}")
+        except Exception:
+            logger.exception("Failed to get all insights")
             raise
     
     def get_insight_by_id(self, insight_id: str) -> Optional[Dict[str, Any]]:
         """Get insight by ID."""
         try:
             return self.analysis_repo.get_insight_by_id(insight_id)
-        except Exception as e:
-            logger.error(f"Error getting insight by ID: {e}")
+        except Exception:
+            logger.exception("Failed to get insight by id")
             return None
     
     def get_insights_by_type(self, analysis_type: str) -> List[Dict[str, Any]]:
         """Get insights by analysis type."""
         try:
             return self.analysis_repo.get_insights_by_type(analysis_type)
-        except Exception as e:
-            logger.error(f"Error getting insights by type: {e}")
+        except Exception:
+            logger.exception("Failed to get insights by type")
             raise
 
     def get_insight_rules_for_project(self, project_id: str) -> Optional[Dict[str, Any]]:
         """Get insight auto-rule configuration for a project."""
         try:
             return self.analysis_repo.get_insight_rules_for_project(project_id)
-        except Exception as e:
-            logger.error(f"Error getting insight rules for project: {e}")
+        except Exception:
+            logger.exception("Failed to get insight rules for project")
             return None
 
     def upsert_insight_rules_for_project(self, project_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Upsert insight auto-rule configuration for a project."""
         try:
             return self.analysis_repo.upsert_insight_rules_for_project(project_id, data)
-        except Exception as e:
-            logger.error(f"Error upserting insight rules for project: {e}")
+        except Exception:
+            logger.exception("Failed to upsert insight rules for project")
             return None
 
     def get_insight_reviews_for_project(self, project_id: str) -> List[Dict[str, Any]]:
         """Get insight review statuses for a project."""
         try:
             return self.analysis_repo.get_insight_reviews_for_project(project_id)
-        except Exception as e:
-            logger.error(f"Error getting insight reviews for project: {e}")
+        except Exception:
+            logger.exception("Failed to get insight reviews for project")
             return []
 
     def upsert_insight_review(self, project_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Upsert insight review status."""
         try:
             return self.analysis_repo.upsert_insight_review(project_id, data)
-        except Exception as e:
-            logger.error(f"Error upserting insight review: {e}")
+        except Exception:
+            logger.exception("Failed to upsert insight review")
             return None
     
     # Analysis Data Methods
     def save_analysis_data(self, analysis_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Save analysis data."""
         try:
-            logger.info(f"🔍 DEBUG: AnalysisService.save_analysis_data called")
-            logger.info(f"🔍 DEBUG: Input data keys: {list(analysis_data.keys())}")
-            logger.info(f"🔍 DEBUG: Input data id: {analysis_data.get('id')}")
-            logger.info(f"🔍 DEBUG: Input data projectId: {analysis_data.get('projectId')}")
-            logger.info(f"🔍 DEBUG: Input data userId: {analysis_data.get('userId')}")
-            logger.info(f"🔍 DEBUG: Input data has original_comments: {'original_comments' in analysis_data}")
-            logger.info(f"🔍 DEBUG: Input data has feedback: {'feedback' in analysis_data}")
-            
-            if 'original_comments' in analysis_data:
-                logger.info(f"🔍 DEBUG: original_comments count: {len(analysis_data['original_comments'])}")
-            if 'feedback' in analysis_data:
-                logger.info(f"🔍 DEBUG: feedback count: {len(analysis_data['feedback'])}")
-            
+            logger.debug("Saving analysis data", extra={"input_keys": list(analysis_data.keys())})
+
             result = self.analysis_repo.save_analysis_data(analysis_data)
 
             if result:
-                logger.info(f"✅ AnalysisService.save_analysis_data SUCCESS")
-                logger.info(f"🔍 DEBUG: Returned result keys: {list(result.keys())}")
-                logger.info(f"🔍 DEBUG: Returned result id: {result.get('id')}")
+                logger.info("Analysis data saved")
 
                 # Clear any remaining analysis cache entries
                 try:
                     cache = get_cache_service()
                     cache.clear_pattern("analysis:*")
-                    logger.info("🗑️ Cleared analysis cache entries")
-                except Exception as cache_err:
-                    logger.warning(f"Failed to clear cache: {cache_err}")
+                    logger.debug("Cleared analysis cache entries")
+                except Exception:
+                    logger.warning("Failed to clear analysis cache")
             else:
-                logger.error(f"❌ AnalysisService.save_analysis_data FAILED - returned None")
-            
+                logger.error("Failed to save analysis data: repository returned None")
+
             return result
-        except Exception as e:
-            logger.error(f"Error saving analysis data: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Failed to save analysis data")
             return None
     
     def analysis_has_result(self, analysis_id: str) -> bool:
         """Idempotency check: has this analysis already been processed and saved?"""
         try:
             return self.analysis_repo.analysis_has_result(analysis_id)
-        except Exception as e:
-            logger.warning(f"analysis_has_result check failed (treating as not complete): {e}")
+        except Exception:
+            logger.warning("Idempotency check failed; treating analysis as not complete")
             return False
 
     def mark_analysis_status(self, analysis_id: str, status: str, **kwargs) -> None:
@@ -328,16 +315,16 @@ class AnalysisService:
         """Durable lifecycle status for a Celery task id, or None."""
         try:
             return self.analysis_repo.get_status_by_task_id(task_id)
-        except Exception as e:
-            logger.warning(f"get_status_by_task_id failed for {task_id}: {e}")
+        except Exception:
+            logger.warning("Failed to fetch durable status by task id", extra={"task_id": task_id})
             return None
 
     def update_project_last_analysis(self, project_id: str, analysis_id: str) -> bool:
         """Update project's last analysis."""
         try:
             return self.analysis_repo.update_project_last_analysis(project_id, analysis_id)
-        except Exception as e:
-            logger.error(f"Error updating project last analysis: {e}")
+        except Exception:
+            logger.exception("Failed to update project last analysis")
             return False
     
     # User Data Methods
@@ -345,48 +332,48 @@ class AnalysisService:
         """Get latest personal user data."""
         try:
             return self.analysis_repo.get_latest_personal_user_data(user_id)
-        except Exception as e:
-            logger.error(f"Error getting latest personal user data: {e}")
+        except Exception:
+            logger.exception("Failed to get latest personal user data")
             return None
     
     def get_user_data_by_project(self, user_id: str, project_id: str) -> Optional[Dict[str, Any]]:
         """Get user data by project."""
         try:
             return self.analysis_repo.get_user_data_by_project(user_id, project_id)
-        except Exception as e:
-            logger.error(f"Error getting user data by project: {e}")
+        except Exception:
+            logger.exception("Failed to get user data by project")
             return None
     
     def get_latest_analysis_by_project(self, project_id: str, user_id: str) -> Optional[Dict[str, Any]]:
         """Get latest analysis data for a project."""
         try:
             return self.analysis_repo.get_latest_analysis_by_project(project_id, user_id)
-        except Exception as e:
-            logger.error(f"Error getting latest analysis by project: {e}")
+        except Exception:
+            logger.exception("Failed to get latest analysis by project")
             return None
     
     def get_analysis_by_id(self, analysis_id: str, user_id: str) -> Optional[Dict[str, Any]]:
         """Get specific analysis by ID."""
         try:
             return self.analysis_repo.get_analysis_by_id(analysis_id, user_id)
-        except Exception as e:
-            logger.error(f"Error getting analysis by ID: {e}")
+        except Exception:
+            logger.exception("Failed to get analysis by id")
             return None
 
     def get_analysis_by_id_any(self, analysis_id: str) -> Optional[Dict[str, Any]]:
         """Get analysis by ID without user ownership filter."""
         try:
             return self.analysis_repo.get_analysis_by_id_any(analysis_id)
-        except Exception as e:
-            logger.error(f"Error getting analysis by ID (any user): {e}")
+        except Exception:
+            logger.exception("Failed to get analysis by id (any user)")
             return None
 
     def delete_analysis(self, analysis_id: str, user_id: str) -> bool:
         """Delete an analysis by ID (owner-only)."""
         try:
             return self.analysis_repo.delete_analysis(analysis_id, user_id)
-        except Exception as e:
-            logger.error(f"Error deleting analysis: {e}")
+        except Exception:
+            logger.exception("Failed to delete analysis")
             return False
 
     def update_analysis_name(self, analysis_id: str, user_id: str, name: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -398,7 +385,7 @@ class AnalysisService:
 
             project_id = analysis.get("projectId") or analysis.get("project_id")
             if not project_id:
-                logger.error("Analysis update failed: missing projectId on analysis document.")
+                logger.error("Failed to update analysis name: missing projectId on analysis document")
                 return None
 
             now = datetime.now(timezone.utc).isoformat()
@@ -411,8 +398,8 @@ class AnalysisService:
             analysis["name_updated_by"] = str(user_id)
 
             return self.analysis_repo.update_analysis(project_id, analysis)
-        except Exception as e:
-            logger.error(f"Error updating analysis name: {e}")
+        except Exception:
+            logger.exception("Failed to update analysis name")
             return None
 
     def update_analysis_name_for_doc(self, analysis: Dict[str, Any], user_id: str, name: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -423,7 +410,7 @@ class AnalysisService:
 
             project_id = analysis.get("projectId") or analysis.get("project_id")
             if not project_id:
-                logger.error("Analysis update failed: missing projectId on analysis document.")
+                logger.error("Failed to update analysis name: missing projectId on analysis document")
                 return None
 
             now = datetime.now(timezone.utc).isoformat()
@@ -436,8 +423,8 @@ class AnalysisService:
             analysis["name_updated_by"] = str(user_id)
 
             return self.analysis_repo.update_analysis(project_id, analysis)
-        except Exception as e:
-            logger.error(f"Error updating analysis name: {e}")
+        except Exception:
+            logger.exception("Failed to update analysis name")
             return None
     
     # Analysis History Methods
@@ -445,24 +432,24 @@ class AnalysisService:
         """Get analysis history for project."""
         try:
             return self.analysis_repo.get_analysis_history_for_project(project_id)
-        except Exception as e:
-            logger.error(f"Error getting analysis history for project: {e}")
+        except Exception:
+            logger.exception("Failed to get analysis history for project")
             return []
     
     def get_analysis_by_quarter(self, project_id: str, quarter: str) -> Optional[Dict[str, Any]]:
         """Get analysis by quarter."""
         try:
             return self.analysis_repo.get_analysis_by_quarter(project_id, quarter)
-        except Exception as e:
-            logger.error(f"Error getting analysis by quarter: {e}")
+        except Exception:
+            logger.exception("Failed to get analysis by quarter")
             return None
     
     def get_cumulative_analysis_for_project(self, project_id: str) -> Optional[Dict[str, Any]]:
         """Get cumulative analysis for project."""
         try:
             return self.analysis_repo.get_cumulative_analysis_for_project(project_id)
-        except Exception as e:
-            logger.error(f"Error getting cumulative analysis for project: {e}")
+        except Exception:
+            logger.exception("Failed to get cumulative analysis for project")
             return None
     
     # Generic Query Methods
@@ -470,16 +457,16 @@ class AnalysisService:
         """Generic query method."""
         try:
             return self.analysis_repo.query_items(container_name, query, parameters)
-        except Exception as e:
-            logger.error(f"Error querying items: {e}")
+        except Exception:
+            logger.exception("Failed to query items")
             return []
     
     def patch_user_story(self, user_story_id: str, partition_key: str, patch_operations: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Patch user story."""
         try:
             return self.analysis_repo.patch_user_story(user_story_id, partition_key, patch_operations)
-        except Exception as e:
-            logger.error(f"Error patching user story: {e}")
+        except Exception:
+            logger.exception("Failed to patch user story")
             return None
 
 

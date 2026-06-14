@@ -152,7 +152,7 @@ def normalize_comment_extraction(data: dict, comment_index: int = None) -> dict:
     Raises:
         ValueError: If data cannot be normalized to match schema
     """
-    logger.debug(f"🔍 Normalizing extraction - Input keys: {list(data.keys())}, comment_index: {comment_index}")
+    logger.debug("Normalizing extraction", extra={"input_keys": list(data.keys()), "comment_index": comment_index})
     normalized = {}
     
     # comment_id (required)
@@ -242,11 +242,11 @@ def normalize_comment_extraction(data: dict, comment_index: int = None) -> dict:
     # Validate final result
     is_valid, error = validate_comment_extraction(normalized)
     if not is_valid:
-        logger.error(f"❌ Normalization failed validation: {error}")
-        logger.debug(f"🔍 Normalized data that failed: {json.dumps(normalized, indent=2)}")
+        logger.warning("Normalization failed validation", extra={"error": str(error)})
+        logger.debug("Normalized data that failed validation", extra={"normalized": normalized})
         raise ValueError(f"Normalization failed validation: {error}")
-    
-    logger.debug(f"✅ Normalization successful - comment_id: {normalized.get('comment_id')}, sentiment: {normalized.get('sentiment')}")
+
+    logger.debug("Normalization completed", extra={"comment_id": normalized.get('comment_id'), "sentiment": normalized.get('sentiment')})
     return normalized
 
 

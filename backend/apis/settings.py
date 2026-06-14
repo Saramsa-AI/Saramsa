@@ -57,9 +57,14 @@ APPLICATIONINSIGHTS_CONNECTION_STRING = os.getenv(
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {
+        'correlation': {
+            '()': 'apis.core.request_context.CorrelationIdFilter',
+        },
+    },
     'formatters': {
         'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'format': '{levelname} {asctime} {module} [{correlation_id}] {message}',
             'style': '{',
         },
         'simple': {
@@ -72,6 +77,7 @@ LOGGING = {
             'level': 'INFO',
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+            'filters': ['correlation'],
         },
         'api_file': {
             'level': 'DEBUG' if DEBUG else 'INFO',
@@ -87,6 +93,7 @@ LOGGING = {
             'maxBytes': 10 * 1024 * 1024,  # 10 MB
             'backupCount': 3,
             'formatter': 'verbose',
+            'filters': ['correlation'],
         },
         'celery_file': {
             'level': 'DEBUG' if DEBUG else 'INFO',
@@ -102,6 +109,7 @@ LOGGING = {
             'maxBytes': 10 * 1024 * 1024,  # 10 MB
             'backupCount': 3,
             'formatter': 'verbose',
+            'filters': ['correlation'],
         },
     },
     'loggers': {

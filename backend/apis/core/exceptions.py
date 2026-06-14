@@ -87,7 +87,7 @@ def custom_exception_handler(exc, context):
             )
     
     # Log unexpected errors (500s)
-    logger.exception(f"Unhandled exception: {exc}")
+    logger.exception("Unhandled exception")
     
     # Include actual error details in DEBUG mode for easier debugging
     if settings.DEBUG:

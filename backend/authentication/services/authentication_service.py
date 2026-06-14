@@ -52,8 +52,8 @@ class AuthenticationService:
 
             return self.user_repo.create_user(user_data)
 
-        except Exception as e:
-            logger.error(f"Error creating user: {e}")
+        except Exception:
+            logger.exception("Failed to create user")
             raise
 
 
@@ -73,8 +73,8 @@ class AuthenticationService:
             
             return None
             
-        except Exception as e:
-            logger.error(f"Error authenticating user: {e}")
+        except Exception:
+            logger.exception("Failed to authenticate user")
             return None
     
     def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -90,8 +90,8 @@ class AuthenticationService:
         try:
             user_data['updatedAt'] = datetime.now(timezone.utc).isoformat()
             return self.user_repo.update(user_id, user_data)
-        except Exception as e:
-            logger.error(f"Error updating user {user_id}: {e}")
+        except Exception:
+            logger.exception("Failed to update user", extra={"user_id": user_id})
             raise
 
     def get_organization_context(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -118,8 +118,8 @@ class AuthenticationService:
         """Get all users."""
         try:
             return self.user_repo.get_all()
-        except Exception as e:
-            logger.error(f"Error getting all users: {e}")
+        except Exception:
+            logger.exception("Failed to get all users")
             raise
     
     # Password reset methods
@@ -171,8 +171,8 @@ class AuthenticationService:
             message.attach_alternative(html_body, "text/html")
             message.send(fail_silently=False)
             return True
-        except Exception as e:
-            logger.error(f"Failed to send password reset email to {email}: {e}")
+        except Exception:
+            logger.exception("Failed to send password reset email")
             return False
 
     def _hash_password(self, password: str) -> str:
@@ -198,8 +198,8 @@ class AuthenticationService:
                 )
 
             return False
-        except Exception as e:
-            logger.error(f"Error verifying password: {e}")
+        except Exception:
+            logger.exception("Failed to verify password")
             return False
 
 

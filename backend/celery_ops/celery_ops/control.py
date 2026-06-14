@@ -48,7 +48,7 @@ def revoke_task(app: Celery, task_id: str, terminate: bool = True) -> dict[str, 
 
         return {"ok": True, "task_id": task_id, "message": "Revoke sent (best-effort, cooperative)"}
     except Exception as e:
-        logger.warning("Celery Ops: revoke %s failed: %s", task_id, e)
+        logger.warning("Celery Ops: failed to revoke task %s: %s", task_id, e)
         return {"ok": False, "task_id": task_id, "error": str(e)}
 
 
@@ -78,5 +78,5 @@ def retry_task(
         r = celery_task.apply_async(args=args, kwargs=kwargs, queue=send_queue)
         return {"ok": True, "task_id": task_id, "new_task_id": r.id, "message": "Retry sent (best-effort)"}
     except Exception as e:
-        logger.warning("Celery Ops: retry %s failed: %s", task_id, e)
+        logger.warning("Celery Ops: failed to retry task %s: %s", task_id, e)
         return {"ok": False, "task_id": task_id, "error": str(e)}

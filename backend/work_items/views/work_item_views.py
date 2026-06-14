@@ -57,11 +57,14 @@ class WorkItemGenerationView(APIView):
             has_narration = bool(analysis_data.get("narration"))
             cached_cands = analysis_data.get("work_item_candidates")
             cached_cands_len = len(cached_cands) if isinstance(cached_cands, list) else 0
-            logger.info(
-                "WorkItemGenerationView: analysis_data has %s top-level keys; narration=%s; work_item_candidates=%s",
-                len(top_keys), has_narration, cached_cands_len,
+            logger.debug(
+                "Received analysis data for work item generation",
+                extra={
+                    "top_level_key_count": len(top_keys),
+                    "has_narration": has_narration,
+                    "cached_candidate_count": cached_cands_len,
+                },
             )
-            logger.info("WorkItemGenerationView: analysis_data keys: %s", top_keys)
         # Default left as None on purpose: the per-provider override at
         # `get_default_process_template(provider_config.provider)` only fires
         # for falsy values, so defaulting to "Agile" here would make the
@@ -139,7 +142,7 @@ class WorkItemGenerationView(APIView):
         except ConnectionError:
             raise
         except Exception as e:
-            logger.error("Work item generation failed: %s", e, exc_info=True)
+            logger.exception("Failed to generate work items")
             return StandardResponse.internal_server_error(
                 detail=f"Work item generation failed: {e}",
                 instance=request.path
@@ -169,8 +172,8 @@ class WorkItemGenerationView(APIView):
                     analysis_id=analysis_id
                 )
                 result["saved_id"] = saved_work_items.get("id") if saved_work_items else None
-            except Exception as e:
-                logger.warning("Failed to save work items: %s", e)
+            except Exception:
+                logger.exception("Failed to save work items")
 
         # Add context information
         result["context"] = {
@@ -200,7 +203,7 @@ class WorkItemSubmissionView(APIView):
     @async_to_sync
     async def post(self, request):
         """Submit work items to external platforms (Azure DevOps/Jira/Asana/Linear)"""
-        logger.info("🔧 WorkItemSubmissionView called")
+        logger.info("WorkItemSubmissionView called")
         
         user_id = request.user.id if hasattr(request, 'user') and request.user.is_authenticated else None
         if not user_id:
@@ -242,10 +245,10 @@ class WorkItemSubmissionView(APIView):
                     detail=f"Project {project_id} not found", 
                     instance=request.path
                 )
-        except Exception as e:
-            logger.error(f"Error fetching project: {e}")
+        except Exception:
+            logger.exception("Failed to fetch project configuration", extra={"project_id": project_id})
             return StandardResponse.internal_server_error(
-                detail="Failed to fetch project configuration", 
+                detail="Failed to fetch project configuration",
                 instance=request.path
             )
         
@@ -298,9 +301,8 @@ class WorkItemSubmissionView(APIView):
                     result_entry = results_by_story_id.get(str(wi_id))
                     if result_entry is None:
                         logger.warning(
-                            "No submission result matched work item %s; "
-                            "marking push status unknown",
-                            wi_id,
+                            "No submission result matched work item; marking push status unknown",
+                            extra={"work_item_id": wi_id},
                         )
                         try:
                             devops_service.work_item_repo.update_candidate_status(
@@ -315,11 +317,10 @@ class WorkItemSubmissionView(APIView):
                                     ),
                                 },
                             )
-                        except Exception as push_err:
-                            logger.warning(
-                                "Failed to update push status for %s: %s",
-                                wi_id,
-                                push_err,
+                        except Exception:
+                            logger.exception(
+                                "Failed to update push status",
+                                extra={"work_item_id": wi_id},
                             )
                         continue
                     if result_entry.get("success"):
@@ -343,8 +344,8 @@ class WorkItemSubmissionView(APIView):
                         devops_service.work_item_repo.update_candidate_status(
                             wi_id, project_id, push_updates
                         )
-                    except Exception as push_err:
-                        logger.warning("Failed to update push status for %s: %s", wi_id, push_err)
+                    except Exception:
+                        logger.exception("Failed to update push status", extra={"work_item_id": wi_id})
 
             if quality_report["items_with_issues"] > 0:
                 submission_result["quality_gate"] = quality_report
@@ -359,10 +360,10 @@ class WorkItemSubmissionView(APIView):
             
         except ValueError as e:
             return StandardResponse.validation_error(detail=str(e), instance=request.path)
-        except Exception as e:
-            logger.error(f"Error submitting work items: {e}")
+        except Exception:
+            logger.exception("Failed to submit work items", extra={"platform": platform})
             return StandardResponse.internal_server_error(
-                detail=f"Failed to submit work items to {platform}", 
+                detail=f"Failed to submit work items to {platform}",
                 instance=request.path
             )
 
@@ -414,10 +415,10 @@ class WorkItemsListView(APIView):
                 "message": "Work items retrieved successfully"
             })
             
-        except Exception as e:
-            logger.error(f"Error retrieving work items: {e}")
+        except Exception:
+            logger.exception("Failed to retrieve work items")
             return StandardResponse.internal_server_error(
-                detail="Failed to retrieve work items", 
+                detail="Failed to retrieve work items",
                 instance=request.path
             )
 
@@ -437,10 +438,10 @@ class WorkItemDetailView(APIView):
                 "message": "Work item detail endpoint - implementation needed"
             })
             
-        except Exception as e:
-            logger.error(f"Error retrieving work item {work_item_id}: {e}")
+        except Exception:
+            logger.exception("Failed to retrieve work item", extra={"work_item_id": work_item_id})
             return StandardResponse.internal_server_error(
-                detail="Failed to retrieve work item", 
+                detail="Failed to retrieve work item",
                 instance=request.path
             )
 
@@ -485,8 +486,8 @@ class WorkItemUpdateView(APIView):
                 "message": "Work item updated successfully"
             })
             
-        except Exception as e:
-            logger.error(f"Error updating work item: {e}")
+        except Exception:
+            logger.exception("Failed to update work item", extra={"work_item_id": work_item_id})
             return StandardResponse.internal_server_error(detail="Failed to update work item.", instance=request.path)
 
 
@@ -528,8 +529,8 @@ class WorkItemRemovalView(APIView):
                 "message": f"Successfully removed {len(ids)} work item(s)"
             })
             
-        except Exception as e:
-            logger.error(f"Error removing work items: {e}")
+        except Exception:
+            logger.exception("Failed to remove work items")
             return StandardResponse.internal_server_error(detail="Failed to remove work items.", instance=request.path)
 
 

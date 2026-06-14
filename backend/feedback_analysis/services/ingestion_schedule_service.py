@@ -147,7 +147,7 @@ class IngestionScheduleService:
                     )
 
             if not comments:
-                logger.info("No comments found for scheduled ingestion project %s", project_id)
+                logger.info("Skipping scheduled ingestion: no comments found", extra={"project_id": project_id})
                 self.mark_run(schedule, success=False)
                 return False
 
@@ -157,8 +157,8 @@ class IngestionScheduleService:
             process_feedback_task.delay(comments, None, str(user_id), project_id, analysis_id)
             self.mark_run(schedule, success=True)
             return True
-        except Exception as e:
-            logger.error("Scheduled ingestion failed for project %s: %s", project_id, e)
+        except Exception:
+            logger.exception("Failed to run scheduled ingestion", extra={"project_id": project_id})
             self.mark_run(schedule, success=False)
             return False
         finally:
