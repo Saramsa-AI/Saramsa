@@ -270,10 +270,10 @@ def send_digest_email(user: UserAccount, digest: dict[str, Any]) -> bool:
 
     try:
         msg.send(fail_silently=False)
-        logger.info("Weekly digest sent to %s", user.email)
+        logger.info("Weekly digest sent", extra={"user_id": user.id})
         return True
-    except Exception as exc:
-        logger.error("Failed to send weekly digest to %s: %s", user.email, exc)
+    except Exception:
+        logger.exception("Failed to send weekly digest", extra={"user_id": user.id})
         return False
 
 

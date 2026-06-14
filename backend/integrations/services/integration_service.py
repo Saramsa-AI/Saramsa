@@ -123,7 +123,7 @@ class IntegrationService:
                 return self.integrations_repo.get_by_organization(str(organization_id))
             return self.integrations_repo.get_integration_accounts_by_user(user_id)
         except Exception as e:
-            logger.error(f"Error getting integration accounts for user {user_id}: {e}")
+            logger.exception("Failed to get integration accounts", extra={"user_id": user_id})
             raise
 
     def get_integration_account_for_display(
@@ -282,7 +282,7 @@ class IntegrationService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error creating Azure integration: {e}")
+            logger.exception("Failed to create Azure integration")
             raise
     
     def create_jira_integration(self, user_id: str, organization_id: str, domain: str, email: str, api_token: str) -> Dict[str, Any]:
@@ -356,7 +356,7 @@ class IntegrationService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error creating Jira integration: {e}")
+            logger.exception("Failed to create Jira integration")
             raise
     
     def create_asana_integration(
@@ -420,7 +420,7 @@ class IntegrationService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error creating Asana integration: {e}")
+            logger.exception("Failed to create Asana integration")
             raise
 
     def create_linear_integration(
@@ -485,7 +485,7 @@ class IntegrationService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error creating Linear integration: {e}")
+            logger.exception("Failed to create Linear integration")
             raise
 
     def test_integration_connection(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> Dict[str, Any]:
@@ -541,7 +541,7 @@ class IntegrationService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error testing integration connection: {e}")
+            logger.exception("Failed to test integration connection")
             raise
     
     def delete_integration_account(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> bool:
@@ -580,8 +580,12 @@ class IntegrationService:
                     account_id,
                     organization_id=account_org_id,
                 )
-        except Exception as e:
-            logger.error(f"Error deleting integration account {account_id}: {e}")
+        except ValueError:
+            # Expected domain rejection (e.g. not an admin / no org access); the
+            # view turns it into a 4xx. Re-raise without a stack-trace log.
+            raise
+        except Exception:
+            logger.exception("Failed to delete integration account", extra={"account_id": account_id})
             raise
     
     def get_external_projects(self, user_id: str, provider: str, organization_id: Optional[str] = None, **kwargs) -> List[Dict[str, Any]]:
@@ -640,7 +644,7 @@ class IntegrationService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error fetching external projects for {provider}: {e}")
+            logger.exception("Failed to fetch external projects", extra={"provider": provider})
             raise
     
     def get_external_projects_by_account(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -658,20 +662,20 @@ class IntegrationService:
             # Authorize against the account's own organization, then load it.
             account_org_id = self._require_account_admin(user_id, account_id)
             if not account_org_id:
-                logger.error(f"Integration account {account_id} not found for user {user_id}")
+                logger.error("Integration account not found", extra={"account_id": account_id, "user_id": user_id})
                 raise ValueError("Integration account not found")
             account = self.integrations_repo.get_integration_account(user_id, account_id, organization_id=account_org_id)
             if not account:
-                logger.error(f"Integration account {account_id} not found for user {user_id}")
+                logger.error("Integration account not found", extra={"account_id": account_id, "user_id": user_id})
                 raise ValueError("Integration account not found")
             
             provider = account.get('provider')
             credentials = account.get('credentials', {})
             metadata = account.get('metadata', {})
             
-            logger.info(f"Fetching projects for account {account_id}, provider: {provider}")
-            logger.debug(f"Account metadata keys: {list(metadata.keys())}")
-            logger.debug(f"Account credentials keys: {list(credentials.keys())}")
+            logger.debug("Fetching projects for account", extra={"account_id": account_id, "provider": provider})
+            logger.debug("Account metadata keys", extra={"metadata_keys": list(metadata.keys())})
+            logger.debug("Account credential keys", extra={"credential_keys": list(credentials.keys())})
             
             # Decrypt credentials
             from .encryption_service import get_encryption_service
@@ -687,7 +691,7 @@ class IntegrationService:
                     if not encrypted_pat:
                         missing.append('tokenEncrypted')
                     error_msg = f"Invalid Azure integration account: missing {', '.join(missing)}"
-                    logger.error(f"{error_msg}. Metadata keys: {list(metadata.keys())}, Credentials keys: {list(credentials.keys())}")
+                    logger.error("Invalid Azure integration account", extra={"missing": missing, "metadata_keys": list(metadata.keys()), "credential_keys": list(credentials.keys())})
                     raise ValueError(error_msg)
                 pat_token = encryption_service.decrypt_token(encrypted_pat)
                 return self.external_api_service.fetch_azure_projects(organization, pat_token)
@@ -698,8 +702,8 @@ class IntegrationService:
                 encrypted_token = credentials.get('tokenEncrypted') or credentials.get('token')
                 
                 # Log what we found for debugging
-                logger.debug(f"Jira account check - domain: {domain}, email: {email}, has_token: {bool(encrypted_token)}")
-                logger.debug(f"Full account structure - keys: {list(account.keys())}")
+                logger.debug("Jira account check", extra={"domain": domain, "has_email": bool(email), "has_token": bool(encrypted_token)})
+                logger.debug("Jira account structure", extra={"account_keys": list(account.keys())})
                 
                 if not domain or not email or not encrypted_token:
                     missing = []
@@ -710,7 +714,7 @@ class IntegrationService:
                     if not encrypted_token:
                         missing.append('tokenEncrypted')
                     error_msg = f"Invalid Jira integration account: missing {', '.join(missing)}. Please reconfigure your Jira integration."
-                    logger.error(f"{error_msg}. Account ID: {account_id}, Metadata keys: {list(metadata.keys())}, Credentials keys: {list(credentials.keys())}")
+                    logger.error("Invalid Jira integration account", extra={"account_id": account_id, "missing": missing, "metadata_keys": list(metadata.keys()), "credential_keys": list(credentials.keys())})
                     raise ValueError(error_msg)
                 
                 api_token = encryption_service.decrypt_token(encrypted_token)
@@ -743,7 +747,7 @@ class IntegrationService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error fetching external projects for account {account_id}: {e}", exc_info=True)
+            logger.exception("Failed to fetch external projects for account", extra={"account_id": account_id})
             raise
     
     def check_external_project_exists(
@@ -772,7 +776,7 @@ class IntegrationService:
                 organization_id=organization_id,
             )
         except Exception as e:
-            logger.error(f"Error checking external project exists: {e}")
+            logger.exception("Failed to check whether external project exists")
             raise
 
 

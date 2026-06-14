@@ -297,7 +297,10 @@ class WorkItemRepository:
         ).order_by("-created_at")
 
         result = [c.to_dict() for c in qs]
-        logger.info(f"get_candidates_by_status: project_id={project_id}, status={status}, count={len(result)}")
+        logger.debug(
+            "Fetched candidates by status",
+            extra={"project_id": str(project_id), "status": status, "count": len(result)},
+        )
         return result
 
     def update_candidate_status(self, candidate_id: str, project_id: str,
@@ -388,8 +391,8 @@ class WorkItemRepository:
 
         if not story.project_id:
             logger.error(
-                "Cannot create candidates for story %s — UserStory has no project_id",
-                story.id,
+                "Failed to create candidates: story has no project_id",
+                extra={"story_id": story.id},
             )
             return []
         project_id = str(story.project_id)

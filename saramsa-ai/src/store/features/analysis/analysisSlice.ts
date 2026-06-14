@@ -159,8 +159,6 @@ function shouldSelect(getState: () => any, newId: string): boolean {
 function normalizeAnalysisData(input: any): AnalysisData {
   if (!input) return input;
 
-  console.log('[normalizeAnalysisData] Input keys:', Object.keys(input));
-
   // Extract the core analysis data from various possible structures
   let analysisData = input.analysisData || input.analysis?.analysisData || input;
 
@@ -1047,12 +1045,6 @@ export const deleteAnalysisRun = createAsyncThunk<
     try {
       const state = getState();
       const projectId = state.analysis.projectId;
-
-      console.log('[deleteAnalysisRun] State:', {
-        projectId,
-        analysisId,
-        fullState: state.analysis
-      });
 
       if (!projectId) {
         throw new Error('No project ID available');

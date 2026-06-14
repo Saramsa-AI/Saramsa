@@ -62,8 +62,8 @@ class UsageService:
         }
         try:
             return self.storage_service.update_document(self.container_name, doc_id, project_id, data)
-        except Exception as e:
-            logger.warning(f"Failed to record usage: {e}")
+        except Exception:
+            logger.warning("Failed to record usage")
             return data
 
     def get_usage(self, project_id: str, period: str) -> Dict[str, Any]:

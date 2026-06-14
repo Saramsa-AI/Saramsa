@@ -158,14 +158,14 @@ class ProjectService:
                         actor_id=str(owner_id)
                     )
             except Exception as e:
-                logger.warning(f"Failed to create owner role for project {project.get('id')}: {e}")
+                logger.warning("Failed to create owner role for project", extra={"project_id": project.get("id")}, exc_info=True)
 
             return project
             
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error creating project: {e}")
+            logger.exception("Failed to create project")
             raise
     
     def get_projects_by_user(self, user_id: str, organization_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -198,7 +198,7 @@ class ProjectService:
 
             return deduped
         except Exception as e:
-            logger.error(f"Error getting projects for user {user_id}: {e}")
+            logger.exception("Failed to get projects for user", extra={"user_id": user_id})
             raise
     
     def get_project(self, project_id: str, user_id: str) -> Optional[Dict[str, Any]]:
@@ -243,7 +243,7 @@ class ProjectService:
 
             return None
         except Exception as e:
-            logger.error(f"Error getting project {project_id}: {e}")
+            logger.exception("Failed to get project", extra={"project_id": project_id})
             raise
     
     def update_project(self, project_id: str, user_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -284,7 +284,7 @@ class ProjectService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error updating project {project_id}: {e}")
+            logger.exception("Failed to update project", extra={"project_id": project_id})
             raise
     
     def delete_project(self, project_id: str, user_id: str) -> bool:
@@ -308,7 +308,7 @@ class ProjectService:
             delete_as_user = None if role == "admin" else user_id
             return self.integrations_repo.delete_project(project_id, delete_as_user)
         except Exception as e:
-            logger.error(f"Error deleting project {project_id}: {e}")
+            logger.exception("Failed to delete project", extra={"project_id": project_id})
             raise
 
     def _get_project_role(self, project_id: str, user_id: str, project: Optional[Dict[str, Any]] = None) -> Optional[str]:
@@ -377,7 +377,7 @@ class ProjectService:
             return filtered_projects
             
         except Exception as e:
-            logger.error(f"Error getting {provider} projects for user {user_id}: {e}")
+            logger.exception("Failed to get provider projects for user", extra={"provider": provider, "user_id": user_id})
             raise
     
     def ensure_project_context(self, project_id: Optional[str], user_id: str) -> tuple[str, Dict[str, Any], bool]:
@@ -398,18 +398,18 @@ class ProjectService:
             if not project_id:
                 raise ValueError("Project ID is required. Please select or create a project first.")
             
-            logger.info(f"Looking for existing project: {project_id} for user: {user_id}")
+            logger.debug("Looking for existing project", extra={"project_id": project_id, "user_id": user_id})
             # Try to get existing project
             project_doc = self.get_project(project_id, user_id)
             if project_doc:
-                logger.info(f"Found existing project: {project_id}")
+                logger.debug("Found existing project", extra={"project_id": project_id})
                 return project_id, project_doc, False
             else:
-                logger.error(f"Project {project_id} not found for user {user_id}")
+                logger.error("Project not found", extra={"project_id": project_id, "user_id": user_id})
                 raise ValueError(f"Project with ID '{project_id}' not found or access denied. Please select a valid project.")
             
         except Exception as e:
-            logger.error(f"Error ensuring project context: {e}")
+            logger.exception("Failed to ensure project context")
             raise
 
 

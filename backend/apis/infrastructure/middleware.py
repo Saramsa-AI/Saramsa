@@ -146,7 +146,10 @@ class PerformanceMonitoringMiddleware(MiddlewareMixin):
             
             # Log only requests taking more than 5 seconds
             if duration > 5.0:
-                logger.warning(f"Slow request: {request.method} {request.path} took {duration:.2f}s")
+                logger.warning(
+                    "Slow request",
+                    extra={"method": request.method, "path": request.path, "duration_ms": round(duration * 1000, 1)},
+                )
         
         return response
 
@@ -164,7 +167,10 @@ class SecurityLoggingMiddleware(MiddlewareMixin):
         """Log critical security events only"""
         # Log authentication attempts
         if request.path.endswith('/login/') or request.path.endswith('/register/'):
-            logger.info(f"Authentication attempt: {request.method} {request.path} from {self._get_client_ip(request)}")
+            logger.info(
+                "Authentication attempt",
+                extra={"method": request.method, "path": request.path, "client_ip": self._get_client_ip(request)},
+            )
         
         return None
 

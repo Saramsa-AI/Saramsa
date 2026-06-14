@@ -38,5 +38,5 @@ class ApisConfig(AppConfig):
                 )
             else:
                 logger.info("Cache backend: in-memory (status=%s)", status)
-        except Exception as exc:
-            logger.warning("Redis startup probe failed: %s", exc)
+        except Exception:
+            logger.exception("Redis startup probe failed")

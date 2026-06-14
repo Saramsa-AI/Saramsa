@@ -95,7 +95,10 @@ class TaxonomyDiscoveryService:
 
         # Small corpus: clustering is unreliable below a threshold; induce directly.
         if len(work) < self.min_for_cluster:
-            logger.info("Discovery: %d signal items < %d -> direct induction", len(work), self.min_for_cluster)
+            logger.info(
+                "Using direct induction; signal items below clustering threshold",
+                extra={"signal_count": len(work), "min_for_cluster": self.min_for_cluster},
+            )
             result = self._induce_directly(work, company_name)
             result.update({"total_comments": len(comments), "n_signal": len(work),
                             "n_filtered": n_filtered, "method": "direct", "n_clusters": 0, "n_outliers": 0})
@@ -126,7 +129,7 @@ class TaxonomyDiscoveryService:
 
         if not candidates:
             # Clustering produced nothing usable -> fall back to direct induction.
-            logger.warning("Discovery: clustering produced no labeled aspects -> direct induction fallback")
+            logger.warning("Clustering produced no labeled aspects; using direct induction fallback")
             result = self._induce_directly(work, company_name)
             result.update({"total_comments": len(comments), "n_signal": len(work),
                             "n_filtered": n_filtered, "method": "direct_fallback", "n_clusters": 0, "n_outliers": len(outliers)})
@@ -142,8 +145,14 @@ class TaxonomyDiscoveryService:
             "n_outliers": len(outliers),
         })
         logger.info(
-            "Discovery complete: domain='%s' aspects=%d clusters=%d outliers=%d filtered=%d",
-            refined["identified_domain"], len(refined["suggested_aspects"]), refined["n_clusters"], len(outliers), n_filtered,
+            "Taxonomy discovery completed",
+            extra={
+                "identified_domain": refined["identified_domain"],
+                "aspect_count": len(refined["suggested_aspects"]),
+                "cluster_count": refined["n_clusters"],
+                "outlier_count": len(outliers),
+                "filtered_count": n_filtered,
+            },
         )
         return refined
 
@@ -193,8 +202,8 @@ class TaxonomyDiscoveryService:
             if not name or name.lower() in _GENERIC:
                 return None
             return {"name": name, "definition": str(data.get("definition", "")).strip()}
-        except Exception as e:
-            logger.warning("Cluster labeling failed, skipping cluster: %s", e)
+        except Exception:
+            logger.exception("Failed to label cluster; skipping cluster")
             return None
 
     def _mine_outliers(self, outlier_comments: List[str], company_name: Optional[str]) -> List[Dict[str, str]]:
@@ -216,8 +225,8 @@ class TaxonomyDiscoveryService:
                     if name and name.lower() not in _GENERIC:
                         out.append({"name": name, "definition": str(a.get("definition", "")).strip()})
             return out
-        except Exception as e:
-            logger.warning("Outlier mining failed: %s", e)
+        except Exception:
+            logger.exception("Failed to mine outliers")
             return []
 
     def _refine(self, candidates: List[Dict[str, str]], comments: List[str], company_name: Optional[str]) -> Dict[str, Any]:

@@ -51,9 +51,9 @@ class AspectSuggestionService:
         
         # Step 1: Sample comments (50-100)
         sample_comments = self._sample_comments(comments)
-        logger.info(
-            f"Sampled {len(sample_comments)} comments from {len(comments)} total "
-            f"for aspect suggestion"
+        logger.debug(
+            "Sampled comments for aspect suggestion",
+            extra={"sample_size": len(sample_comments), "total_comments": len(comments)},
         )
         
         # Step 2: Build prompt with sample
@@ -69,8 +69,11 @@ class AspectSuggestionService:
         validated_result = self._validate_aspect_suggestions(parsed_result)
 
         logger.info(
-            f"✅ Aspect suggestion completed: domain='{validated_result['identified_domain']}', "
-            f"aspects={len(validated_result['suggested_aspects'])}"
+            "Aspect suggestion completed",
+            extra={
+                "domain": validated_result["identified_domain"],
+                "aspect_count": len(validated_result["suggested_aspects"]),
+            },
         )
 
         # Add metadata
@@ -201,8 +204,7 @@ Return ONLY valid JSON in the following format:
                 
                 parsed = json.loads(cleaned)
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse LLM response as JSON: {e}")
-                logger.error(f"Response was: {llm_output[:500]}")
+                logger.exception("Failed to parse LLM response as JSON")
                 raise ValueError(f"Invalid JSON response from LLM: {str(e)}")
         elif isinstance(llm_output, dict):
             parsed = llm_output

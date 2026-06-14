@@ -97,9 +97,9 @@ class OpsStore:
             import redis
             self._redis = redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=3)
             self._redis.ping()
-            logger.info("Celery Ops: Redis store connected at %s (TTL=%ds)", redis_url, self._ttl)
+            logger.info("Celery Ops: Redis store connected (TTL=%ds)", self._ttl)
         except Exception as e:
-            logger.warning("Celery Ops: Redis unavailable (%s), using in-memory store", e)
+            logger.warning("Celery Ops: Redis unavailable (%s); using in-memory store", e)
             self._redis = None
 
     def _load_from_redis(self) -> None:
@@ -107,7 +107,7 @@ class OpsStore:
         try:
             task_ids = self._redis.lrange(_REDIS_INDEX_KEY, 0, self._limit - 1)
             if not task_ids:
-                logger.info("Celery Ops: no existing runs in Redis")
+                logger.debug("Celery Ops: no existing runs in Redis")
                 return
 
             pipe = self._redis.pipeline()
@@ -128,7 +128,7 @@ class OpsStore:
 
             logger.info("Celery Ops: loaded %d existing runs from Redis", loaded)
         except Exception as e:
-            logger.warning("Celery Ops: failed to load from Redis: %s", e)
+            logger.warning("Celery Ops: failed to load runs from Redis; starting with empty in-memory store: %s", e)
 
     def upsert(self, t: TaskSummary) -> None:
         with self._lock:

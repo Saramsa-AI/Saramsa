@@ -158,7 +158,7 @@ class TaskEventConsumer:
                     fn(event)
                     tid = _get_str(event, "uuid", "id")
                     if tid:
-                        logger.info("Celery Ops: event %s task_id=%s", evt_type, tid[:16] + "..." if len(tid) > 16 else tid)
+                        logger.debug("Celery Ops: processed event %s task_id=%s", evt_type, tid[:16] + "..." if len(tid) > 16 else tid)
                 except Exception as e:
                     logger.warning("Celery Ops: event handler error (%s): %s", evt_type, e)
                 return None
@@ -191,7 +191,7 @@ class TaskEventConsumer:
                 logger.warning("Celery Ops: event consumer error (attempt %d/%d): %s", attempt, max_attempts, e)
                 if attempt < max_attempts:
                     wait = min(attempt * 5, 30)
-                    logger.info("Celery Ops: retrying event consumer in %ds...", wait)
+                    logger.info("Celery Ops: retrying event consumer in %ds", wait)
                     time.sleep(wait)
                 else:
-                    logger.error("Celery Ops: event consumer gave up after %d attempts", max_attempts)
+                    logger.exception("Celery Ops: failed to run event consumer, gave up after %d attempts", max_attempts)

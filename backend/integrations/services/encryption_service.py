@@ -41,7 +41,7 @@ class EncryptionService:
             return base64.b64encode(encrypted_token).decode('utf-8')
             
         except Exception as e:
-            logger.error(f"Error encrypting token: {e}")
+            logger.exception("Failed to encrypt token")
             raise ValueError("Failed to encrypt token")
 
     def decrypt_token(self, encrypted_token: str) -> str:
@@ -62,7 +62,7 @@ class EncryptionService:
             return decrypted_token.decode('utf-8')
             
         except Exception as e:
-            logger.error(f"Error decrypting token: {e}")
+            logger.exception("Failed to decrypt token")
             raise ValueError("Failed to decrypt token")
 
     def is_token_encrypted(self, token: str) -> bool:

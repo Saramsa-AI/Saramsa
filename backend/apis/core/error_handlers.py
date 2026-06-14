@@ -93,7 +93,7 @@ def handle_service_errors(func: Callable) -> Callable:
             )
         except ConnectionError as e:
             func_name = getattr(func, '__name__', 'unknown_function')
-            logger.error(f"Connection error in {func_name}: {e}")
+            logger.exception("Connection error in %s", func_name)
             detail = str(e).strip() or "Unable to connect to external service. Please try again later."
             return StandardResponse.error(
                 title="Service unavailable",
@@ -106,7 +106,7 @@ def handle_service_errors(func: Callable) -> Callable:
                 import requests as _requests
                 if isinstance(e, _requests.exceptions.ConnectionError):
                     func_name = getattr(func, '__name__', 'unknown_function')
-                    logger.error(f"HTTP connection error in {func_name}: {e}")
+                    logger.exception("HTTP connection error in %s", func_name)
                     return StandardResponse.error(
                         title="Service unavailable",
                         detail="Unable to connect to external service. Please try again later.",
@@ -116,11 +116,9 @@ def handle_service_errors(func: Callable) -> Callable:
             except ImportError:
                 pass
 
-            import traceback
             func_name = getattr(func, '__name__', 'unknown_function')
 
-            # Capture full structured trace for prod debugging
-            tb_str = traceback.format_exc()
+            # Capture structured request context for prod debugging
             request = next((a for a in args if hasattr(a, 'method') and hasattr(a, 'path')), None)
             request_info = {}
             if request:
@@ -128,16 +126,12 @@ def handle_service_errors(func: Callable) -> Callable:
                     "method": getattr(request, 'method', None),
                     "path": getattr(request, 'path', None),
                     "query_params": dict(getattr(request, 'query_params', {}) or {}),
-                    "user": str(getattr(request, 'user', 'anonymous')),
                 }
 
-            logger.error(
-                "UNHANDLED EXCEPTION in %s | %s: %s | request=%s\n%s",
+            logger.exception(
+                "Unhandled exception in %s",
                 func_name,
-                e.__class__.__name__,
-                str(e),
-                request_info,
-                tb_str,
+                extra={"request": request_info},
             )
 
             error_detail = f"{e.__class__.__name__}: {str(e)}" if settings.DEBUG else "An unexpected error occurred. Please try again later."
@@ -208,7 +202,7 @@ def handle_async_service_errors(func: Callable) -> Callable:
             )
         except ConnectionError as e:
             func_name = getattr(func, '__name__', 'unknown_function')
-            logger.error(f"Connection error in {func_name}: {e}")
+            logger.exception("Connection error in %s", func_name)
             detail = str(e).strip() or "Unable to connect to external service. Please try again later."
             return StandardResponse.error(
                 title="Service unavailable",
@@ -221,7 +215,7 @@ def handle_async_service_errors(func: Callable) -> Callable:
                 import requests as _requests
                 if isinstance(e, _requests.exceptions.ConnectionError):
                     func_name = getattr(func, '__name__', 'unknown_function')
-                    logger.error(f"HTTP connection error in {func_name}: {e}")
+                    logger.exception("HTTP connection error in %s", func_name)
                     return StandardResponse.error(
                         title="Service unavailable",
                         detail="Unable to connect to external service. Please try again later.",
@@ -231,10 +225,8 @@ def handle_async_service_errors(func: Callable) -> Callable:
             except ImportError:
                 pass
 
-            import traceback
             func_name = getattr(func, '__name__', 'unknown_function')
 
-            tb_str = traceback.format_exc()
             request = next((a for a in args if hasattr(a, 'method') and hasattr(a, 'path')), None)
             request_info = {}
             if request:
@@ -242,16 +234,12 @@ def handle_async_service_errors(func: Callable) -> Callable:
                     "method": getattr(request, 'method', None),
                     "path": getattr(request, 'path', None),
                     "query_params": dict(getattr(request, 'query_params', {}) or {}),
-                    "user": str(getattr(request, 'user', 'anonymous')),
                 }
 
-            logger.error(
-                "UNHANDLED EXCEPTION in %s | %s: %s | request=%s\n%s",
+            logger.exception(
+                "Unhandled exception in %s",
                 func_name,
-                e.__class__.__name__,
-                str(e),
-                request_info,
-                tb_str,
+                extra={"request": request_info},
             )
 
             error_detail = f"{e.__class__.__name__}: {str(e)}" if settings.DEBUG else "An unexpected error occurred. Please try again later."

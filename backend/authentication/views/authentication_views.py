@@ -56,7 +56,7 @@ class RegisterView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         invite_token = (request.data.get("invite_token") or "").strip()
         if not invite_token:
-            self.logger.info("register: rejected — missing invite_token")
+            self.logger.info("Registration rejected: missing invite token")
             return StandardResponse.validation_error(
                 detail=self.GENERIC_INVITE_ERROR,
                 instance=request.path,
@@ -72,14 +72,14 @@ class RegisterView(generics.CreateAPIView):
         try:
             invite_data = get_organization_invite_service().get_by_token(invite_token)
         except ValueError as e:
-            self.logger.info("register: rejected — invite lookup failed: %s", e)
+            self.logger.info("Registration rejected: invite lookup failed")
             return StandardResponse.validation_error(
                 detail=self.GENERIC_INVITE_ERROR,
                 instance=request.path,
             )
         if invite_data["email"] != serializer.validated_data["email"].strip().lower():
             self.logger.info(
-                "register: rejected — email mismatch (invite was for a different address)"
+                "Registration rejected: email does not match invite"
             )
             return StandardResponse.validation_error(
                 detail=self.GENERIC_INVITE_ERROR,
@@ -452,9 +452,9 @@ class ForgotPasswordView(APIView):
             # Send email (log failures but do not reveal to client)
             email_sent = auth_service.send_password_reset_email(email, reset_link)
             if not email_sent:
-                self.logger.warning("Password reset email failed for %s", email)
+                self.logger.warning("Failed to send password reset email")
             if settings.DEBUG:
-                self.logger.info(f"Password reset link for {email}: {reset_link}")
+                self.logger.debug("Generated password reset link (redacted)")
             
             return StandardResponse.success(
                 data={
@@ -465,7 +465,7 @@ class ForgotPasswordView(APIView):
             )
             
         except Exception as e:
-            self.logger.exception(f"Error in forgot password: {e}")
+            self.logger.exception("Failed to process forgot-password request")
             return StandardResponse.internal_server_error(
                 detail="Failed to process password reset request",
                 instance=request.path
@@ -540,7 +540,7 @@ class ResetPasswordView(APIView):
             )
             
         except Exception as e:
-            self.logger.exception(f"Error in reset password: {e}")
+            self.logger.exception("Failed to reset password")
             return StandardResponse.internal_server_error(
                 detail="Failed to reset password",
                 instance=request.path

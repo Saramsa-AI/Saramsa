@@ -178,19 +178,19 @@ class TaxonomyService:
             })
 
         if not added:
-            logger.info(f"No new aspects to add - all {len(new_aspects)} already exist")
+            logger.debug("Skipping additive growth: all aspects already exist", extra={"candidate_count": len(new_aspects)})
             return taxonomy
 
         taxonomy["aspects"] = taxonomy.get("aspects", []) + added
         taxonomy["updated_at"] = now
         taxonomy["aspect_count"] = len(taxonomy["aspects"])
-        logger.info(f"Added {len(added)} new aspects to taxonomy: {[a['label'] for a in added]}")
+        logger.info("Added new aspects to taxonomy", extra={"added_count": len(added)})
 
         # Update in repository
         try:
             self.taxonomy_repo.update(taxonomy.get("id"), project_id, taxonomy)
-        except Exception as e:
-            logger.warning(f"Failed to persist additive taxonomy update: {e}")
+        except Exception:
+            logger.exception("Failed to persist additive taxonomy update")
 
         return taxonomy
 
@@ -206,8 +206,8 @@ class TaxonomyService:
                 aspect["last_used_at"] = now
         try:
             self.taxonomy_repo.update(taxonomy.get("id"), project_id, taxonomy)
-        except Exception as e:
-            logger.warning(f"Failed to update aspect usage: {e}")
+        except Exception:
+            logger.exception("Failed to update aspect usage")
 
     def mark_taxonomy_degraded(self, project_id: str, taxonomy: Dict[str, Any], metrics: Optional[Dict[str, Any]]) -> None:
         """
@@ -380,8 +380,8 @@ class TaxonomyService:
             self.taxonomy_repo.update(updated.get("id"), project_id, updated)
             # Reflect persisted values back onto the caller's live dict.
             taxonomy.update(fields)
-        except Exception as e:
-            logger.warning(f"{failure_msg}: {e}")
+        except Exception:
+            logger.exception(failure_msg)
         return taxonomy
 
     @staticmethod

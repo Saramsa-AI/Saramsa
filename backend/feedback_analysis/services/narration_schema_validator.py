@@ -81,7 +81,7 @@ def validate_narration_output(
                 })
             else:
                 unknown_candidates.append(candidate_id)
-                logger.warning(f"Narration validator: Unknown candidate_id '{candidate_id}' not in allowed set {allowed_candidates}")
+                logger.warning("Narration output contained unknown candidate_id", extra={"candidate_id": candidate_id})
 
     # Reject if there are unknown aspects/candidates with no valid ones
     if unknown_aspects and not normalized_features:

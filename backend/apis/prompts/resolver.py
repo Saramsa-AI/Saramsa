@@ -85,11 +85,11 @@ def resolve_prompt_template(
             organization_id=organization_id,
             project_id=project_id,
         )
-    except Exception as exc:
+    except Exception:
         logger.warning(
-            "prompt_override resolve failed for %s (project=%s, org=%s): %s — "
-            "falling back to hardcoded default",
-            prompt_type, project_id, organization_id, exc,
+            "Prompt override resolution failed; using hardcoded default",
+            extra={"prompt_type": prompt_type},
+            exc_info=True,
         )
 
     _cached_put(cache_key, template)

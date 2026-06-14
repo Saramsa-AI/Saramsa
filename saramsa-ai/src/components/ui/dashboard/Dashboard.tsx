@@ -794,7 +794,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   // Fetch analysis history when project changes
   useEffect(() => {
     const pid = currentProjectId || projectId || '';
-    console.log('[Dashboard] Project ID:', pid, { currentProjectId, projectId });
+    console.log('[Dashboard] Project ID:', pid);
 
     if (!pid || lastHistoryProjectRef.current === pid) return;
     lastHistoryProjectRef.current = pid;
@@ -1574,7 +1574,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             ...item,
             id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
           };
-          console.log(`[normalizeAnalysis] Work item ID: ${workItem.id}, Title: ${workItem.title?.substring(0, 30)}`);
           return workItem;
         }),
         userStories: input.userStories ?? input.user_stories ?? null,
@@ -1632,7 +1631,6 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             ...item,
             id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
           };
-          console.log(`[normalizeAnalysis] Work item ID: ${workItem.id}, Title: ${workItem.title?.substring(0, 30)}`);
           return workItem;
         }),
         userStories: input.userStories ?? input.user_stories ?? null,

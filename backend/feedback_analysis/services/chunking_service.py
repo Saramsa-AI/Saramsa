@@ -58,12 +58,12 @@ class FeedbackChunkingService:
             comments = self._split_into_comments(feedback_data)
             if len(comments) > 1:
                 return self._chunk_by_token_limit(comments, model)
-            logger.warning("Could not identify comment boundaries, using standard token chunking")
+            logger.warning("Could not identify comment boundaries; using standard token chunking")
             return self._chunk_text_standard(
                 feedback_data, model, self.max_input_tokens_per_batch, self.overlap
             )
-        except Exception as e:
-            logger.warning(f"Error in smart chunking, falling back to standard: {e}")
+        except Exception:
+            logger.warning("Smart chunking failed; falling back to standard chunking")
             return self._chunk_text_standard(
                 feedback_data, model, self.max_input_tokens_per_batch, self.overlap
             )
@@ -87,12 +87,12 @@ class FeedbackChunkingService:
             comments = self._split_into_comments(feedback_data)
             if len(comments) > 1:
                 return self._chunk_by_token_limit(comments, model)
-            logger.warning("Could not identify comment boundaries, using standard token chunking")
+            logger.warning("Could not identify comment boundaries; using standard token chunking")
             return self._chunk_text_standard(
                 feedback_data, model, self.max_input_tokens_per_batch, self.overlap * 2
             )
-        except Exception as e:
-            logger.warning(f"Error in smart chunking, falling back to standard: {e}")
+        except Exception:
+            logger.warning("Smart chunking failed; falling back to standard chunking")
             return self._chunk_text_standard(
                 feedback_data, model, self.max_input_tokens_per_batch, self.overlap * 2
             )
@@ -174,7 +174,7 @@ class FeedbackChunkingService:
         if current_batch:
             chunks.append("\n".join(current_batch))
         
-        logger.info(
+        logger.debug(
             "Chunked %d comments into %d batches (max %d input tokens per batch)",
             len(comments), len(chunks), limit,
         )

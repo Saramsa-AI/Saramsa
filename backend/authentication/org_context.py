@@ -43,9 +43,8 @@ def _safe_org_context(user_data: Dict[str, Any], active_org_id: Optional[str]) -
         return ctx
     except Exception as exc:
         logger.exception(
-            "Failed to load organization context for user_id=%s active_org=%s — "
-            "returning empty context so /me + /login don't 500.",
-            user_data.get("id"), active_org_id,
+            "Failed to load organization context; returning empty context",
+            extra={"user_id": user_data.get("id"), "active_organization_id": active_org_id},
         )
         return _empty_org_context(error=str(exc) or exc.__class__.__name__)
 

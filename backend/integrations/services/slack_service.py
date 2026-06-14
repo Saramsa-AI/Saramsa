@@ -192,7 +192,7 @@ class SlackService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Slack connection test failed: {e}")
+            logger.exception("Failed to test Slack connection")
             return {"success": False, "error": str(e)}
 
     def list_channels(self, user_id: str, account_id: str, organization_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -266,7 +266,7 @@ class SlackService:
 
             if not data.get("ok"):
                 error = data.get("error", "unknown")
-                logger.error(f"conversations.history failed for {channel_id}: {error}")
+                logger.error("Failed to fetch Slack conversation history", extra={"channel_id": channel_id, "slack_error": error})
                 break
 
             for msg in data.get("messages", []):
@@ -362,7 +362,7 @@ class SlackService:
         ]
         removed = len(messages) - len(new_messages)
         if removed:
-            logger.info(f"Deduped {removed} duplicates, {len(new_messages)} new")
+            logger.info("Deduplicated Slack messages", extra={"removed": removed, "new": len(new_messages)})
         return new_messages
 
     # ------------------------------------------------------------------
@@ -382,7 +382,7 @@ class SlackService:
             )
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", "5"))
-                logger.warning(f"Slack rate limited, retrying after {retry_after}s")
+                logger.warning("Slack rate limited; retrying", extra={"retry_after_s": retry_after})
                 time.sleep(retry_after)
                 continue
             return resp

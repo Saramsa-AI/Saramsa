@@ -149,7 +149,8 @@ class BatchRetryService:
                 result = operation()
                 if attempt > 0:
                     logger.info(
-                        f"✅ {operation_name} (batch {batch_index}) succeeded after {attempt} retries"
+                        "Batch operation succeeded after retries",
+                        extra={"operation": operation_name, "batch_index": batch_index, "retries": attempt},
                     )
                 return result, True
                 
@@ -159,9 +160,9 @@ class BatchRetryService:
                 
                 # Don't retry permanent errors
                 if error_type == ErrorType.PERMANENT:
-                    logger.error(
-                        f"❌ {operation_name} (batch {batch_index}) failed with permanent error: {e}. "
-                        f"No retries attempted."
+                    logger.exception(
+                        "Failed to run batch operation: permanent error, no retries attempted",
+                        extra={"operation": operation_name, "batch_index": batch_index},
                     )
                     return {
                         "chunk_index": batch_index,
@@ -172,8 +173,9 @@ class BatchRetryService:
                 
                 # Check if we've exhausted retries
                 if attempt >= max_retries:
-                    logger.error(
-                        f"❌ {operation_name} (batch {batch_index}) failed after {max_retries} retries: {e}"
+                    logger.exception(
+                        "Failed to run batch operation: retries exhausted",
+                        extra={"operation": operation_name, "batch_index": batch_index, "max_retries": max_retries},
                     )
                     return {
                         "chunk_index": batch_index,
@@ -186,8 +188,15 @@ class BatchRetryService:
                 # Calculate delay for next retry
                 delay = cls.calculate_retry_delay(attempt)
                 logger.warning(
-                    f"⚠️ {operation_name} (batch {batch_index}) failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
-                    f"Retrying in {delay:.1f}s... (error_type: {error_type.value})"
+                    "Retrying batch operation",
+                    extra={
+                        "operation": operation_name,
+                        "batch_index": batch_index,
+                        "attempt": attempt + 1,
+                        "max_attempts": max_retries + 1,
+                        "delay_s": round(delay, 1),
+                        "error_type": error_type.value,
+                    },
                 )
                 
                 time.sleep(delay)

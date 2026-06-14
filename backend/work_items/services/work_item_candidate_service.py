@@ -90,8 +90,8 @@ class WorkItemCandidateService:
                 if comment_count < effective_min_comments:
                     reason_parts.append(f"comment_count {comment_count} < min {effective_min_comments}")
                 logger.debug(
-                    "Candidate REJECTED for '%s': %s",
-                    aspect_key, "; ".join(reason_parts),
+                    "Skipping candidate: below thresholds",
+                    extra={"aspect_key": aspect_key, "reasons": "; ".join(reason_parts)},
                 )
                 continue
 
@@ -164,9 +164,13 @@ class WorkItemCandidateService:
                     evidence=[f"Keyword: {keyword}"],
                 ))
             if volume_candidates:
-                logger.info(
-                    "Volume split for '%s' (%d comments): +%d sub-theme candidates from keywords %s",
-                    aspect_key, comment_count, extra_count, keywords[:extra_count],
+                logger.debug(
+                    "Volume split produced sub-theme candidates",
+                    extra={
+                        "aspect_key": aspect_key,
+                        "comment_count": comment_count,
+                        "extra_count": extra_count,
+                    },
                 )
         candidates.extend(volume_candidates)
 
@@ -199,11 +203,11 @@ class WorkItemCandidateService:
                 and total_comments >= self.OVERALL_MIN_COMMENTS
                 and feature_candidate_count == 0):
             if feature_candidate_count > 0:
-                logger.debug("Overall candidate SKIPPED: %d feature candidates already exist", feature_candidate_count)
+                logger.debug("Skipping overall candidate: feature candidates already exist", extra={"feature_candidate_count": feature_candidate_count})
             elif overall_neg < self.OVERALL_NEGATIVE_THRESHOLD:
-                logger.debug("Overall candidate SKIPPED: overall_neg %.1f%% < threshold %.0f%%", overall_neg * 100, self.OVERALL_NEGATIVE_THRESHOLD * 100)
+                logger.debug("Skipping overall candidate: overall negative below threshold", extra={"overall_neg": overall_neg, "threshold": self.OVERALL_NEGATIVE_THRESHOLD})
             elif total_comments < self.OVERALL_MIN_COMMENTS:
-                logger.debug("Overall candidate SKIPPED: total_comments %d < min %d", total_comments, self.OVERALL_MIN_COMMENTS)
+                logger.debug("Skipping overall candidate: comment count below minimum", extra={"total_comments": total_comments, "min_comments": self.OVERALL_MIN_COMMENTS})
 
         if (overall_neg >= self.OVERALL_NEGATIVE_THRESHOLD
                 and total_comments >= self.OVERALL_MIN_COMMENTS
@@ -267,8 +271,8 @@ class WorkItemCandidateService:
         candidates = self._deduplicate_candidates(candidates)
 
         logger.info(
-            "Candidate generation complete: %d candidates from %d features (project=%s)",
-            len(candidates), len(features), project_id,
+            "Candidate generation completed",
+            extra={"candidate_count": len(candidates), "feature_count": len(features), "project_id": project_id},
         )
         return candidates
 
@@ -319,9 +323,9 @@ class WorkItemCandidateService:
                            if c.get("priority") in self.PRIORITY_ORDER else -1, reverse=True)
                 winner = group[0]
                 merged_keys = [c.get("aspect_key") for c in group[1:]]
-                logger.info(
-                    "Deduplicated candidates: kept '%s', merged %s",
-                    winner.get("aspect_key"), merged_keys,
+                logger.debug(
+                    "Deduplicated candidates",
+                    extra={"kept_aspect_key": winner.get("aspect_key"), "merged_count": len(merged_keys)},
                 )
                 deduplicated.append(winner)
 
@@ -505,7 +509,13 @@ class WorkItemCandidateService:
                     word = kw.get("word") or kw.get("keyword") or kw.get("text") or ""
                     if word:
                         result.append(str(word).strip().lower())
-            logger.info(f"Extracted {len(result)} keywords from feature (source: {'negative_keywords' if feature.get('negative_keywords') else 'keywords'})")
+            logger.debug(
+                "Extracted keywords from feature",
+                extra={
+                    "keyword_count": len(result),
+                    "source": "negative_keywords" if feature.get("negative_keywords") else "keywords",
+                },
+            )
             return result
         return []
 

@@ -89,7 +89,7 @@ def health_check(request):
             'error': str(e)
         }
         health_status['status'] = 'degraded'
-        logger.warning(f"Celery broker health check failed: {e}")
+        logger.exception("Celery broker health check failed")
 
     # Check AI Service
     try:
@@ -137,8 +137,8 @@ def performance_metrics(request):
             data=performance_data,
             message="Performance metrics retrieved successfully"
         )
-    except Exception as e:
-        logger.error(f"Error retrieving performance metrics: {e}")
+    except Exception:
+        logger.exception("Failed to retrieve performance metrics")
         return StandardResponse.error(
             title="Performance Metrics Error",
             detail="Unable to retrieve performance metrics",
@@ -174,8 +174,8 @@ def reset_performance_stats(request):
             data={'reset': True},
             message="Performance statistics reset successfully"
         )
-    except Exception as e:
-        logger.error(f"Error resetting performance stats: {e}")
+    except Exception:
+        logger.exception("Failed to reset performance statistics")
         return StandardResponse.error(
             title="Reset Error",
             detail="Unable to reset performance statistics",

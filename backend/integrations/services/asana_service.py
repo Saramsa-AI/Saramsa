@@ -592,7 +592,7 @@ class AsanaService:
 
             if response.status_code == 429:
                 retry_after = int(response.headers.get("Retry-After", "5") or "5")
-                logger.warning("Asana 429 rate limited, retrying after %ss", retry_after)
+                logger.warning("Asana rate limited; retrying", extra={"retry_after_s": retry_after})
                 time.sleep(retry_after)
                 continue
             if 500 <= response.status_code < 600 and attempt + 1 < max_attempts:

@@ -56,7 +56,7 @@ def slack_oauth_callback(request):
         frontend = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:3000")
         return HttpResponseRedirect(f"{frontend}/settings?slack_connected=true")
     except Exception as e:
-        logger.error(f"Slack OAuth callback error: {e}")
+        logger.exception("Failed to complete Slack OAuth callback")
         frontend = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:3000")
         return HttpResponseRedirect(f"{frontend}/settings?slack_error={e}")
 

@@ -71,7 +71,7 @@ class CircuitBreaker:
                 if self._clock() - self._opened_at >= self.reset_timeout:
                     self._state = HALF_OPEN
                     self._trial_in_flight = True
-                    logger.info("circuit '%s' half-open: trial call allowed", self.name)
+                    logger.info("Circuit half-open; allowing trial call", extra={"circuit": self.name})
                     return True
                 return False
             # half-open: permit only a single trial call at a time.
@@ -83,7 +83,7 @@ class CircuitBreaker:
     def record_success(self) -> None:
         with self._lock:
             if self._state != CLOSED:
-                logger.info("circuit '%s' closed after success", self.name)
+                logger.info("Circuit closed after success", extra={"circuit": self.name})
             self._state = CLOSED
             self._consecutive_failures = 0
             self._trial_in_flight = False
@@ -95,9 +95,8 @@ class CircuitBreaker:
             if self._state == HALF_OPEN or self._consecutive_failures >= self.failure_threshold:
                 if self._state != OPEN:
                     logger.warning(
-                        "circuit '%s' OPEN after %d consecutive failure(s)",
-                        self.name,
-                        self._consecutive_failures,
+                        "Circuit opened after consecutive failures",
+                        extra={"circuit": self.name, "consecutive_failures": self._consecutive_failures},
                     )
                 self._state = OPEN
                 self._opened_at = self._clock()

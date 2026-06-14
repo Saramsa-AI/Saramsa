@@ -87,7 +87,7 @@ class ExternalApiService:
                 'error': f'Network error: {str(e)}'
             }
         except Exception as e:
-            logger.error(f"Error testing Azure connection: {e}")
+            logger.exception("Failed to test Azure connection")
             return {
                 'success': False,
                 'error': 'An unexpected error occurred'
@@ -144,7 +144,7 @@ class ExternalApiService:
                 'error': f'Network error: {str(e)}'
             }
         except Exception as e:
-            logger.error(f"Error testing Jira connection: {e}")
+            logger.exception("Failed to test Jira connection")
             return {
                 'success': False,
                 'error': 'An unexpected error occurred'
@@ -169,7 +169,7 @@ class ExternalApiService:
             if not organization or not pat_token:
                 raise ValueError("Organization and PAT token are required")
             
-            logger.info(f"Fetching Azure DevOps projects for organization: {organization}")
+            logger.info("Fetching Azure DevOps projects", extra={"organization": organization})
             
             # Encode PAT token for Basic Auth
             credentials = base64.b64encode(f":{pat_token}".encode()).decode()
@@ -201,7 +201,7 @@ class ExternalApiService:
                         'lastUpdateTime': project.get('lastUpdateTime')
                     })
                 
-                logger.info(f"Successfully fetched {len(normalized_projects)} Azure DevOps projects")
+                logger.info("Fetched Azure DevOps projects", extra={"count": len(normalized_projects)})
                 return normalized_projects
             else:
                 raise Exception(f"Azure API returned status {response.status_code}: {response.text}")
@@ -209,7 +209,7 @@ class ExternalApiService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error fetching Azure projects from API: {e}")
+            logger.exception("Failed to fetch Azure projects from API")
             raise Exception(f"Failed to fetch Azure DevOps projects: {str(e)}")
 
     def fetch_jira_projects(self, domain: str, email: str, api_token: str) -> List[Dict[str, Any]]:
@@ -232,7 +232,7 @@ class ExternalApiService:
             if not domain or not email or not api_token:
                 raise ValueError("Domain, email, and API token are required")
             
-            logger.info(f"Fetching Jira projects for domain: {domain}")
+            logger.info("Fetching Jira projects", extra={"domain": domain})
             
             # Encode credentials for Basic Auth
             credentials = base64.b64encode(f"{email}:{api_token}".encode()).decode()
@@ -265,7 +265,7 @@ class ExternalApiService:
                         'url': project.get('self')
                     })
                 
-                logger.info(f"Successfully fetched {len(normalized_projects)} Jira projects")
+                logger.info("Fetched Jira projects", extra={"count": len(normalized_projects)})
                 return normalized_projects
             else:
                 raise Exception(f"Jira API returned status {response.status_code}: {response.text}")
@@ -273,7 +273,7 @@ class ExternalApiService:
         except ValueError:
             raise
         except Exception as e:
-            logger.error(f"Error fetching Jira projects from API: {e}")
+            logger.exception("Failed to fetch Jira projects from API")
             raise Exception(f"Failed to fetch Jira projects: {str(e)}")
 
 
@@ -325,7 +325,7 @@ class ExternalApiService:
         except httpx.RequestError as exc:
             return {"success": False, "error": f"Network error: {exc}"}
         except Exception as exc:
-            logger.error(f"Error testing Asana connection: {exc}")
+            logger.exception("Failed to test Asana connection")
             return {"success": False, "error": "An unexpected error occurred"}
 
     def fetch_asana_workspaces(self, pat_token: str) -> List[Dict[str, Any]]:
@@ -483,7 +483,7 @@ class ExternalApiService:
         except httpx.RequestError as exc:
             return {"success": False, "error": f"Network error: {exc}"}
         except Exception as exc:
-            logger.error(f"Error testing Linear connection: {exc}")
+            logger.exception("Failed to test Linear connection")
             return {"success": False, "error": "An unexpected error occurred"}
 
     def fetch_linear_teams(self, api_key: str) -> List[Dict[str, Any]]:

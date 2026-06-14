@@ -172,7 +172,10 @@ class FeedbackFileUploadView(APIView):
             
             # Extract original comments before processing
             original_comments = self.extract_comments_from_data(data, 'json')
-            logger.info(f"📊 JSON Upload: Extracted {len(original_comments)} comments from file")
+            logger.info(
+                "Extracted comments from JSON upload",
+                extra={"comment_count": len(original_comments)},
+            )
 
             try:
                 assert_english(original_comments)
@@ -188,7 +191,10 @@ class FeedbackFileUploadView(APIView):
                 project_id, original_comments
             )
             frozen_aspects = [a.get("label") or a.get("key") for a in taxonomy.get("aspects", []) if isinstance(a, dict)]
-            logger.info(f"🔒 Using frozen aspect list: {frozen_aspects}")
+            logger.info(
+                "Using frozen aspect list",
+                extra={"aspect_count": len(frozen_aspects)},
+            )
 
             # Step 3: dispatch to Celery — same async contract as CSV (above)
             # and /api/insights/analyze/. Returns 202 with task_id immediately.
@@ -262,11 +268,12 @@ class FeedbackFileUploadView(APIView):
             # Extract dimensions for storage
             comment_dimensions = [c["dimensions"] for c in structured_comments]
             logger.info(
-                f"📊 CSV Upload: classifier={classification.get('source')} "
-                f"primary={classification.get('primary_text')!r} "
-                f"context={classification.get('context')} "
-                f"seed_col={classification.get('taxonomy_seed_column')!r} "
-                f"seed_values={seed_values} -> {len(original_comments)} enriched comments"
+                "Classified CSV upload columns",
+                extra={
+                    "classifier": classification.get('source'),
+                    "comment_count": len(original_comments),
+                    "seed_value_count": len(seed_values) if seed_values else 0,
+                },
             )
 
             try:
@@ -286,7 +293,10 @@ class FeedbackFileUploadView(APIView):
                 project_id, original_comments, seed_aspects=seed_values
             )
             frozen_aspects = [a.get("label") or a.get("key") for a in taxonomy.get("aspects", []) if isinstance(a, dict)]
-            logger.info(f"🔒 Using frozen aspect list: {frozen_aspects}")
+            logger.info(
+                "Using frozen aspect list",
+                extra={"aspect_count": len(frozen_aspects)},
+            )
 
             # Step 3: dispatch the heavy LLM processing to Celery and return
             # 202 immediately. Doing the analysis inline would push the
@@ -369,8 +379,8 @@ class FeedbackFileUploadView(APIView):
                     "comment_count": comments_count,
                 })
                 cache.set(tasks_key, existing[:15], ttl=86400)
-            except Exception as exc:
-                logger.warning(f"Failed to record task history for {task_id}: {exc}")
+            except Exception:
+                logger.exception("Failed to record task history")
             return task_id
 
         try:
@@ -385,9 +395,8 @@ class FeedbackFileUploadView(APIView):
             )
 
         logger.info(
-            f"📤 Upload dispatched to Celery: task_id={task_id} "
-            f"analysis_id={analysis_id} project={project_id} "
-            f"file={file_name} type={file_type} comments={comments_count}"
+            "Upload dispatched to Celery",
+            extra={"task_id": task_id, "file_type": file_type, "comment_count": comments_count},
         )
 
         return StandardResponse.success(
@@ -433,8 +442,8 @@ class FeedbackFileUploadView(APIView):
                 # Customer-provided categories beat anything an LLM would
                 # guess from prose. Use them as-is for v1 of the taxonomy.
                 logger.info(
-                    f"Bootstrapping taxonomy from {len(seed_aspects)} seed aspects "
-                    f"(from CSV classifier): {seed_aspects}"
+                    "Bootstrapping taxonomy from CSV classifier seed aspects",
+                    extra={"seed_aspect_count": len(seed_aspects)},
                 )
                 taxonomy = await sync_to_async(
                     taxonomy_service.create_initial_taxonomy, thread_sensitive=True
@@ -447,8 +456,11 @@ class FeedbackFileUploadView(APIView):
                 aspect_service = get_aspect_discovery_service()
                 aspect_suggestions = await aspect_service.suggest_aspects(original_comments)
                 logger.info(
-                    f"Aspect suggestions generated: domain='{aspect_suggestions['identified_domain']}', "
-                    f"aspects={len(aspect_suggestions['suggested_aspects'])}"
+                    "Generated aspect suggestions",
+                    extra={
+                        "identified_domain": aspect_suggestions['identified_domain'],
+                        "aspect_count": len(aspect_suggestions['suggested_aspects']),
+                    },
                 )
                 taxonomy = await sync_to_async(
                     taxonomy_service.create_initial_taxonomy, thread_sensitive=True

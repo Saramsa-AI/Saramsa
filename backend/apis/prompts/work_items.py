@@ -58,8 +58,9 @@ def getDeepAnalysisPrompt(
     )
 
     # Log original template before substitution
-    logger.debug("Deep analysis prompt template (before substitution): %s", prompt_template[:200] + "...")
-    
+    logger.debug("Resolved deep analysis prompt template (before substitution)", extra={"template_length": len(prompt_template)})
+
+
     # Simple variable substitution
     if feedback_data:
         prompt_template = prompt_template.replace("$feedback_data", str(feedback_data))
@@ -84,8 +85,9 @@ def getDeepAnalysisPrompt(
             prompt_template = prompt_template.replace("$issue_type_list", issue_types)
 
     # Log final template after all substitutions
-    logger.debug("Deep analysis prompt template (after substitution): %s", prompt_template[:200] + "...")
-    
+    logger.debug("Deep analysis prompt template ready (after substitution)", extra={"template_length": len(prompt_template)})
+
+
     return prompt_template
 
 

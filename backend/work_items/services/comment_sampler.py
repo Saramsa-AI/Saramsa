@@ -97,8 +97,8 @@ def sample_comments_for_candidates(
         ]
 
     total = sum(len(v) for v in result.values())
-    logger.info(
-        "Sampled %d comments across %d candidates (from %d total comments)",
-        total, len(result), len(comments),
+    logger.debug(
+        "Sampled comments across candidates",
+        extra={"sampled_count": total, "candidate_count": len(result), "total_comments": len(comments)},
     )
     return result

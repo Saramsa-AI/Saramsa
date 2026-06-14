@@ -108,8 +108,12 @@ class LLMAspectService:
         lookup = {_norm(a): a for a in canonical}
 
         logger.info(
-            "LLM aspect classification: %d comments x %d aspects (run: %s, concurrency=%d)",
-            len(comments), len(canonical), run_id or "default", self.concurrency,
+            "Starting LLM aspect classification",
+            extra={
+                "comment_count": len(comments),
+                "aspect_count": len(canonical),
+                "concurrency": self.concurrency,
+            },
         )
 
         results: List[Optional[Dict[str, Any]]] = [None] * len(comments)
@@ -149,7 +153,7 @@ class LLMAspectService:
                     try:
                         on_progress(done, len(comments))
                     except Exception:
-                        pass
+                        logger.debug("Progress callback failed", exc_info=True)
                 if is_cancelled and done % 10 == 0 and is_cancelled():
                     pool.shutdown(wait=False, cancel_futures=True)
                     raise TaskCancelled("Cancelled during LLM aspect classification")
@@ -164,16 +168,19 @@ class LLMAspectService:
             )
         if failures:
             logger.warning(
-                "LLM aspect classification PARTIAL: %d/%d comments failed (kept the rest)",
-                len(failures), len(comments),
+                "LLM aspect classification partially failed; kept successful comments",
+                extra={"failed_count": len(failures), "comment_count": len(comments)},
             )
 
         elapsed = time.time() - t0
         mapped = sum(1 for r in results if r and r["matched_aspects"] and r["matched_aspects"] != ["UNMAPPED"])
         logger.info(
-            "LLM aspect classification complete: %d/%d mapped (%.1f%%) in %.1fs (%.2f comments/s)",
-            mapped, len(comments), 100 * mapped / len(comments), elapsed,
-            len(comments) / elapsed if elapsed else 0,
+            "LLM aspect classification completed",
+            extra={
+                "mapped_count": mapped,
+                "comment_count": len(comments),
+                "duration_ms": round(elapsed * 1000, 1),
+            },
         )
         return results  # type: ignore[return-value]
 

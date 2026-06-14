@@ -166,7 +166,10 @@ class FeedbackFileIngestView(APIView):
                         # Plain text JSON array - treat like TXT file
                         comments = [line.strip() for line in json_data if line and line.strip()]
                         dimensions = []
-                        logger.info(f"Plain text JSON processed: {len(comments)} comments")
+                        logger.info(
+                            "Processed plain text JSON upload",
+                            extra={"comment_count": len(comments)},
+                        )
                     else:
                         # Structured JSON - process with column classification
                         df = pd.DataFrame(json_data)
@@ -194,7 +197,10 @@ class FeedbackFileIngestView(APIView):
                         # Extract dimensions for each comment
                         dimensions = [sc['dimensions'] for sc in structured_comments]
 
-                        logger.info(f"Structured JSON processed: {len(comments)} comments, {len(dimensions)} dimension objects")
+                        logger.info(
+                            "Processed structured JSON upload",
+                            extra={"comment_count": len(comments), "dimension_count": len(dimensions)},
+                        )
                 else:
                     # CSV/Excel files - always structured
                     # Detect actual file type by content (magic bytes) instead of extension
@@ -204,7 +210,7 @@ class FeedbackFileIngestView(APIView):
                     if ext == ".csv":
                         # If file has .csv extension but content is Excel, treat as Excel
                         if is_excel_by_content:
-                            logger.info("File has .csv extension but Excel content detected, reading as Excel")
+                            logger.info("Detected Excel content in .csv file; reading as Excel")
                             try:
                                 df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
                             except Exception as exc:
@@ -226,8 +232,8 @@ class FeedbackFileIngestView(APIView):
                         # than letting them fall through to a generic 500.
                         try:
                             df = pd.read_excel(io.BytesIO(content), engine='xlrd')
-                        except Exception as exc:
-                            logger.warning("Failed to read .xls upload via xlrd: %s", exc)
+                        except Exception:
+                            logger.exception("Failed to read .xls upload via xlrd")
                             return StandardResponse.validation_error(
                                 detail='.xls files are not supported. Please convert to .xlsx or .csv format.',
                                 errors=[{"field": "file", "message": "Old Excel format (.xls) could not be read. Convert to .xlsx or .csv."}],
@@ -258,7 +264,10 @@ class FeedbackFileIngestView(APIView):
                     # Extract dimensions for each comment
                     dimensions = [sc['dimensions'] for sc in structured_comments]
 
-                    logger.info(f"Structured file ({ext}) processed: {len(comments)} comments, {len(dimensions)} dimension objects")
+                    logger.info(
+                        "Processed structured file upload",
+                        extra={"file_ext": ext, "comment_count": len(comments), "dimension_count": len(dimensions)},
+                    )
             else:
                 comments = extract_comments_from_text(upload)
         except ValueError as exc:
@@ -268,7 +277,7 @@ class FeedbackFileIngestView(APIView):
                 instance=request.path,
             )
         except Exception as exc:
-            logger.error(f"Error processing file: {exc}", exc_info=True)
+            logger.exception("Failed to process uploaded file")
             # Provide user-friendly error message for common pandas parsing errors
             error_msg = str(exc)
             if "Expected" in error_msg and "fields" in error_msg:
@@ -304,8 +313,8 @@ class FeedbackFileIngestView(APIView):
             user_data = analysis_service.get_user_by_id(user_id_str)
             if user_data:
                 company_name = user_data.get("company_name")
-        except Exception as exc:
-            logger.warning("Could not look up company_name for ingest: %s", exc)
+        except Exception:
+            logger.exception("Failed to look up company name for ingest")
 
         analysis_id = str(uuid.uuid4())
         # Phase 1: Accept force_regenerate flag to override locked taxonomy
@@ -330,7 +339,7 @@ class FeedbackFileIngestView(APIView):
                 or "redis" in err_msg
                 or getattr(exc, "errno", None) == 10061
             ):
-                logger.error("Redis/Celery broker unavailable for ingest: %s", exc, exc_info=True)
+                logger.exception("Failed to enqueue ingest: Redis/Celery broker unavailable")
                 return StandardResponse.error(
                     title="Service unavailable",
                     detail=(
@@ -377,8 +386,8 @@ class FeedbackFileIngestView(APIView):
                 "comment_count": len(comments),
             })
             cache.set(tasks_key, existing[:15], ttl=86400)
-        except Exception as exc:
-            logger.warning("Failed to record ingest task in cache: %s", exc)
+        except Exception:
+            logger.exception("Failed to record ingest task in cache")
 
         response = StandardResponse.success(
             data={

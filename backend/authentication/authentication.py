@@ -87,8 +87,8 @@ class AppAuthenticationBackend(BaseBackend):
             if user_data:
                 return AppUser(user_data)
             return None
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
+        except Exception:
+            logger.exception("Failed to authenticate user")
             return None
 
     def get_user(self, user_id):
@@ -100,6 +100,6 @@ class AppAuthenticationBackend(BaseBackend):
             if user_data:
                 return AppUser(user_data)
             return None
-        except Exception as e:
-            logger.error(f"Get user error: {e}")
+        except Exception:
+            logger.exception("Failed to get user")
             return None
