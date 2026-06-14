@@ -96,18 +96,8 @@ async function waitForAnalysisTask(taskId: string, dispatch: any, signal?: Abort
   return new Promise((resolve, reject) => {
     let pollCount = 0;
     const maxPolls = 900; // 30 minutes max (2s interval)
-    let pollInterval: ReturnType<typeof setInterval>;
 
-    // Single teardown path: stop polling + detach the abort listener so the
-    // interval can't keep running (and dispatching) after the caller is gone.
-    const finish = (fn: (v: any) => void, arg: any) => {
-      clearInterval(pollInterval);
-      signal?.removeEventListener('abort', onAbort);
-      fn(arg);
-    };
-    const onAbort = () => finish(reject, new DOMException('Analysis polling aborted', 'AbortError'));
-
-    pollInterval = setInterval(async () => {
+    const pollInterval = setInterval(async () => {
       try {
         pollCount++;
         const response = await apiRequest('get', `/insights/task-status/${taskId}/`, undefined, true);
@@ -117,27 +107,36 @@ async function waitForAnalysisTask(taskId: string, dispatch: any, signal?: Abort
         // PARTIAL is terminal too — a partial run produced results (some comments
         // failed). Without this branch it would poll until the 30-min timeout.
         if (status === 'COMPLETED' || status === 'SUCCESS' || status === 'PARTIAL') {
+          clearInterval(pollInterval);
           const isPartial = status === 'PARTIAL';
           const insightId = statusData.result?.insight_id;
           if (insightId) {
             const analysisRes = await apiRequest('get', `/feedback/analysis/${insightId}/`, undefined, true);
-            finish(resolve, { id: insightId, analysisData: analysisRes.data?.data, taskId, partial: isPartial });
+            resolve({ id: insightId, analysisData: analysisRes.data?.data, taskId, partial: isPartial });
           } else {
-            finish(resolve, { id: `analysis_${Date.now()}`, analysisData: statusData.result, taskId, partial: isPartial });
+            resolve({ id: `analysis_${Date.now()}`, analysisData: statusData.result, taskId, partial: isPartial });
           }
         } else if (status === 'FAILURE' || status === 'FAILED') {
-          finish(reject, new Error(statusData.error || 'Analysis failed'));
+          clearInterval(pollInterval);
+          reject(new Error(statusData.error || 'Analysis failed'));
         } else if (pollCount >= maxPolls) {
-          finish(reject, new Error('Analysis timeout'));
+          clearInterval(pollInterval);
+          reject(new Error('Analysis timeout'));
         }
       } catch (error) {
-        finish(reject, error);
+        clearInterval(pollInterval);
+        reject(error);
       }
     }, 2000); // Poll every 2 seconds
 
+    // Stop polling if the caller aborts (prevents zombie polling after unmount).
     if (signal) {
-      if (signal.aborted) return onAbort();
-      signal.addEventListener('abort', onAbort, { once: true });
+      const abort = () => {
+        clearInterval(pollInterval);
+        reject(new DOMException('Analysis polling aborted', 'AbortError'));
+      };
+      if (signal.aborted) abort();
+      else signal.addEventListener('abort', abort, { once: true });
     }
   });
 }
