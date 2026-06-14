@@ -34,6 +34,13 @@ class TaskService:
             suggested_aspects: Optional list of frozen aspects (if None, will generate)
             dimensions: Optional list of dimension dicts per comment (structured-dimensions feature)
         """
+        # Bind ids to the logging context so every line in this run is correlatable.
+        try:
+            from apis.core.request_context import analysis_id_var, set_request_identity
+            analysis_id_var.set(str(analysis_id))
+            set_request_identity(user_id_str)
+        except Exception:
+            pass
         logger.info(f"📈 Background task started: feedback analysis for project {project_id}")
         logger.info(f"🔍 Input: {len(comments)} comments, user: {user_id_str}, project: {project_id}")
         max_comments = int(os.getenv("MAX_COMMENTS_PER_ANALYSIS", "50000"))

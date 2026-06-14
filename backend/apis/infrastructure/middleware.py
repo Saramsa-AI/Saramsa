@@ -112,10 +112,13 @@ class RequestResponseLoggingMiddleware(MiddlewareMixin):
         except Exception:
             pass
 
-        # Clear contextvars for safety
+        # Clear contextvars for safety (avoid leaking identity across pooled requests)
         try:
             request_id_var.set(None)
             token_usage_var.set(None)
+            from ..core.request_context import user_id_var, organization_id_var
+            user_id_var.set(None)
+            organization_id_var.set(None)
         except Exception:
             pass
 

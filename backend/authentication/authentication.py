@@ -64,6 +64,13 @@ class AppJWTAuthentication(JWTAuthentication):
         if not user_data.get('is_active', True):
             raise AuthenticationFailed('User account is disabled')
 
+        # Bind user + tenant to the logging context for this request.
+        try:
+            from apis.core.request_context import set_request_identity
+            set_request_identity(user_id, (user_data.get('profile') or {}).get('active_organization_id'))
+        except Exception:
+            pass
+
         return AppUser(user_data)
 
 
