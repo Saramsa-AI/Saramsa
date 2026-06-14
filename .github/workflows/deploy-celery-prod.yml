@@ -82,7 +82,7 @@ jobs:
 
       - name: Tag deploy (environment + release) for log/telemetry fields
         run: |
-          # Populates the `release` / `environment` log fields (see LOGGING.md).
+          # Populate the environment/release log fields.
           az webapp config appsettings set \
             --name saramsa-celery-prod-2 \
             --resource-group saramsa \

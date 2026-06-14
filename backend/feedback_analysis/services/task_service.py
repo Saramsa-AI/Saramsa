@@ -34,7 +34,6 @@ class TaskService:
             suggested_aspects: Optional list of frozen aspects (if None, will generate)
             dimensions: Optional list of dimension dicts per comment (structured-dimensions feature)
         """
-        # Bind ids to the logging context so every line in this run is correlatable.
         try:
             from apis.core.request_context import analysis_id_var, set_request_identity
             analysis_id_var.set(str(analysis_id))

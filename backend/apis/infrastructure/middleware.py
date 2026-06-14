@@ -112,7 +112,7 @@ class RequestResponseLoggingMiddleware(MiddlewareMixin):
         except Exception:
             pass
 
-        # Clear contextvars for safety (avoid leaking identity across pooled requests)
+        # Clear contextvars to avoid leaking across pooled requests.
         try:
             request_id_var.set(None)
             token_usage_var.set(None)

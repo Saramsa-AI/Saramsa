@@ -123,8 +123,7 @@ class IntegrationService:
                 return self.integrations_repo.get_by_organization(str(organization_id))
             return self.integrations_repo.get_integration_accounts_by_user(user_id)
         except ValueError:
-            # Expected domain rejection (e.g. not a member); the view maps it to a
-            # 4xx. Re-raise without a stack-trace log.
+            # Expected domain rejection — re-raise without a stack-trace log.
             raise
         except Exception:
             logger.exception("Failed to get integration accounts", extra={"user_id": user_id})
@@ -585,8 +584,7 @@ class IntegrationService:
                     organization_id=account_org_id,
                 )
         except ValueError:
-            # Expected domain rejection (e.g. not an admin / no org access); the
-            # view turns it into a 4xx. Re-raise without a stack-trace log.
+            # Expected domain rejection — re-raise without a stack-trace log.
             raise
         except Exception:
             logger.exception("Failed to delete integration account", extra={"account_id": account_id})

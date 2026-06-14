@@ -118,7 +118,6 @@ def handle_service_errors(func: Callable) -> Callable:
 
             func_name = getattr(func, '__name__', 'unknown_function')
 
-            # Capture structured request context for prod debugging
             request = next((a for a in args if hasattr(a, 'method') and hasattr(a, 'path')), None)
             request_info = {}
             if request:

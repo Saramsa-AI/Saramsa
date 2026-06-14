@@ -58,7 +58,6 @@ LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'filters': {
-        # Stamps correlation_id + analysis_id onto every record (see request_context).
         'correlation': {
             '()': 'apis.core.request_context.CorrelationIdFilter',
         },

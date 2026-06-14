@@ -11,8 +11,7 @@ from .otel import setup_otel
 
 @task_prerun.connect
 def _bind_task_log_context(task_id=None, **_kwargs):
-    """Bind the Celery task id to the logging context so worker logs carry a
-    correlation id (the analysis task additionally sets analysis_id/user/tenant)."""
+    """Bind the Celery task id to the logging context."""
     try:
         from apis.core.request_context import task_id_var
         task_id_var.set(task_id)

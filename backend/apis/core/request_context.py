@@ -5,10 +5,6 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# Context variables for request-scoped data. Set per HTTP request (middleware +
-# JWT auth) and per Celery task (task_prerun signal + the analysis task), and
-# read by the logging CorrelationIdFilter so every log line can be tied back to
-# one operation, user, and tenant.
 request_id_var: ContextVar[Optional[str]] = ContextVar('request_id', default=None)
 token_usage_var: ContextVar[Optional[Dict[str, Any]]] = ContextVar('token_usage', default=None)
 task_id_var: ContextVar[Optional[str]] = ContextVar('task_id', default=None)
@@ -16,9 +12,7 @@ analysis_id_var: ContextVar[Optional[str]] = ContextVar('analysis_id', default=N
 user_id_var: ContextVar[Optional[str]] = ContextVar('user_id', default=None)
 organization_id_var: ContextVar[Optional[str]] = ContextVar('organization_id', default=None)
 
-# Static per-process facts (resolved once). The deploy should set ENVIRONMENT
-# (production/staging) and RELEASE (the git SHA) as app settings; default to
-# "unknown" so logs are still well-formed locally.
+# environment/release come from deploy-set app settings; "unknown" locally.
 _ENVIRONMENT = os.getenv('ENVIRONMENT') or ('development' if os.getenv('DEBUG', '').lower() == 'true' else 'production')
 _RELEASE = os.getenv('RELEASE') or os.getenv('RELEASE_SHA') or os.getenv('GIT_COMMIT') or 'unknown'
 
@@ -44,15 +38,7 @@ def _otel_trace_ids():
 
 
 class CorrelationIdFilter(logging.Filter):
-    """Stamp correlation + context identifiers onto every LogRecord.
-
-    Adds ``correlation_id`` (request id for web, else Celery task id),
-    ``analysis_id``, ``user_id``, ``organization_id``, ``environment``,
-    ``release``, ``trace_id`` and ``span_id`` so a single operation can be
-    followed across the API and worker, tied to a user/tenant/deploy, and
-    linked to its distributed trace. All default to ``-`` so formatters that
-    reference these fields never raise.
-    """
+    """Stamp correlation/context identifiers onto every LogRecord (default ``-``)."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.correlation_id = request_id_var.get() or task_id_var.get() or "-"
