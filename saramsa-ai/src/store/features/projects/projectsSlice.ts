@@ -128,7 +128,7 @@ export const importProjectFromExternal = createAsyncThunk(
     };
   }) => {
     // First check if project already exists with this external link
-    const checkResponse = await apiRequest('get', `/integrations/projects/check-external/?provider=${data.provider}&externalId=${data.externalProject.id}`, undefined, true);
+    const checkResponse = await apiRequest('get', `/integrations/external/projects/check/?provider=${data.provider}&externalId=${data.externalProject.id}`, undefined, true);
     
     if (checkResponse.data.data.exists) {
       throw new Error(`Project "${data.externalProject.name}" is already imported`);
