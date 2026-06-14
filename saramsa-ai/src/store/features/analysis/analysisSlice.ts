@@ -319,7 +319,7 @@ export const renameAnalysis = createAsyncThunk<
     try {
       console.log(`[rename] Renaming ${analysisId} to: ${newName}`);
 
-      const response = await apiRequest('POST', `/analyses/${analysisId}/rename/`, {
+      const response = await apiRequest('post', `/feedback/analysis/${analysisId}/rename/`, {
         name: newName,
       });
 
