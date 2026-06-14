@@ -52,6 +52,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint (ESLint — catches build-blocking errors like prefer-const)
+        # The Vercel production build runs `next lint`; running it here too means
+        # a lint error fails CI instead of silently breaking the prod deploy.
+        run: npm run lint
+
       - name: Run vitest with coverage
         # `--coverage` enables the v8 provider configured in vitest.config.ts.
         # Threshold is set to 0% (just report, don't block) so this command
