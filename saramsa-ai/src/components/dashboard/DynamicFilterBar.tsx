@@ -53,7 +53,7 @@ export function DynamicFilterBar({ projectId, onFiltersChange, className = '' }:
         setLoading(true);
         const response = await apiRequest(
           'GET',
-          `/api/feedback/projects/${projectId}/dimensions/`
+          `/feedback/projects/${projectId}/dimensions/`
         );
         setDimensions(response.data?.data?.dimensions || {});
       } catch (error) {

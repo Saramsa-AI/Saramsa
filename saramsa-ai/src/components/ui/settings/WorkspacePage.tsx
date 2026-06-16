@@ -231,7 +231,7 @@ export function WorkspacePage() {
 
   const canManageMembers = ["owner", "admin"].includes(data.current_membership?.role || "");
   const isOwner = data.current_membership?.role === "owner";
-  const transferableMembers = data.members.filter(
+  const transferableMembers = (data.members || []).filter(
     (m) => !m.is_current_user && m.role !== "owner",
   );
 

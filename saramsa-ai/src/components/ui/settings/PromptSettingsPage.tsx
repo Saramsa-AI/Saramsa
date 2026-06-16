@@ -43,13 +43,14 @@ export function PromptSettingsPage() {
       setError(null);
       const query = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : "";
       const res = await apiRequest("get", `/auth/admin/prompts/${query}`, undefined, true);
-      const payload: PromptSettingsPayload = res.data?.data;
+      // A success response with a missing/empty body must not crash the page.
+      const payload: PromptSettingsPayload = res.data?.data ?? ({} as PromptSettingsPayload);
       setData(payload);
       setSelectedOrganizationId(payload.selected_organization_id || organizationId || "");
       const defaults = payload.default_prompts || {};
       setPlatformDrafts(
         Object.fromEntries(
-          payload.available_prompt_types.map((type) => [
+          (payload.available_prompt_types || []).map((type) => [
             type,
             payload.platform_prompts?.[type]?.content || defaults[type] || "",
           ]),
@@ -57,7 +58,7 @@ export function PromptSettingsPage() {
       );
       setOrganizationDrafts(
         Object.fromEntries(
-          payload.available_prompt_types.map((type) => [
+          (payload.available_prompt_types || []).map((type) => [
             type,
             payload.organization_prompts?.[type]?.content
               || payload.platform_prompts?.[type]?.content

@@ -426,6 +426,7 @@ const integrationsSlice = createSlice({
       // Slack channels
       .addCase(fetchSlackChannels.pending, (state) => {
         state.fetchingChannels = true;
+        state.error = null;
       })
       .addCase(fetchSlackChannels.fulfilled, (state, action) => {
         state.fetchingChannels = false;
@@ -439,6 +440,7 @@ const integrationsSlice = createSlice({
       // Feedback sources
       .addCase(fetchFeedbackSources.pending, (state) => {
         state.fetchingSources = true;
+        state.error = null;
       })
       .addCase(fetchFeedbackSources.fulfilled, (state, action) => {
         state.fetchingSources = false;
@@ -452,6 +454,7 @@ const integrationsSlice = createSlice({
       // Create feedback source
       .addCase(createFeedbackSource.pending, (state) => {
         state.creatingSource = true;
+        state.error = null;
       })
       .addCase(createFeedbackSource.fulfilled, (state, action) => {
         state.creatingSource = false;
@@ -465,6 +468,7 @@ const integrationsSlice = createSlice({
       // Sync feedback source
       .addCase(syncFeedbackSource.pending, (state, action) => {
         state.syncingSource[action.meta.arg.sourceId] = true;
+        state.error = null;
       })
       .addCase(syncFeedbackSource.fulfilled, (state, action) => {
         state.syncingSource[action.payload.sourceId] = false;
