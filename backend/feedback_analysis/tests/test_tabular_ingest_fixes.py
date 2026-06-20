@@ -18,10 +18,13 @@ from __future__ import annotations
 import io
 import math
 import unittest
+from unittest import mock
 
 from feedback_analysis.file_extractors import extract_comments_from_text
+from feedback_analysis.services import column_classifier_service
 from feedback_analysis.services.column_classifier_service import (
     build_structured_comments,
+    classify_columns,
 )
 
 
@@ -118,6 +121,120 @@ class IntegerColumnTests(unittest.TestCase):
         _structured, seeds = build_structured_comments(rows, classification)
         # 3.0 -> "3", and NaN seed dropped.
         self.assertEqual(seeds, ["3"])
+
+
+class MultiTextColumnTests(unittest.TestCase):
+    """A CSV with more than one end-user text column must keep all of them."""
+
+    def _classification(self):
+        return {
+            "primary_text": ["description", "additional_comments"],
+            "context": ["plan"],
+            "noise": [],
+            "taxonomy_seed_column": None,
+        }
+
+    def test_both_text_columns_are_concatenated_and_labeled(self):
+        rows = [
+            {
+                "description": "Cannot log into the travel system.",
+                "additional_comments": "Still no response after two days.",
+                "plan": "Pro",
+            }
+        ]
+        structured, _seeds = build_structured_comments(rows, self._classification())
+
+        self.assertEqual(len(structured), 1)
+        text = structured[0]["text"]
+        # Each part is labeled by its column so the downstream LLM can tell them apart.
+        self.assertIn("Description: Cannot log into the travel system.", text)
+        self.assertIn("Additional Comments: Still no response after two days.", text)
+        # Context still folds into the enriched bracket prefix.
+        self.assertIn("Plan: Pro", structured[0]["enriched_text"])
+
+    def test_blank_second_column_is_skipped_no_empty_label(self):
+        rows = [
+            {
+                "description": "App crashes on upload.",
+                "additional_comments": float("nan"),  # pandas blank
+                "plan": "Free",
+            }
+        ]
+        structured, _seeds = build_structured_comments(rows, self._classification())
+
+        text = structured[0]["text"]
+        self.assertIn("Description: App crashes on upload.", text)
+        # No empty "Additional Comments:" section and no literal "nan".
+        self.assertNotIn("Additional Comments:", text)
+        self.assertNotIn("nan", text.lower())
+
+    def test_row_blank_in_all_text_columns_is_skipped(self):
+        rows = [
+            {"description": float("nan"), "additional_comments": None, "plan": "Pro"},
+            {"description": "Real feedback", "additional_comments": None, "plan": "Pro"},
+        ]
+        structured, _seeds = build_structured_comments(rows, self._classification())
+        self.assertEqual(len(structured), 1)
+        # Labeling stays consistent across rows: a multi-text file labels every
+        # row, even one where only a single text column has content.
+        self.assertEqual(structured[0]["text"], "Description: Real feedback")
+
+    def test_single_column_list_keeps_raw_text_no_label(self):
+        # A one-element list must behave exactly like the legacy string shape.
+        classification = {
+            "primary_text": ["comment"],
+            "context": [],
+            "noise": [],
+            "taxonomy_seed_column": None,
+        }
+        rows = [{"comment": "Just works great"}]
+        structured, _seeds = build_structured_comments(rows, classification)
+        self.assertEqual(structured[0]["text"], "Just works great")
+        self.assertEqual(structured[0]["enriched_text"], "Just works great")
+
+
+class ClassifyColumnsNoFallbackTests(unittest.TestCase):
+    """With the heuristic removed, the classifier must fail loudly or return empty."""
+
+    _ROWS = [{"comment": "App keeps crashing on launch", "id": "INC1"}]
+
+    def _patch_llm(self, *, raises=None, content=None):
+        """Patch get_azure_client so the create() call raises or returns `content`."""
+        client = mock.MagicMock()
+        if raises is not None:
+            client.chat.completions.create.side_effect = raises
+        else:
+            completion = mock.MagicMock()
+            completion.choices = [mock.MagicMock()]
+            completion.choices[0].message.content = content
+            client.chat.completions.create.return_value = completion
+        outer = mock.MagicMock()
+        outer.get_client.return_value = client
+        return mock.patch.object(
+            column_classifier_service, "get_azure_client", return_value=outer
+        )
+
+    def test_llm_failure_raises_not_guesses(self):
+        with self._patch_llm(raises=RuntimeError("Azure down")):
+            with self.assertRaises(RuntimeError):
+                classify_columns(["comment", "id"], self._ROWS)
+
+    def test_no_text_column_returns_empty(self):
+        # Valid JSON, but the model picked a column that isn't a header.
+        with self._patch_llm(content='{"primary_text": ["nonexistent"], "context": [], "noise": []}'):
+            result = classify_columns(["comment", "id"], self._ROWS)
+        self.assertEqual(result["primary_text"], [])
+
+    def test_unparseable_response_returns_empty(self):
+        with self._patch_llm(content="not json at all"):
+            result = classify_columns(["comment", "id"], self._ROWS)
+        self.assertEqual(result["primary_text"], [])
+
+    def test_clean_response_classifies(self):
+        with self._patch_llm(content='{"primary_text": ["comment"], "context": [], "noise": ["id"], "taxonomy_seed_column": null}'):
+            result = classify_columns(["comment", "id"], self._ROWS)
+        self.assertEqual(result["primary_text"], ["comment"])
+        self.assertEqual(result["source"], "llm")
 
 
 class TextDecodeTests(unittest.TestCase):
