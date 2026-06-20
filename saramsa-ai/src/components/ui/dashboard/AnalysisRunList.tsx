@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChart3, Loader2 } from 'lucide-react';
+import { BarChart3, Loader2, Plus } from 'lucide-react';
 import { AnalysisRunItem } from './AnalysisRunItem';
 import type { AnalysisHistoryEntry } from '@/store/features/analysis/analysisSlice';
 
@@ -13,11 +13,12 @@ interface AnalysisRunListProps {
   onDelete?: (id: string) => Promise<void>;
   onCancel?: (id: string, taskId: string) => Promise<void>;
   onRetry?: (id: string) => Promise<void>;
+  onNew?: () => void;
   projectName?: string;
 }
 
 export function AnalysisRunList({
-  entries, selectedId, isLoading, onSelect, onRename, onDelete, onCancel, onRetry, projectName,
+  entries, selectedId, isLoading, onSelect, onRename, onDelete, onCancel, onRetry, onNew, projectName,
 }: AnalysisRunListProps) {
   return (
     <aside className="w-[280px] flex-shrink-0 h-full flex flex-col bg-card/60 border border-border/60 rounded-none overflow-hidden">
@@ -30,6 +31,16 @@ export function AnalysisRunList({
           </>
         ) : (
           <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
+        )}
+        {onNew && (
+          <button
+            type="button"
+            onClick={onNew}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-sm font-medium text-foreground transition hover:bg-muted/60"
+          >
+            <Plus className="h-4 w-4" />
+            New analysis
+          </button>
         )}
       </div>
 
