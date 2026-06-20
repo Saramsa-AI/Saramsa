@@ -51,7 +51,7 @@ export function DimensionBreakdown({
           try {
             const response = await apiRequest(
               'GET',
-              `/api/feedback/insights/breakdown/?project_id=${projectId}&analysis_id=${analysisId}&group_by=${dimension}`
+              `/feedback/insights/breakdown/?project_id=${projectId}&analysis_id=${analysisId}&group_by=${dimension}`
             );
 
             if (response.data && response.data.data && response.data.data.total_segments > 0) {

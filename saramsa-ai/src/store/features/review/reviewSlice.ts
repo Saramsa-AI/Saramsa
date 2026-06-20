@@ -156,30 +156,44 @@ const reviewSlice = createSlice({
       })
       .addCase(fetchReviewStats.pending, (state) => {
         state.statsLoading = true;
+        state.error = null;
       })
       .addCase(fetchReviewStats.fulfilled, (state, action) => {
         state.statsLoading = false;
         state.stats = action.payload;
       })
-      .addCase(fetchReviewStats.rejected, (state) => {
+      .addCase(fetchReviewStats.rejected, (state, action) => {
         state.statsLoading = false;
+        state.error = action.error.message || 'Failed to load review stats';
       })
       .addCase(approveCandidate.fulfilled, (state, action) => {
         state.candidates = state.candidates.filter((c) => c.id !== action.payload.candidateId);
         state.selectedIds = state.selectedIds.filter((id) => id !== action.payload.candidateId);
       })
+      .addCase(approveCandidate.rejected, (state, action) => {
+        state.error = action.error.message || 'Failed to approve candidate';
+      })
       .addCase(dismissCandidate.fulfilled, (state, action) => {
         state.candidates = state.candidates.filter((c) => c.id !== action.payload.candidateId);
         state.selectedIds = state.selectedIds.filter((id) => id !== action.payload.candidateId);
+      })
+      .addCase(dismissCandidate.rejected, (state, action) => {
+        state.error = action.error.message || 'Failed to dismiss candidate';
       })
       .addCase(snoozeCandidate.fulfilled, (state, action) => {
         state.candidates = state.candidates.filter((c) => c.id !== action.payload.candidateId);
         state.selectedIds = state.selectedIds.filter((id) => id !== action.payload.candidateId);
       })
+      .addCase(snoozeCandidate.rejected, (state, action) => {
+        state.error = action.error.message || 'Failed to snooze candidate';
+      })
       .addCase(batchApprove.fulfilled, (state, action) => {
         const ids = new Set(action.payload.candidateIds);
         state.candidates = state.candidates.filter((c) => !ids.has(c.id));
         state.selectedIds = [];
+      })
+      .addCase(batchApprove.rejected, (state, action) => {
+        state.error = action.error.message || 'Failed to approve selected candidates';
       });
   },
 });

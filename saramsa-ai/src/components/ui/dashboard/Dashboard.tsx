@@ -32,6 +32,7 @@ import {
   ANALYZING_PREFIX,
   HISTORY_STATUS,
   isAnalyzingPlaceholder,
+  isFetchableAnalysisId,
   makeAnalyzingId,
   extractTaskIdFromPlaceholder,
   AnalysisLifecycleState,
@@ -812,8 +813,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       setIsSwitchingAnalysis(false);
       return;
     }
-    // Skip fetch for temporary "analyzing" entries
-    if (isAnalyzingPlaceholder(selectedAnalysisId)) {
+    // Skip fetch for non-fetchable ids: in-flight `analyzing_` placeholders and
+    // synthetic `analysis_<ts>` fallbacks have no backend row, so a fetch can only 404.
+    if (!isFetchableAnalysisId(selectedAnalysisId)) {
       setIsSwitchingAnalysis(false);
       return;
     }

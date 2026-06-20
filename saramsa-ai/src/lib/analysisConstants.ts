@@ -23,6 +23,37 @@ export function extractTaskIdFromPlaceholder(id: string | null | undefined): str
   return (id as string).slice(ANALYZING_PREFIX.length);
 }
 
+/**
+ * Client-only synthetic id minted as `analysis_<Date.now()>` when a finished
+ * task carries no real insight id (e.g. a cache-evicted PARTIAL result). It is
+ * never a backend row, so it must never be sent to `/feedback/analysis/<id>/`.
+ *
+ * Match ONLY the digit-suffixed timestamp form. The backend also exposes a real
+ * `analysis_<uuid>` alias (repositories._normalize_analysis_id rewrites it to
+ * `insight_<uuid>`), so a bare `analysis_` prefix check would wrongly classify a
+ * real, fetchable id as synthetic.
+ */
+const SYNTHETIC_ID_RE = /^analysis_\d+$/;
+
+export function isSyntheticAnalysisId(id: string | null | undefined): boolean {
+  return typeof id === 'string' && SYNTHETIC_ID_RE.test(id);
+}
+
+/**
+ * True only for ids that correspond to a real backend analysis row and can be
+ * fetched from the server. Excludes both the in-flight `analyzing_<task_id>`
+ * placeholder and the synthetic `analysis_<ts>` fallback — fetching either can
+ * only ever 404.
+ */
+export function isFetchableAnalysisId(id: string | null | undefined): id is string {
+  return (
+    typeof id === 'string' &&
+    id.trim().length > 0 &&
+    !isAnalyzingPlaceholder(id) &&
+    !isSyntheticAnalysisId(id)
+  );
+}
+
 /** Status values used on AnalysisHistoryEntry.status. */
 export const HISTORY_STATUS = {
   ANALYZING: 'analyzing',

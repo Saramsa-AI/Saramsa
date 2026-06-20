@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import type { AppDispatch, RootState } from "@/store/store";
 import {
@@ -118,12 +118,23 @@ export function SlackChannelPanel({
     });
   };
 
+  // Guards against running after unmount: the sync poll can loop for minutes, and
+  // without this it keeps polling and mutating Redux/state after the panel is gone.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const pollTaskUntilDone = async (taskId: string) => {
     const startedAt = Date.now();
     const timeoutMs = 15 * 60 * 1000;
     const intervalMs = 2000;
 
     while (Date.now() - startedAt < timeoutMs) {
+      if (!isMountedRef.current) return { ok: false, error: "cancelled" };
       const payload: any = await dispatch(pollTaskStatus({ taskId })).unwrap();
       const status = payload?.status;
       if (status === "SUCCESS" || status === "PARTIAL") {
@@ -174,6 +185,7 @@ export function SlackChannelPanel({
 
       setSyncStatusText("Sync complete. Analysis is running...");
       const pollResult = await pollTaskUntilDone(taskId);
+      if (!isMountedRef.current) return;
       if (!pollResult.ok) {
         if (tempId) dispatch(removeFromHistory(tempId));
         setSyncStatusText(pollResult.error || "Slack analysis failed.");
@@ -282,8 +294,8 @@ export function SlackChannelPanel({
 
   // Source exists — show status
   if (existingSource && !isEditing) {
-    const lastSynced = existingSource.config.last_synced_at;
-    const channels = existingSource.config.channels || [];
+    const lastSynced = existingSource.config?.last_synced_at;
+    const channels = existingSource.config?.channels || [];
 
     return (
       <section id="slack-channel-panel" className="space-y-3 py-2">

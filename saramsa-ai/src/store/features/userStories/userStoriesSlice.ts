@@ -52,6 +52,10 @@ interface UserStoriesState {
   userStories: UserStory[];
   currentProjectUserStories: UserStory[];
   loading: boolean;
+  // Count of in-flight operations. `loading` is derived from this so two
+  // concurrent thunks don't let the first to settle clear the spinner while the
+  // second is still running.
+  pendingCount: number;
   error: string | null;
   lastFetchedProjectId: string | null;
   lastFetchedUserId: string | null;
@@ -61,6 +65,7 @@ const initialState: UserStoriesState = {
   userStories: [],
   currentProjectUserStories: [],
   loading: false,
+  pendingCount: 0,
   error: null,
   lastFetchedProjectId: null,
   lastFetchedUserId: null,
@@ -264,12 +269,14 @@ const userStoriesSlice = createSlice({
     builder
       // Fetch user stories by project
       .addCase(fetchUserStoriesByProject.pending, (state) => {
+        state.pendingCount += 1;
         state.loading = true;
         state.error = null;
         state.currentProjectUserStories = [];
       })
       .addCase(fetchUserStoriesByProject.fulfilled, (state, action) => {
-        state.loading = false;
+        state.pendingCount = Math.max(0, state.pendingCount - 1);
+        state.loading = state.pendingCount > 0;
         state.error = null;
         state.currentProjectUserStories = action.payload.userStories;
         state.lastFetchedProjectId = action.payload.projectId;
@@ -290,17 +297,20 @@ const userStoriesSlice = createSlice({
         state.userStories = updatedUserStories;
       })
       .addCase(fetchUserStoriesByProject.rejected, (state, action) => {
-        state.loading = false;
+        state.pendingCount = Math.max(0, state.pendingCount - 1);
+        state.loading = state.pendingCount > 0;
         state.error = action.payload || 'Failed to load user stories.';
       })
 
       // Update user story
       .addCase(updateUserStory.pending, (state) => {
+        state.pendingCount += 1;
         state.loading = true;
         state.error = null;
       })
       .addCase(updateUserStory.fulfilled, (state, action) => {
-        state.loading = false;
+        state.pendingCount = Math.max(0, state.pendingCount - 1);
+        state.loading = state.pendingCount > 0;
         state.error = null;
 
         // Update the user story in both arrays
@@ -320,17 +330,20 @@ const userStoriesSlice = createSlice({
         }
       })
       .addCase(updateUserStory.rejected, (state, action) => {
-        state.loading = false;
+        state.pendingCount = Math.max(0, state.pendingCount - 1);
+        state.loading = state.pendingCount > 0;
         state.error = action.payload || 'Failed to update user story.';
       })
 
       // Delete user story
       .addCase(deleteUserStory.pending, (state) => {
+        state.pendingCount += 1;
         state.loading = true;
         state.error = null;
       })
       .addCase(deleteUserStory.fulfilled, (state, action) => {
-        state.loading = false;
+        state.pendingCount = Math.max(0, state.pendingCount - 1);
+        state.loading = state.pendingCount > 0;
         state.error = null;
 
         const deletedId = action.payload.userStoryId;
@@ -342,17 +355,20 @@ const userStoriesSlice = createSlice({
         state.currentProjectUserStories = state.currentProjectUserStories.filter((story: UserStory) => story.id !== deletedId);
       })
       .addCase(deleteUserStory.rejected, (state, action) => {
-        state.loading = false;
+        state.pendingCount = Math.max(0, state.pendingCount - 1);
+        state.loading = state.pendingCount > 0;
         state.error = action.payload || 'Failed to delete user story.';
       })
 
       // Bulk delete user stories
       .addCase(deleteUserStories.pending, (state) => {
+        state.pendingCount += 1;
         state.loading = true;
         state.error = null;
       })
       .addCase(deleteUserStories.fulfilled, (state, action) => {
-        state.loading = false;
+        state.pendingCount = Math.max(0, state.pendingCount - 1);
+        state.loading = state.pendingCount > 0;
         state.error = null;
 
         const deletedIds = action.payload.deletedIds;
@@ -370,17 +386,20 @@ const userStoriesSlice = createSlice({
         }
       })
       .addCase(deleteUserStories.rejected, (state, action) => {
-        state.loading = false;
+        state.pendingCount = Math.max(0, state.pendingCount - 1);
+        state.loading = state.pendingCount > 0;
         state.error = action.payload || 'Failed to delete user stories.';
       })
 
       // Bulk delete work items
       .addCase(deleteWorkItems.pending, (state) => {
+        state.pendingCount += 1;
         state.loading = true;
         state.error = null;
       })
       .addCase(deleteWorkItems.fulfilled, (state, action) => {
-        state.loading = false;
+        state.pendingCount = Math.max(0, state.pendingCount - 1);
+        state.loading = state.pendingCount > 0;
         state.error = null;
         
         // Update the current project user stories by removing the deleted work items
@@ -421,7 +440,8 @@ const userStoriesSlice = createSlice({
         });
       })
       .addCase(deleteWorkItems.rejected, (state, action) => {
-        state.loading = false;
+        state.pendingCount = Math.max(0, state.pendingCount - 1);
+        state.loading = state.pendingCount > 0;
         state.error = action.payload || 'Failed to delete work items.';
       });
   },

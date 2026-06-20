@@ -14,7 +14,7 @@ import { createSlice, PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
 import { apiRequest } from '@/lib/apiRequest';
 import type { AnalysisData } from '@/types/analysis';
 import type { RootState } from '@/store/store';
-import { AnalysisLifecycleState } from '@/lib/analysisConstants';
+import { AnalysisLifecycleState, isFetchableAnalysisId } from '@/lib/analysisConstants';
 
 // ============================================================================
 // TYPES
@@ -195,6 +195,16 @@ function normalizeAnalysisData(input: any): AnalysisData {
   return normalized;
 }
 
+function dedupeHistory(entries: AnalysisHistoryEntry[]): AnalysisHistoryEntry[] {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    if (!entry?.id) return false;
+    if (seen.has(entry.id)) return false;
+    seen.add(entry.id);
+    return true;
+  });
+}
+
 // ============================================================================
 // ASYNC THUNKS
 // ============================================================================
@@ -246,6 +256,10 @@ export const fetchAnalysisHistory = createAsyncThunk<
   }
 );
 
+// Sentinel rejectWithValue payload for "the id isn't a real backend row" — the
+// rejected reducer treats this as a no-op rather than a user-facing failure.
+const NON_FETCHABLE_REJECTION = 'No analysis selected';
+
 /**
  * Fetch single analysis by ID
  */
@@ -257,6 +271,13 @@ export const fetchAnalysisById = createAsyncThunk<
   'analysis/fetchById',
   async ({ analysisId }, { rejectWithValue }) => {
     try {
+      // Synthetic placeholder ids (analyzing_<task>, analysis_<ts>) are client-only
+      // and have no backend row — fetching them is a guaranteed 404. Reject locally
+      // so the UI never surfaces a spurious "failed to load" for a placeholder.
+      if (!isFetchableAnalysisId(analysisId)) {
+        return rejectWithValue(NON_FETCHABLE_REJECTION);
+      }
+
       console.log(`[fetchById] Fetching analysis: ${analysisId}`);
 
       // Use the correct endpoint from the old API
@@ -377,10 +398,13 @@ const analysisSlice = createSlice({
       console.log(`[setSelectedAnalysisId] ${action.payload}`);
       state.selectedAnalysisId = action.payload;
 
+      // A new selection must not inherit the previous selection's error, or a
+      // stale "failed to load" sticks to the screen until the next success.
+      state.selectedAnalysisError = null;
+
       // Clear data when deselecting
       if (action.payload === null) {
         state.selectedAnalysisData = null;
-        state.selectedAnalysisError = null;
 
         // BACKWARD COMPATIBILITY - also clear old fields
         state.analysisData = null;
@@ -400,6 +424,7 @@ const analysisSlice = createSlice({
     // Add placeholder to history (for "Analyzing..." state)
     prependToHistoryAction: (state, action: PayloadAction<AnalysisHistoryEntry>) => {
       console.log(`[prependToHistory] Adding placeholder:`, action.payload.id);
+      state.analysisHistory = state.analysisHistory.filter(e => e.id !== action.payload.id);
       state.analysisHistory.unshift(action.payload);
     },
 
@@ -424,6 +449,7 @@ const analysisSlice = createSlice({
           if (historyStatus) row.status = historyStatus;
           if (insightId) row.id = insightId;
         }
+        state.analysisHistory = dedupeHistory(state.analysisHistory);
         if (state.selectedAnalysisId === placeholderId) {
           state.selectedAnalysisId = insightId ?? null;
         }
@@ -437,12 +463,16 @@ const analysisSlice = createSlice({
     // Swap a history row (e.g. replace an "analyzing" placeholder with the real
     // completed run). Used by the analyzeComments result handler.
     replaceInHistoryAction: (state, action: PayloadAction<{ oldId: string; entry: AnalysisHistoryEntry }>) => {
+      state.analysisHistory = state.analysisHistory.filter(
+        e => e.id === action.payload.oldId || e.id !== action.payload.entry.id
+      );
       const idx = state.analysisHistory.findIndex(e => e.id === action.payload.oldId);
       if (idx >= 0) {
         state.analysisHistory[idx] = action.payload.entry;
       } else {
         state.analysisHistory.unshift(action.payload.entry);
       }
+      state.analysisHistory = dedupeHistory(state.analysisHistory);
     },
 
     // Attach the real Celery task id to a placeholder row (so Cancel can target it).
@@ -528,7 +558,7 @@ const analysisSlice = createSlice({
 
     builder.addCase(fetchAnalysisHistory.fulfilled, (state, action) => {
       state.historyLoading = false;
-      state.analysisHistory = action.payload;
+      state.analysisHistory = dedupeHistory(action.payload);
       console.log(`[fetchHistory.fulfilled] Loaded ${action.payload.length} items`);
     });
 
@@ -564,6 +594,13 @@ const analysisSlice = createSlice({
 
     builder.addCase(fetchAnalysisById.rejected, (state, action) => {
       state.selectedAnalysisLoading = false;
+      // A non-fetchable placeholder id isn't a real failure — clear, don't surface
+      // a spurious "failed to load" (this is the bug this PR removes, kept fixed
+      // in one place rather than relying on every caller to pre-guard).
+      if (action.payload === NON_FETCHABLE_REJECTION) {
+        state.selectedAnalysisError = null;
+        return;
+      }
       state.selectedAnalysisError = action.payload || 'Failed to load analysis';
       console.error(`[fetchById.rejected]`, action.payload);
     });
@@ -719,7 +756,7 @@ export const resumeInFlightTask = createAsyncThunk<
     const stateProjectId = state?.analysis?.projectId || projectId;
     if (stateProjectId) {
       await dispatch(fetchAnalysisHistory({ projectId: stateProjectId })).unwrap();
-      if (result?.id && !String(result.id).startsWith('analysis_') && shouldSelect(getState, result.id)) {
+      if (isFetchableAnalysisId(result?.id) && shouldSelect(getState, result.id)) {
         dispatch(setSelectedAnalysisId(result.id));
       }
     }
@@ -763,8 +800,10 @@ export const ingestFile = createAsyncThunk<
     if (stateProjectId) {
       await dispatch(fetchAnalysisHistory({ projectId: stateProjectId })).unwrap();
 
-      // Auto-select the new analysis so center panel displays it
-      if (result?.id && shouldSelect(getState, result.id)) {
+      // Auto-select the new analysis so center panel displays it. Skip synthetic
+      // `analysis_<ts>` / placeholder ids — they have no backend row and selecting
+      // one would drive a 404 fetch (the bug that surfaced runs as "failed").
+      if (isFetchableAnalysisId(result?.id) && shouldSelect(getState, result.id)) {
         dispatch(setSelectedAnalysisId(result.id));
       }
     }
@@ -813,7 +852,7 @@ export const retriggerAnalysis = createAsyncThunk<
       // Only auto-select a real row id. The cache-evicted PARTIAL fallback yields a
       // synthetic `analysis_<ts>` id that isn't in the refreshed history; selecting
       // it would highlight nothing — let the refreshed list stand instead.
-      if (result?.id && !String(result.id).startsWith('analysis_') && shouldSelect(getState, result.id)) {
+      if (isFetchableAnalysisId(result?.id) && shouldSelect(getState, result.id)) {
         dispatch(setSelectedAnalysisId(result.id));
       }
     }

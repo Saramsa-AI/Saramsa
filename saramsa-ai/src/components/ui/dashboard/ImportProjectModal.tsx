@@ -59,7 +59,7 @@ export function ImportProjectModal({ provider, onClose, onSuccess }: ImportProje
   }, [dispatch, provider, selectedAccount]);
 
   const filteredProjects = externalProjects.filter(project =>
-    project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (project.name?.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (project.description && project.description.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
