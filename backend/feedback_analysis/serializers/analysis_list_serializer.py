@@ -29,6 +29,9 @@ class AnalysisListSerializer(serializers.Serializer):
     status = serializers.SerializerMethodField()
     comments_count = serializers.SerializerMethodField()
     positive_pct = serializers.SerializerMethodField()
+    display_number = serializers.IntegerField(read_only=True, allow_null=True)
+    task_id = serializers.CharField(read_only=True, allow_blank=True)
+    completed_at = serializers.DateTimeField(read_only=True, allow_null=True)
 
     def get_name(self, obj: Dict[str, Any]) -> str:
         """Extract analysis name from various possible locations."""
@@ -75,6 +78,9 @@ class AnalysisListSerializer(serializers.Serializer):
 
     def get_comments_count(self, obj: Dict[str, Any]) -> int:
         """Get total comments count from metadata."""
+        if obj.get('comments_count') is not None:
+            return int(obj.get('comments_count') or 0)
+
         # Try to get from counts metadata first (most efficient)
         counts = (
             obj.get('counts') or
@@ -95,6 +101,9 @@ class AnalysisListSerializer(serializers.Serializer):
 
     def get_positive_pct(self, obj: Dict[str, Any]) -> float:
         """Calculate positive sentiment percentage from metadata."""
+        if obj.get('positive_pct') is not None:
+            return float(obj.get('positive_pct') or 0.0)
+
         # Try to get from sentiment summary first
         sentiment_summary = (
             obj.get('sentimentsummary') or

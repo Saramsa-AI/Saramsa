@@ -2,6 +2,7 @@ from .openai_client import get_azure_client, get_azure_deployment_name
 from .utilities import fix_json_string, validate_json_structure
 from apis.infrastructure.usage_logging import log_token_usage
 from apis.core.error_handlers import handle_service_errors
+import asyncio
 import os
 import time
 import logging
@@ -12,6 +13,7 @@ DEFAULT_MODEL = get_azure_deployment_name()
 DEFAULT_MAX_TOKENS = int(os.getenv('OPENAI_MAX_TOKENS', '1300'))
 DEFAULT_TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', '0.7'))
 DEFAULT_TOP_P = float(os.getenv('OPENAI_TOP_P', '0.95'))
+DEFAULT_REQUEST_TIMEOUT = float(os.getenv('COMPLETION_REQUEST_TIMEOUT', '180'))
 
 # Initialize logger BEFORE using it
 logger = logging.getLogger("apis.app")
@@ -152,11 +154,20 @@ async def generate_completions(
     logger.info("Starting sentiment analysis")
 
     try:
-        azure_client = get_async_azure_client_instance()
+        # Celery calls this async function from sync code via async_to_sync().
+        # Reusing the singleton AsyncAzureOpenAI client across those short-lived
+        # event loops can fail with "Event loop is closed" while httpx closes
+        # pooled connections. Use the sync client in a worker thread so each
+        # call is independent of the caller's event loop lifecycle.
+        azure_client = get_azure_client_instance().with_options(
+            timeout=DEFAULT_REQUEST_TIMEOUT,
+            max_retries=0,
+        )
 
         # Time the LLM API call
         t0 = time.perf_counter()
-        completion = await azure_client.chat.completions.create(
+        completion = await asyncio.to_thread(
+            azure_client.chat.completions.create,
             model=DEFAULT_MODEL,
             messages=chat_prompt,
             max_completion_tokens=effective_max_tokens,
@@ -266,6 +277,10 @@ async def generate_completions(
         logger.exception("Azure OpenAI completion failed")
         if "rate limit" in err_msg.lower() or "429" in err_msg:
             raise ConnectionError("Azure OpenAI rate limit exceeded. Please try again later.")
+        if "timeout" in err_msg.lower() or "timed out" in err_msg.lower():
+            raise ConnectionError(
+                f"Azure OpenAI request timed out after {int(DEFAULT_REQUEST_TIMEOUT)} seconds. Please try again later."
+            )
         if "authentication" in err_msg.lower() or "401" in err_msg or "invalid" in err_msg.lower() and "key" in err_msg.lower():
             raise ConnectionError(
                 "Azure OpenAI authentication failed. Check AZURE_API_KEY and AZURE_ENDPOINT_URL in .env"

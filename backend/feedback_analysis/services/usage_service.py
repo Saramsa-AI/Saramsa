@@ -14,6 +14,15 @@ from apis.infrastructure.storage_service import storage_service
 logger = logging.getLogger(__name__)
 
 
+def _number(value: Any) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 class UsageService:
     def __init__(self):
         self.storage_service = storage_service
@@ -30,10 +39,10 @@ class UsageService:
         except Exception:
             existing = None
 
-        narration_calls = (existing.get('narration_calls') if existing else 0) + 1
-        input_total = (existing.get('input_tokens') if existing else 0) + input_tokens
-        output_total = (existing.get('output_tokens') if existing else 0) + output_tokens
-        cache_hits = (existing.get('cache_hits') if existing else 0) + (1 if cache_hit else 0)
+        narration_calls = _number(existing.get('narration_calls') if existing else 0) + 1
+        input_total = _number(existing.get('input_tokens') if existing else 0) + _number(input_tokens)
+        output_total = _number(existing.get('output_tokens') if existing else 0) + _number(output_tokens)
+        cache_hits = _number(existing.get('cache_hits') if existing else 0) + (1 if cache_hit else 0)
         cache_rate = (cache_hits / narration_calls) if narration_calls else 0.0
 
         # Track per-user contribution within this project-period bucket
@@ -85,4 +94,3 @@ def get_usage_service() -> UsageService:
     if _usage_service is None:
         _usage_service = UsageService()
     return _usage_service
-

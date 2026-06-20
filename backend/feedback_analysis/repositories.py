@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from django.db.models.fields.json import KeyTextTransform, KeyTransform
 from django.utils import timezone
 
 from feedback_analysis.models import Analysis, Insight, InsightReview, InsightRule, Taxonomy, Upload, UserData
@@ -512,12 +513,12 @@ class AnalysisRepository:
 
         Fetches only minimal fields to reduce payload size:
         - id, created_at, updated_at (always needed)
-        - payload (contains name and counts metadata)
-        - result (for sentiment_summary and counts fallback)
+        - status, display_number, task_id, completed_at
 
         Excludes heavy fields:
         - comments array (can be 10k+ items, ~500KB+)
         - dimensions array (large structured data)
+        - payload/result JSON blobs (can be several MB on imported files)
 
         This reduces payload size by ~95% compared to full document.
 
@@ -529,30 +530,63 @@ class AnalysisRepository:
         Returns:
             List of minimal analysis documents with only essential fields
         """
+        # Pull only the small `result.counts` sub-object server-side instead of
+        # transferring the multi-MB `result` blob. Canonical shape (task_service):
+        #   result.counts = {total, positive, negative, neutral, failed}
+        # The annotations add only these extracted scalars to the SELECT; `.only()`
+        # keeps result/comments/dimensions/payload deferred, so the 95% payload
+        # reduction holds while real counts are restored.
+        counts = KeyTransform("counts", "result")
         qs = (
             Analysis.objects.filter(project_id=str(project_id))
             .exclude(type__in=EXCLUDED_ANALYSIS_HISTORY_TYPES)
+            .annotate(
+                _c_total=KeyTextTransform("total", counts),
+                _c_positive=KeyTextTransform("positive", counts),
+                _c_negative=KeyTextTransform("negative", counts),
+                _c_neutral=KeyTextTransform("neutral", counts),
+            )
             .only(
                 "id",
                 "created_at",
                 "updated_at",
-                "status",    # durable lifecycle status (partial/failed/completed)
-                "payload",   # Contains: name, counts metadata
-                "result",    # Contains: sentiment_summary, counts fallback
+                "status",          # durable lifecycle status (partial/failed/completed)
+                "display_number",  # permanent sequence number for UI
+                "task_id",         # useful for polling/reconciliation
+                "completed_at",
             )
             .order_by("-created_at")[offset : offset + limit]
         )
 
+        def _as_int(value: Any) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+
         # Build lightweight documents
         docs = []
         for obj in qs:
+            created_at = obj.created_at.isoformat() if obj.created_at else None
+            total = _as_int(obj._c_total)
+            positive = _as_int(obj._c_positive)
+            negative = _as_int(obj._c_negative)
+            neutral = _as_int(obj._c_neutral)
+            # Percentage is over the classified (sentiment-bucketed) comments, which
+            # can be fewer than total on a partial run — matches the prior serializer.
+            classified = positive + negative + neutral
+            positive_pct = round((positive / classified) * 100, 1) if classified > 0 else 0.0
             doc = {
                 "id": str(obj.id),
-                "createdAt": obj.created_at.isoformat() if obj.created_at else None,
+                "createdAt": created_at,
                 "updatedAt": obj.updated_at.isoformat() if obj.updated_at else None,
                 "status": obj.status or "",
-                "payload": obj.payload or {},
-                "result": obj.result or {},
+                "display_number": obj.display_number,
+                "task_id": obj.task_id,
+                "completed_at": obj.completed_at.isoformat() if obj.completed_at else None,
+                "name": f"Analysis {obj.display_number}" if obj.display_number else "",
+                "comments_count": total,
+                "positive_pct": positive_pct,
             }
             docs.append(doc)
 
