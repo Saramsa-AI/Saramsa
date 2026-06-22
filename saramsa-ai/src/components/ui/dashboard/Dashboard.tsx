@@ -1020,12 +1020,12 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
 
     // Clear old data BEFORE creating new placeholder to prevent flash of stale content.
-    // NOTE: Don't use clearAnalysisData() - it wipes the entire history!
-    if (selectedAnalysisId && !isAnalyzingPlaceholder(selectedAnalysisId)) {
-      dispatch(setAnalysisData(null));  // Clear only current analysis data
-      dispatch(setDeepAnalysis(null));
-      dispatch(clearCurrentProjectUserStories());
-    }
+    // Always clear (not only when a real analysis was selected) — otherwise starting
+    // a run from the new-analysis state leaves the previous results showing under the
+    // in-flight progress. NOTE: Don't use clearAnalysisData() - it wipes the history!
+    dispatch(setAnalysisData(null));  // Clear only current analysis data
+    dispatch(setDeepAnalysis(null));
+    dispatch(clearCurrentProjectUserStories());
 
     const tempId = makeAnalyzingId(String(Date.now()));
     const fileToSubmit = topFile;
@@ -1757,8 +1757,13 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   };
 
   // Deselect the current run to return to the upload / "new analysis" state.
+  // Clear the displayed analysis + work items so no stale results linger behind
+  // the upload box (setSelectedAnalysisId(null) clears them too, but be explicit).
   const handleNewAnalysis = () => {
     dispatch(setSelectedAnalysisId(null));
+    dispatch(setAnalysisData(null));
+    dispatch(setDeepAnalysis(null));
+    dispatch(clearCurrentProjectUserStories());
     setTopFile(null);
     setTopError(null);
   };
@@ -1913,10 +1918,11 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
 
           {/* Right Panel - Upload + Task Details */}
           <main className="flex-1 min-w-0 space-y-6 overflow-y-auto pr-2 scrollbar-thin">
-            {/* Upload + Slack panels belong to the "new analysis" state. Hide them
-                while viewing an existing analysis so the page shows only its
-                Insights / Work items — start a new run via "New analysis" in the list. */}
-            {!isFetchableAnalysisId(selectedAnalysisId) && (
+            {/* Upload + Slack panels belong ONLY to the "new analysis" state
+                (nothing selected). They are hidden while a run is in flight and
+                while viewing an existing analysis, so the results below never sit
+                under the upload box. Start a new run via "New analysis" in the list. */}
+            {!selectedAnalysisId && (
               <div className="w-full">
                 <UploadPanel
                   dbProjectId={currentProjectId}
@@ -1963,6 +1969,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                 </div>
               )}
 
+              {/* Results (progress + tabs + panels) render only when a run is
+                  selected or in flight. In the new-analysis state nothing is
+                  selected, so this stays hidden and only the upload box shows. */}
+              {selectedAnalysisId && (
               <div id="analysis-results-section" className="space-y-6">
               {analysisProgressUi && (
                 <div className="rounded-xl border border-border/60 bg-card/80 p-3 transition-all duration-300">
@@ -2099,6 +2109,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                 />
               )}
               </div>
+              )}
             </>
 
           </main>
