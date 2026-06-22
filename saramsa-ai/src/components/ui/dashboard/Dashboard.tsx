@@ -1059,6 +1059,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         await applyAnalysisResult(result, tempId);
       } catch (e: any) {
         dispatch(removeFromHistory(tempId));
+        // Reset selection: tempId is now an orphaned placeholder. Without this the
+        // upload box stays hidden (gated on !selectedAnalysisId) and the user is
+        // stranded with only the error banner.
+        dispatch(setSelectedAnalysisId(null));
         const data = e?.response?.data;
         const message =
           (typeof data?.message === 'string' && data.message) ||
@@ -1198,6 +1202,9 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       await applyAnalysisResult(result, tempId);
     } catch (e: any) {
       dispatch(removeFromHistory(tempId));
+      // Reset selection so the orphaned placeholder doesn't keep the upload box
+      // hidden (gated on !selectedAnalysisId) and strand the user on the error.
+      dispatch(setSelectedAnalysisId(null));
       const data = e?.response?.data;
       const message =
         (typeof data?.message === 'string' && data.message) ||
