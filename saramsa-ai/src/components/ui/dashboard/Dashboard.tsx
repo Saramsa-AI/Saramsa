@@ -1764,12 +1764,11 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   };
 
   // Deselect the current run to return to the upload / "new analysis" state.
-  // Clear the displayed analysis + work items so no stale results linger behind
-  // the upload box (setSelectedAnalysisId(null) clears them too, but be explicit).
+  // setSelectedAnalysisId(null) clears the analysis-slice display fields
+  // (analysisData/deepAnalysis/loadedComments); the user stories live in a
+  // separate slice, so clear those explicitly.
   const handleNewAnalysis = () => {
     dispatch(setSelectedAnalysisId(null));
-    dispatch(setAnalysisData(null));
-    dispatch(setDeepAnalysis(null));
     dispatch(clearCurrentProjectUserStories());
     setTopFile(null);
     setTopError(null);
