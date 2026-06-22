@@ -254,9 +254,10 @@ class FeedbackFileUploadView(APIView):
                 )
 
             from ..services.column_classifier_service import build_structured_comments
+            from ..services.pii_masking_service import mask_texts
             structured_comments, seed_values = await sync_to_async(
                 build_structured_comments, thread_sensitive=True
-            )(csv_data, classification)
+            )(csv_data, classification, mask_texts)
 
             # Extract enriched_text for LLM processing (backward compat with existing pipeline)
             original_comments = [c["enriched_text"] for c in structured_comments]
