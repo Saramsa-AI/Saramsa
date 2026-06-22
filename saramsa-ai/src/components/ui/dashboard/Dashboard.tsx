@@ -1756,6 +1756,13 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     dispatch(setSelectedAnalysisId(id));
   };
 
+  // Deselect the current run to return to the upload / "new analysis" state.
+  const handleNewAnalysis = () => {
+    dispatch(setSelectedAnalysisId(null));
+    setTopFile(null);
+    setTopError(null);
+  };
+
   const handleRunRename = async (id: string, name: string) => {
     try {
       await dispatch(renameAnalysisRun({ analysisId: id, newName: name })).unwrap();
@@ -1900,34 +1907,40 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
             onDelete={handleRunDelete}
             onCancel={handleCancelTask}
             onRetry={handleRetry}
+            onNew={handleNewAnalysis}
             projectName={selectedProjectName}
           />
 
           {/* Right Panel - Upload + Task Details */}
           <main className="flex-1 min-w-0 space-y-6 overflow-y-auto pr-2 scrollbar-thin">
-            <div className="w-full">
-              <UploadPanel
-                dbProjectId={currentProjectId}
-                topFile={topFile}
-                topError={error || topError}
-                loadedComments={loadedComments}
-                topUploading={isProjectAnalyzing}
-                integrationsLoading={integrationsLoading}
-                slackConnected={!!slackAccount}
-                slackDisplayName={slackDisplayName}
-                onFileSelect={setTopFile}
-                onAnalyze={handleTopAnalyze}
-                onCloudConnect={handleCloudConnect}
-                isAnalyzing={isProjectAnalyzing}
-              />
-              {slackAccount && currentProjectId && (
-                <SlackChannelPanel
-                  projectId={currentProjectId}
-                  slackAccountId={slackAccount.id}
+            {/* Upload + Slack panels belong to the "new analysis" state. Hide them
+                while viewing an existing analysis so the page shows only its
+                Insights / Work items — start a new run via "New analysis" in the list. */}
+            {!isFetchableAnalysisId(selectedAnalysisId) && (
+              <div className="w-full">
+                <UploadPanel
+                  dbProjectId={currentProjectId}
+                  topFile={topFile}
+                  topError={error || topError}
+                  loadedComments={loadedComments}
+                  topUploading={isProjectAnalyzing}
+                  integrationsLoading={integrationsLoading}
+                  slackConnected={!!slackAccount}
                   slackDisplayName={slackDisplayName}
+                  onFileSelect={setTopFile}
+                  onAnalyze={handleTopAnalyze}
+                  onCloudConnect={handleCloudConnect}
+                  isAnalyzing={isProjectAnalyzing}
                 />
-              )}
-            </div>
+                {slackAccount && currentProjectId && (
+                  <SlackChannelPanel
+                    projectId={currentProjectId}
+                    slackAccountId={slackAccount.id}
+                    slackDisplayName={slackDisplayName}
+                  />
+                )}
+              </div>
+            )}
 
             <>
               {/* Dismissible error banner above results */}
