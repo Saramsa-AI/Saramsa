@@ -77,10 +77,17 @@ def mask_texts(texts: List[str]) -> List[str]:
     api_version = os.getenv("PII_LANGUAGE_API_VERSION", "2023-04-01")
     language = os.getenv("PII_MASKING_LANGUAGE", "en")
     try:
-        batch_size = int(os.getenv("PII_MASKING_BATCH_SIZE", str(_DEFAULT_BATCH_SIZE)))
+        requested_batch_size = int(os.getenv("PII_MASKING_BATCH_SIZE", str(_DEFAULT_BATCH_SIZE)))
     except (TypeError, ValueError):
-        batch_size = _DEFAULT_BATCH_SIZE
-    batch_size = max(1, min(batch_size, _DEFAULT_BATCH_SIZE))
+        requested_batch_size = _DEFAULT_BATCH_SIZE
+    batch_size = max(1, min(requested_batch_size, _DEFAULT_BATCH_SIZE))
+    if requested_batch_size != batch_size:
+        # Azure AI Language PII caps at 5 docs/request; surface the clamp so an
+        # operator who set a larger value isn't left wondering why it's ignored.
+        logger.info(
+            "PII_MASKING_BATCH_SIZE=%d clamped to %d (Azure PII limit).",
+            requested_batch_size, batch_size,
+        )
     try:
         timeout = float(os.getenv("PII_MASKING_TIMEOUT", "30"))
     except (TypeError, ValueError):
