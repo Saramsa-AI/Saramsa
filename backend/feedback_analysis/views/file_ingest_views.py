@@ -140,6 +140,7 @@ class FeedbackFileIngestView(APIView):
                 import io
                 import json as json_lib
                 from ..services.column_classifier_service import classify_columns, build_structured_comments
+                from ..services.pii_masking_service import mask_texts
 
                 # Read file into structured format
                 content = upload.read()
@@ -188,8 +189,11 @@ class FeedbackFileIngestView(APIView):
                                 instance=request.path,
                             )
 
-                        # Build structured comments with dimensions
-                        structured_comments, seed_values = build_structured_comments(csv_data, classification)
+                        # Build structured comments with dimensions (masking the
+                        # analyzed text only when PII masking is enabled).
+                        structured_comments, seed_values = build_structured_comments(
+                            csv_data, classification, masker=mask_texts
+                        )
 
                         # Extract plain text comments for processing
                         comments = [sc['text'] for sc in structured_comments]
@@ -255,8 +259,11 @@ class FeedbackFileIngestView(APIView):
                             instance=request.path,
                         )
 
-                    # Build structured comments with dimensions
-                    structured_comments, seed_values = build_structured_comments(csv_data, classification)
+                    # Build structured comments with dimensions (masking the
+                    # analyzed text only when PII masking is enabled).
+                    structured_comments, seed_values = build_structured_comments(
+                        csv_data, classification, masker=mask_texts
+                    )
 
                     # Extract plain text comments for processing
                     comments = [sc['text'] for sc in structured_comments]

@@ -33,7 +33,7 @@ import json
 import logging
 import math
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from aiCore.services.openai_client import get_azure_client, get_azure_deployment_name
 
@@ -267,6 +267,7 @@ def classify_columns(headers: List[str], rows: List[Dict[str, Any]]) -> Dict[str
 def build_structured_comments(
     rows: List[Dict[str, Any]],
     classification: Dict[str, Any],
+    masker: Optional[Callable[[List[str]], List[str]]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Compose structured comments with dimensions and taxonomy-seed values.
 
@@ -283,6 +284,13 @@ def build_structured_comments(
 
       ``seed_values`` is the deduplicated list of values from the
       ``taxonomy_seed_column``, intended for taxonomy bootstrap seeding.
+
+    ``masker``, when provided, redacts the analyzed feedback text. It receives the
+    list of per-comment ``text`` values (the ``primary_text`` columns only) and
+    must return a same-length list of redacted strings, in order. It is applied
+    BEFORE ``enriched_text`` is composed, so both ``text`` and ``enriched_text``
+    carry redacted content while ``dimensions`` (context columns) are left intact —
+    i.e. only the columns we analyze are masked.
     """
     primary_cols = _as_text_columns(classification.get("primary_text"))
     if not primary_cols:
@@ -291,7 +299,9 @@ def build_structured_comments(
     context_cols = classification.get("context") or []
     seed_col = classification.get("taxonomy_seed_column")
 
-    structured_comments: List[Dict[str, Any]] = []
+    # Pass 1: extract per-row text + dimensions (defer enriched_text until after
+    # masking so the bracket prefix wraps the redacted text).
+    records: List[Dict[str, Any]] = []
     seen_seeds: Dict[str, None] = {}
 
     for row in rows:
@@ -302,7 +312,7 @@ def build_structured_comments(
         if not text:
             continue
 
-        # Build dimensions dict from context columns
+        # Build dimensions dict + enriched bracket parts from context columns.
         dimensions: Dict[str, Any] = {}
         enriched_parts: List[str] = []
 
@@ -320,17 +330,7 @@ def build_structured_comments(
                 dimensions[dim_key] = val
                 enriched_parts.append(f"{label}: {val}")
 
-        # Build enriched text with bracket prefix for LLM
-        enriched_text = text
-        if enriched_parts:
-            bracket = "[" + " | ".join(enriched_parts) + "]\n"
-            enriched_text = bracket + text
-
-        structured_comments.append({
-            "text": text,
-            "dimensions": dimensions,
-            "enriched_text": enriched_text
-        })
+        records.append({"text": text, "dimensions": dimensions, "enriched_parts": enriched_parts})
 
         if seed_col:
             sv = row.get(seed_col)
@@ -338,6 +338,30 @@ def build_structured_comments(
                 sv_str = str(_normalize_cell_value(sv)).strip()
                 if sv_str and sv_str not in seen_seeds:
                     seen_seeds[sv_str] = None
+
+    # Optional PII masking of the analyzed text (batched by the masker). Fail-safe:
+    # only adopt the masked output when it matches in length, else keep originals.
+    if masker and records:
+        texts = [r["text"] for r in records]
+        masked = masker(texts)
+        if isinstance(masked, list) and len(masked) == len(records):
+            for r, m in zip(records, masked):
+                r["text"] = m if isinstance(m, str) and m else r["text"]
+
+    # Pass 2: compose enriched_text from the (possibly masked) text + bracket.
+    structured_comments: List[Dict[str, Any]] = []
+    for r in records:
+        text = r["text"]
+        enriched_parts = r["enriched_parts"]
+        enriched_text = text
+        if enriched_parts:
+            bracket = "[" + " | ".join(enriched_parts) + "]\n"
+            enriched_text = bracket + text
+        structured_comments.append({
+            "text": text,
+            "dimensions": r["dimensions"],
+            "enriched_text": enriched_text,
+        })
 
     return structured_comments, list(seen_seeds.keys())
 

@@ -237,6 +237,52 @@ class ClassifyColumnsNoFallbackTests(unittest.TestCase):
         self.assertEqual(result["source"], "llm")
 
 
+class MaskerIntegrationTests(unittest.TestCase):
+    """build_structured_comments applies the masker to analyzed text only."""
+
+    def _classification(self):
+        return {
+            "primary_text": ["comment"],
+            "context": ["plan"],
+            "noise": [],
+            "taxonomy_seed_column": None,
+        }
+
+    def test_masker_redacts_text_and_enriched_text_not_dimensions(self):
+        rows = [{"comment": "Email me at jane@corp.com", "plan": "Pro"}]
+        captured = {}
+
+        def masker(texts):
+            captured["texts"] = list(texts)
+            return [t.replace("jane@corp.com", "***") for t in texts]
+
+        structured, _seeds = build_structured_comments(rows, self._classification(), masker=masker)
+
+        # Masker received exactly the analyzed (primary_text) values.
+        self.assertEqual(captured["texts"], ["Email me at jane@corp.com"])
+        # Both text and enriched_text carry the redaction.
+        self.assertEqual(structured[0]["text"], "Email me at ***")
+        self.assertIn("Email me at ***", structured[0]["enriched_text"])
+        self.assertNotIn("jane@corp.com", structured[0]["enriched_text"])
+        # The context dimension (plan) is untouched and still bracketed.
+        self.assertEqual(structured[0]["dimensions"]["plan"], "Pro")
+        self.assertIn("Plan: Pro", structured[0]["enriched_text"])
+
+    def test_length_mismatch_falls_back_to_originals(self):
+        rows = [{"comment": "a", "plan": "Pro"}, {"comment": "b", "plan": "Free"}]
+
+        def bad_masker(texts):
+            return ["only-one"]  # wrong length
+
+        structured, _seeds = build_structured_comments(rows, self._classification(), masker=bad_masker)
+        self.assertEqual([s["text"] for s in structured], ["a", "b"])
+
+    def test_no_masker_is_unchanged(self):
+        rows = [{"comment": "keep me", "plan": "Pro"}]
+        structured, _seeds = build_structured_comments(rows, self._classification())
+        self.assertEqual(structured[0]["text"], "keep me")
+
+
 class TextDecodeTests(unittest.TestCase):
     """A CP-1252 .txt upload must decode to real characters."""
 
