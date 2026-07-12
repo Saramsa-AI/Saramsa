@@ -182,9 +182,15 @@ export const FeatureSentimentsTable = ({
                   )}
                 </div>
 
-                {/* Evidence indicator */}
+                {/* Evidence indicator — hover shows the feature summary */}
                 {hasEvidence && !isExpanded && (
-                  <MessageSquareQuote className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0" />
+                  <span
+                    title={feature.description || undefined}
+                    className="shrink-0 cursor-help"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MessageSquareQuote className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </span>
                 )}
 
                 {/* Sentiment Bar */}

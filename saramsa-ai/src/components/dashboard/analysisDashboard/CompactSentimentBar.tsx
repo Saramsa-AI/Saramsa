@@ -20,8 +20,16 @@ export const CompactSentimentBar = ({
   const tinySegmentMinWidth = (percent: number) =>
     percent > 0 && percent < 5 ? "2px" : "0px";
 
+  // Native title so the breakdown stays readable inside the scrollable feature
+  // list — a custom absolutely-positioned tooltip gets clipped by the list's
+  // overflow container.
+  const breakdownTitle =
+    `Positive ${positivePercent.toFixed(1)}%  ·  ` +
+    `Negative ${negativePercent.toFixed(1)}%  ·  ` +
+    `Neutral ${neutralPercent.toFixed(1)}%`;
+
   return (
-    <div className="group relative">
+    <div className="relative cursor-help" title={breakdownTitle}>
       {/* Stacked Capsule Bar */}
       <div className="flex items-center bg-secondary/60 rounded-full h-6 w-20 overflow-hidden border border-border/60">
         {/* Positive segment */}
@@ -58,31 +66,6 @@ export const CompactSentimentBar = ({
         )}
       </div>
 
-      {/* Hover Tooltip (CSS handles show/hide, no Framer needed) */}
-      <div
-        className="
-          absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 
-          bg-background/95 text-foreground 
-          text-xs rounded-xl shadow-lg opacity-0 group-hover:opacity-100 
-          transition-opacity duration-200 whitespace-nowrap z-10
-        "
-      >
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-saramsa-brand rounded-full" />
-            <span>{positivePercent.toFixed(1)}%</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-saramsa-gradient-to rounded-full" />
-            <span>{negativePercent.toFixed(1)}%</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-muted-foreground/60 rounded-full" />
-            <span>{neutralPercent.toFixed(1)}%</span>
-          </div>
-        </div>
-        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-background/95" />
-      </div>
     </div>
   );
 };
