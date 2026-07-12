@@ -796,7 +796,7 @@ class LocalProcessingService:
             existing = bucket[k]
             if any(e["text"] == text for e in existing) or len(existing) >= limit:
                 return
-            existing.append({"text": text, "rationale": rationale or ""})
+            existing.append({"text": text})
 
         for m in matches:
             for aspect in m.matched_aspects:
