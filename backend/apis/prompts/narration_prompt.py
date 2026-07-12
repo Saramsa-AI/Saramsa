@@ -39,7 +39,8 @@ The JSON below contains:
   "features": [
     {{
       "aspect_key": "pricing",
-      "description": "1-2 sentence summary of what customers are saying about this feature"
+      "description": "1-2 sentence summary of what customers are saying about this feature",
+      "keywords": ["3-5 short themes (2-4 words each) drawn from the actual customer comments for this feature"]
     }}
   ],
   "work_items": [
@@ -64,6 +65,7 @@ The JSON below contains:
 8. For "business_value": Always reference the actual numbers (e.g. "350 comments, 55% negative, largest feedback category").
 9. insights: max 5 items.
 10. features: only for aspect_key values present in the input.
+10a. For features[].keywords: return 3-5 concise MULTI-WORD themes (2-4 words each) using the customer's own language from comment_samples. They must be meaningful on their own. GOOD: "paywalled historical ratios", "missing international stocks", "slow support replies". BAD (single/generic words): "pricing", "data", "good", "app".
 11. If comment_samples is empty for a candidate, still generate rich text based on the aspect_key, keywords, and metrics available.
 12. For candidates with type "strength": write a title highlighting what customers love (e.g. "Preserve fast one-click checkout experience"), a description of what makes it successful with customer quotes, acceptance criteria focused on maintaining/amplifying the strength, and business value emphasizing retention/differentiation.
 13. Return ONLY valid JSON. No explanation or commentary outside the JSON.

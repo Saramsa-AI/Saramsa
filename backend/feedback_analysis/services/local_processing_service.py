@@ -61,9 +61,30 @@ _STOPWORDS = frozenset({
     # --- generic UI / product noise ---
     'button', 'page', 'screen', 'click', 'clicked', 'clicking',
     'option', 'options', 'menu', 'tab', 'section', 'update', 'updated',
+    # --- sentiment/filler adjectives & verbs that muddy phrases
+    # ("free tier good", "alerts useful", "tickertape makes") ---
+    'good', 'bad', 'nice', 'great', 'useful', 'helpful', 'better', 'best',
+    'makes', 'making', 'gives', 'giving', 'feels', 'feel', 'looks',
+    'reading', 'reads', 'shows', 'showing', 'shown',
 })
 
 _WORD_RE = re.compile(r'[a-zA-Z]{3,}')
+
+# Generic words that are fine inside a phrase ("locked behind paywall") but
+# carry no meaning as a standalone keyword. Only applied to unigram backfill.
+_UNIGRAM_NOISE = frozenset({
+    'built', 'building', 'showing', 'shown', 'shows', 'behind', 'days', 'day',
+    'consistent', 'consistently', 'company', 'companies', 'various', 'overall',
+    'recent', 'recently', 'current', 'currently', 'multiple', 'several', 'across',
+    'within', 'around', 'along', 'without', 'basic', 'simple', 'general',
+    'certain', 'particular', 'specific', 'given', 'able', 'making', 'getting',
+    'coming', 'looking', 'trying', 'having', 'doing',
+})
+
+# A phrase must not START or END on one of these "boundary" words — that is what
+# distinguishes "locked behind paywall" (fine) from "buy hold" / "screener gives"
+# (junk). Stopwords are allowed INSIDE a phrase, just not at its edges.
+_BAD_BOUNDARY = _STOPWORDS | _UNIGRAM_NOISE
 
 
 @dataclass
@@ -432,79 +453,77 @@ class LocalProcessingService:
 
         try:
             vectorizer = TfidfVectorizer(
-                stop_words=list(_STOPWORDS),
+                # IMPORTANT: do NOT pass stop_words here. scikit-learn removes
+                # stopwords BEFORE forming n-grams, which glues together words
+                # that were never adjacent ("buy and hold" -> "buy hold",
+                # "in 5 minutes ... stock" -> "minutes stock"). We keep phrases
+                # CONTIGUOUS and instead filter phrase boundaries below.
                 token_pattern=r'[a-zA-Z]{3,}',
-                ngram_range=(1, 2),
-                max_features=500,
+                # Prefer multi-word phrases (bigrams/trigrams) — single words like
+                # "built" or "showing" carry no context on their own. Unigrams are
+                # still extracted so we can backfill when phrases are scarce.
+                ngram_range=(1, 3),
+                max_features=1500,
                 min_df=1,
                 sublinear_tf=True,
             )
             tfidf_matrix = vectorizer.fit_transform(corpus)
             feature_names = vectorizer.get_feature_names_out()
         except ValueError:
-            # Empty vocabulary after stopword removal
+            # Empty vocabulary (e.g. all comments empty)
             return {a: [] for a in aspects}
 
-        # Build a lookup from term -> index for bigram quality checks
-        term_to_idx = {term: i for i, term in enumerate(feature_names)}
-
-        # Compute a per-aspect score threshold: median of non-zero scores.
-        # Bigrams whose best component is above this threshold are considered
-        # meaningful (at least one word is distinctive to this aspect).
         result: Dict[str, List[str]] = {}
-        max_bigrams_per_aspect = max(2, top_n // 3)  # up to ~30% bigrams
 
         for idx, aspect in enumerate(ordered_aspects):
             row = tfidf_matrix[idx].toarray().flatten()
-            # Get indices sorted by TF-IDF score descending
+            # Terms sorted by TF-IDF score descending
             top_indices = row.argsort()[::-1]
 
-            # Filter: skip terms that contain aspect name tokens (avoid "pricing" in pricing aspect)
+            # Skip terms that are just the aspect name (e.g. "pricing" in Pricing)
             aspect_tokens = set(aspect.lower().replace("_", " ").split())
-            keywords = []
-            bigram_count = 0
-            seen_unigrams = set()  # track unigrams already covered by accepted bigrams
+
+            phrases: List[str] = []   # bigrams/trigrams, score order
+            unigrams: List[str] = []  # single words, score order (backfill only)
             for i in top_indices:
                 if row[i] <= 0:
                     break
                 term = feature_names[i]
-                term_tokens = set(term.split())
-                # Skip if the term is just the aspect name or a token from it
+                toks = term.split()
+                term_tokens = set(toks)
                 if term_tokens <= aspect_tokens:
                     continue
-
-                # Bigram quality gate: accept a bigram if at least one of its
-                # component words has a non-trivial score in this aspect AND
-                # neither component is a stopword. This filters genuine noise
-                # like "the quick" while keeping "slow loading", "poor quality".
-                if " " in term:
-                    if bigram_count >= max_bigrams_per_aspect:
-                        continue  # enough bigrams already
-                    parts = term.split()
-                    # Both parts must be non-stopwords (already handled by vectorizer,
-                    # but double-check for short generic words)
-                    if any(len(p) <= 3 for p in parts):
+                if len(toks) == 1:
+                    # Single word: must be a genuine content word.
+                    if term in _BAD_BOUNDARY:
                         continue
-                    # At least one part must score > 0 in this aspect
-                    best_part_score = max(
-                        (row[term_to_idx[p]] for p in parts if p in term_to_idx),
-                        default=0,
-                    )
-                    if best_part_score <= 0:
+                    unigrams.append(term)
+                else:
+                    # Phrase: reject if it starts or ends on a stopword/filler
+                    # ("screener gives", "for stocks"). Interior stopwords are OK.
+                    if toks[0] in _BAD_BOUNDARY or toks[-1] in _BAD_BOUNDARY:
                         continue
-                    bigram_count += 1
+                    phrases.append(term)
 
-                # Skip unigrams that are already part of an accepted bigram
-                if " " not in term and term in seen_unigrams:
-                    continue
-
-                keywords.append(term)
-                # Track component unigrams of accepted bigrams
-                if " " in term:
-                    for p in term.split():
-                        seen_unigrams.add(p)
+            # Lead with phrases (context-rich); only fall back to unigrams to fill
+            # remaining slots, skipping unigrams already covered by a chosen phrase.
+            keywords: List[str] = []
+            covered: set = set()
+            for p in phrases:
                 if len(keywords) >= top_n:
                     break
+                p_tokens = set(p.split())
+                if p_tokens <= covered:  # fully redundant with an existing phrase
+                    continue
+                keywords.append(p)
+                covered |= p_tokens
+            for u in unigrams:
+                if len(keywords) >= top_n:
+                    break
+                if u in covered:
+                    continue
+                keywords.append(u)
+                covered.add(u)
             result[aspect] = keywords
 
         # Fill aspects with no comments
@@ -601,6 +620,13 @@ class LocalProcessingService:
         narratives = narration_service.generate_narratives(narration_input, user_id=user_id)
 
         narrative_map = {f.get("aspect_key"): f.get("description") for f in narratives.get("features", [])}
+        # Prefer the LLM's per-feature keywords (natural, context-rich themes,
+        # consistent with the LLM-written description). Fall back to the
+        # statistical TF-IDF keywords when the LLM returns none for an aspect.
+        narrative_kw_map = {
+            f.get("aspect_key"): f.get("keywords") or []
+            for f in narratives.get("features", [])
+        }
         sentiment_counts_map = aggregated_stats.aspect_sentiment_counts
         features_out = []
         for feature in features:
@@ -621,7 +647,7 @@ class LocalProcessingService:
                     "negative": neg_pct,
                     "neutral": neu_pct,
                 },
-                "keywords": feature.get("keywords", []),
+                "keywords": narrative_kw_map.get(aspect_key) or feature.get("keywords", []),
                 "comment_count": total_comments,
                 "sample_comments": feature_comment_buckets.get(aspect_key, {
                     "positive": [],
