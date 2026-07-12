@@ -13,6 +13,28 @@ logger = logging.getLogger(__name__)
 
 MAX_INSIGHTS = 5
 MAX_EVIDENCE = 30
+MAX_FEATURE_KEYWORDS = 5
+
+
+def _clean_keywords(raw: Any) -> List[str]:
+    """Sanitize LLM-returned per-feature keywords: strings only, trimmed,
+    de-duplicated (case-insensitive), capped. Returns [] on anything unexpected."""
+    if not isinstance(raw, list):
+        return []
+    cleaned: List[str] = []
+    seen = set()
+    for kw in raw:
+        if not isinstance(kw, str):
+            continue
+        text = kw.strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+        if len(cleaned) >= MAX_FEATURE_KEYWORDS:
+            break
+    return cleaned
 
 
 def validate_narration_output(
@@ -60,6 +82,7 @@ def validate_narration_output(
                 normalized_features.append({
                     "aspect_key": aspect_key,
                     "description": str(f.get("description") or "").strip(),
+                    "keywords": _clean_keywords(f.get("keywords")),
                 })
             else:
                 unknown_aspects.append(aspect_key)
