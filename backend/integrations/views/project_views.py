@@ -270,6 +270,38 @@ class ProjectDetailView(APIView):
         )
 
 
+class ProjectMarkViewedView(APIView):
+    permission_classes = [IsProjectViewer]
+
+    @handle_service_errors
+    def post(self, request, project_id: str):
+        """Record that the authenticated user just opened this project.
+
+        Used to order the projects list by most-recently-viewed. The frontend
+        calls this fire-and-forget on navigation, so it stays lightweight.
+        """
+        user_id = getattr(request.user, 'id', None)
+        if not user_id:
+            return StandardResponse.unauthorized(
+                detail="Authentication required",
+                instance=request.path
+            )
+
+        project_service = get_project_service()
+        marked = project_service.mark_project_viewed(project_id, user_id)
+
+        if not marked:
+            return StandardResponse.not_found(
+                detail=f"Project with ID '{project_id}' was not found",
+                instance=request.path
+            )
+
+        return StandardResponse.success(
+            data={'projectId': project_id},
+            message="Project view recorded"
+        )
+
+
 class LatestAnalysisView(APIView):
     permission_classes = [IsProjectViewer]
 

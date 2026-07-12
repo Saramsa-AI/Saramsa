@@ -26,7 +26,7 @@ import {
 interface ProjectCardProps {
   project: Project;
   onClick: () => void;
-  onDelete: (projectId: string) => void;
+  onDelete: (projectId: string) => void | Promise<void>;
   onEdit?: (project: Project) => void;
   onGoToProject?: (project: Project) => void;
   isSelected?: boolean;
@@ -36,6 +36,7 @@ interface ProjectCardProps {
 export function ProjectCard({ project, onClick, onDelete, onEdit, onGoToProject, isSelected = false, deleteLoading = false }: ProjectCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   
@@ -92,7 +93,7 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onGoToProject,
   return (
     <motion.div
       whileHover={{ y: -1 }}
-      className={`relative bg-card/80 rounded-2xl border transition-all duration-200 cursor-pointer group flex flex-col shadow-sm ${
+      className={`relative bg-card/80 rounded-2xl border transition-all duration-200 group flex flex-col shadow-sm ${
         isSelected 
           ? 'border-border/70' 
           : 'border-border/60 hover:border-border'
@@ -221,7 +222,7 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onGoToProject,
               onGoToProject(project);
             }}
             variant="saramsa"
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm cursor-pointer"
           >
             <ArrowRight className="w-4 h-4" />
             Go to Analysis
@@ -229,23 +230,27 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onGoToProject,
         )}
       </div>
 
-      {/* Selection Indicator */}
-      {isSelected && (
-        <div className="absolute top-4 right-4">
-          <div className="w-3 h-3 bg-saramsa-brand rounded-full shadow-[0_0_10px_rgba(139,95,191,0.7)]"></div>
-        </div>
-      )}
-      
       {/* Delete Confirmation Modal */}
       {showDeleteModal && (
         <DeleteProjectModal
           project={project}
-          onConfirm={() => {
-            onDelete(project.id);
-            setShowDeleteModal(false);
+          onConfirm={async () => {
+            setDeleteError(null);
+            try {
+              await onDelete(project.id);
+              // Only close once the delete API call has actually succeeded.
+              setShowDeleteModal(false);
+            } catch (err: any) {
+              // Keep the modal open and surface the error inside it.
+              setDeleteError(err?.message || 'Failed to delete project. Please try again.');
+            }
           }}
-          onCancel={() => setShowDeleteModal(false)}
+          onCancel={() => {
+            setShowDeleteModal(false);
+            setDeleteError(null);
+          }}
           loading={deleteLoading}
+          error={deleteError}
         />
       )}
     </motion.div>

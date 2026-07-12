@@ -4,7 +4,7 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useRouter } from 'next/navigation';
 import type { AppDispatch, RootState } from '@/store/store';
-import { fetchProjects, type Project } from '@/store/features/projects/projectsSlice';
+import { fetchProjects, markProjectViewed, type Project } from '@/store/features/projects/projectsSlice';
 import { ProjectDashboard } from '@/components/ui/dashboard/ProjectDashboard';
 import { encryptProjectId } from '@/lib/encryption';
 
@@ -22,6 +22,9 @@ function ProjectsPage() {
   }, [dispatch]);
 
   const handleGoToProject = useCallback((project: Project) => {
+    // Record the view (fire-and-forget) so this project sorts to the top of the
+    // list next time. Does not block or affect navigation.
+    markProjectViewed(project.id);
     try {
       const encryptedId = encryptProjectId(project.id);
       router.push(`/projects/${encryptedId}/dashboard/`);

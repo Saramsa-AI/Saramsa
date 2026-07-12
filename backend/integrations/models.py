@@ -1,5 +1,11 @@
+import uuid
+
 from django.db import models
 from django.utils import timezone
+
+
+def _gen_view_id():
+    return uuid.uuid4().hex
 
 
 class TimestampedModel(models.Model):
@@ -393,5 +399,28 @@ class ProjectRole(TimestampedModel):
         indexes = [
             models.Index(fields=["project", "role"]),
             models.Index(fields=["user", "role"]),
+        ]
+
+
+class ProjectLastViewed(TimestampedModel):
+    """Per-user record of when a user last opened a project.
+
+    Used to order the projects list so the most recently viewed project
+    surfaces at the top for that user. Per-user (not a column on Project)
+    so one member viewing a shared project does not reorder it for others.
+    """
+
+    id = models.CharField(max_length=128, primary_key=True, default=_gen_view_id, editable=False)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="last_viewed_records")
+    user = models.ForeignKey("authentication.UserAccount", on_delete=models.CASCADE, related_name="project_last_viewed")
+    viewed_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "project_last_viewed"
+        constraints = [
+            models.UniqueConstraint(fields=["project", "user"], name="uq_project_user_last_viewed"),
+        ]
+        indexes = [
+            models.Index(fields=["user", "viewed_at"]),
         ]
 

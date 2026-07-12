@@ -196,9 +196,48 @@ class ProjectService:
                 seen.add(pid)
                 deduped.append(project)
 
+            # Attach this user's last-viewed timestamp and order the list so the
+            # most recently viewed project is first; never-viewed projects fall
+            # to the bottom ordered by creation date (newest first). Non-critical:
+            # if the lookup fails, keep the existing creation-date order.
+            try:
+                viewed_map = self.integrations_repo.get_last_viewed_map(
+                    user_id, [p.get('id') for p in deduped]
+                )
+                for project in deduped:
+                    project['lastViewedAt'] = viewed_map.get(project.get('id'))
+
+                deduped.sort(
+                    key=lambda p: (
+                        1 if p.get('lastViewedAt') else 0,
+                        p.get('lastViewedAt') or '',
+                        p.get('createdAt') or '',
+                    ),
+                    reverse=True,
+                )
+            except Exception:
+                logger.warning("Could not apply last-viewed ordering", extra={"user_id": user_id})
+
             return deduped
         except Exception as e:
             logger.exception("Failed to get projects for user", extra={"user_id": user_id})
+            raise
+
+    def mark_project_viewed(self, project_id: str, user_id: str) -> bool:
+        """Record that the user just opened this project.
+
+        Verifies the user can access the project (reusing get_project's access
+        rules) before stamping, so we never create rows for projects they cannot
+        see. Returns True on success, False if the project is not accessible.
+        """
+        try:
+            project = self.get_project(project_id, user_id)
+            if not project:
+                return False
+            self.integrations_repo.mark_project_viewed(user_id, project_id)
+            return True
+        except Exception:
+            logger.exception("Failed to mark project viewed", extra={"project_id": project_id, "user_id": user_id})
             raise
     
     def get_project(self, project_id: str, user_id: str) -> Optional[Dict[str, Any]]:
