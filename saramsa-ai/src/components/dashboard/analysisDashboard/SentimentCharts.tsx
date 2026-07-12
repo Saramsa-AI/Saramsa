@@ -21,6 +21,7 @@ interface FeatureSentiment {
   positive: number;
   negative: number;
   neutral: number;
+  comment_count?: number;
 }
 
 interface SentimentData {
@@ -110,18 +111,31 @@ export function SentimentCharts({
 
       if (!filtered.length) return sentimentData;
 
-      const totalPositive = filtered.reduce(
-        (sum, f) => sum + f.positive,
-        0
-      );
-      const totalNegative = filtered.reduce(
-        (sum, f) => sum + f.negative,
-        0
-      );
-      const totalNeutral = filtered.reduce(
-        (sum, f) => sum + f.neutral,
-        0
-      );
+      // Each feature's positive/negative/neutral are percentages that already
+      // sum to ~100. Naively summing them across N features gives ~100 × N and
+      // an unweighted mix. Instead, weight by comment volume: convert each
+      // feature's % back to counts, sum, then recompute percentages — so the
+      // three values sum to ~100% and reflect true overall sentiment.
+      const totalComments = filtered.reduce((s, f) => s + (f.comment_count ?? 0), 0);
+
+      let totalPositive: number;
+      let totalNegative: number;
+      let totalNeutral: number;
+
+      if (totalComments > 0) {
+        const posCount = filtered.reduce((s, f) => s + (f.positive / 100) * (f.comment_count ?? 0), 0);
+        const negCount = filtered.reduce((s, f) => s + (f.negative / 100) * (f.comment_count ?? 0), 0);
+        const neuCount = filtered.reduce((s, f) => s + (f.neutral / 100) * (f.comment_count ?? 0), 0);
+        totalPositive = (posCount / totalComments) * 100;
+        totalNegative = (negCount / totalComments) * 100;
+        totalNeutral = (neuCount / totalComments) * 100;
+      } else {
+        // No comment counts available — fall back to a simple average.
+        const n = filtered.length;
+        totalPositive = filtered.reduce((s, f) => s + f.positive, 0) / n;
+        totalNegative = filtered.reduce((s, f) => s + f.negative, 0) / n;
+        totalNeutral = filtered.reduce((s, f) => s + f.neutral, 0) / n;
+      }
 
       const base = [
         { name: 'Positive', value: totalPositive },

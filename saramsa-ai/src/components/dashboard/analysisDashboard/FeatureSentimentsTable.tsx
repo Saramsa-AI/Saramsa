@@ -7,6 +7,7 @@ import { Button } from '../../ui/button';
 import { CompactSentimentBar } from './CompactSentimentBar';
 import { DimensionBreakdown } from '../DimensionBreakdown';
 import type { SampleComment } from '../../../types/analysis';
+import { HoverTooltip } from './HoverTooltip';
 
 // Temporarily hide the per-feature dimension breakdown (UI + its API call +
 // loader) until the feature is finished. Flip to `true` to re-enable.
@@ -183,14 +184,15 @@ export const FeatureSentimentsTable = ({
                 </div>
 
                 {/* Evidence indicator — hover shows the feature summary */}
-                {hasEvidence && !isExpanded && (
-                  <span
-                    title={feature.description || undefined}
+                {hasEvidence && !isExpanded && feature.description && (
+                  <HoverTooltip
+                    content={feature.description}
                     className="shrink-0 cursor-help"
-                    onClick={(e) => e.stopPropagation()}
                   >
-                    <MessageSquareQuote className="w-3.5 h-3.5 text-muted-foreground/50" />
-                  </span>
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <MessageSquareQuote className="w-3.5 h-3.5 text-muted-foreground/50" />
+                    </span>
+                  </HoverTooltip>
                 )}
 
                 {/* Sentiment Bar */}
@@ -245,18 +247,13 @@ export const FeatureSentimentsTable = ({
                           </p>
                           <div className="space-y-1 max-h-[160px] overflow-y-auto pr-1">
                             {feature.sample_comments!.positive!.slice(0, 10).map((c, i) => {
-                              const { text, rationale } = evidenceParts(c);
+                              const { text } = evidenceParts(c);
                               return (
                                 <div
                                   key={`pos-${i}`}
                                   className="pl-2 border-l-2 border-saramsa-brand/40"
                                 >
                                   <p className="text-xs text-foreground/80 leading-relaxed">{text}</p>
-                                  {rationale && (
-                                    <p className="text-[11px] italic text-muted-foreground leading-snug mt-0.5">
-                                      Why: {rationale}
-                                    </p>
-                                  )}
                                 </div>
                               );
                             })}
@@ -270,18 +267,13 @@ export const FeatureSentimentsTable = ({
                           </p>
                           <div className="space-y-1 max-h-[160px] overflow-y-auto pr-1">
                             {feature.sample_comments!.negative!.slice(0, 10).map((c, i) => {
-                              const { text, rationale } = evidenceParts(c);
+                              const { text } = evidenceParts(c);
                               return (
                                 <div
                                   key={`neg-${i}`}
                                   className="pl-2 border-l-2 border-saramsa-gradient-to/40"
                                 >
                                   <p className="text-xs text-foreground/80 leading-relaxed">{text}</p>
-                                  {rationale && (
-                                    <p className="text-[11px] italic text-muted-foreground leading-snug mt-0.5">
-                                      Why: {rationale}
-                                    </p>
-                                  )}
                                 </div>
                               );
                             })}

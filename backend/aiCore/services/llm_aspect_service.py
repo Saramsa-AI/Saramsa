@@ -252,9 +252,6 @@ class LLMAspectService:
             "text is factual/operational with no opinion (e.g. a status update, a request, or an "
             "acknowledgment) — do NOT invent sentiment that isn't there.\n"
             "7. Give an overall sentiment for the whole comment (same four values).\n"
-            "8. Give a brief \"rationale\": one short clause (max 15 words) explaining the "
-            "aspect/sentiment choice, grounded in what the comment actually says. Empty string "
-            "if no category applied.\n"
             "Respond with STRICT JSON only, no prose."
         )
         user = (
@@ -263,8 +260,7 @@ class LLMAspectService:
             "Return JSON exactly in this shape:\n"
             '{"matched": [{"aspect": "<exact category name>", "confidence": "high|medium|low", '
             '"sentiment": "positive|negative|neutral|none"}], '
-            '"overall_sentiment": "positive|negative|neutral|none", '
-            '"rationale": "<max 15 words explaining the choice>"}'
+            '"overall_sentiment": "positive|negative|neutral|none"}'
         )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
