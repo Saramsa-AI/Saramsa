@@ -176,8 +176,10 @@ export function ProjectDashboard({ onNavigateToAnalysis, onGoToProject }: Projec
       } else if (err?.message?.includes('403')) {
         errorMessage = 'You do not have permission to delete this project.';
       }
-      
-      toast.error(errorMessage);
+
+      // Re-throw so the caller (delete modal) keeps the modal open and shows
+      // the error inline instead of closing on a failed delete.
+      throw new Error(errorMessage);
     } finally {
       setDeletingProjectId(null);
     }

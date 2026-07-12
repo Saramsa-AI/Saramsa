@@ -13,6 +13,7 @@ interface DeleteProjectModalProps {
   onConfirm: () => void;
   onCancel: () => void;
   loading?: boolean;
+  error?: string | null;
   isOpen?: boolean;
 }
 
@@ -21,6 +22,7 @@ export function DeleteProjectModal({
   onConfirm,
   onCancel,
   loading = false,
+  error = null,
   isOpen = true,
 }: DeleteProjectModalProps) {
   const modalRoot = typeof document !== 'undefined' ? document.body : null;
@@ -117,6 +119,15 @@ export function DeleteProjectModal({
           </div>
         </div>
 
+        {/* Error message */}
+        {error && (
+          <div className="px-6 -mt-2 pb-2">
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3">
+              <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+            </div>
+          </div>
+        )}
+
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 p-6 border-t border-border/60 dark:border-border/60">
           <Button
@@ -153,7 +164,7 @@ export function DeleteProjectModal({
       </div>,
       modalRoot
     );
-  }, [isOpen, loading, modalRoot, onCancel, onConfirm, project.name]);
+  }, [isOpen, loading, error, modalRoot, onCancel, onConfirm, project.name]);
 
   return content;
 }

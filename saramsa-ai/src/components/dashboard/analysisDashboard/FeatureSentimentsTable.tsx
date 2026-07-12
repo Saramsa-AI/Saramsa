@@ -1,12 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { CheckCircle2, RefreshCw, AlertCircle, ChevronRight, MessageSquareQuote } from 'lucide-react';
 import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
 import { CompactSentimentBar } from './CompactSentimentBar';
 import { DimensionBreakdown } from '../DimensionBreakdown';
 import type { SampleComment } from '../../../types/analysis';
+
+// Temporarily hide the per-feature dimension breakdown (UI + its API call +
+// loader) until the feature is finished. Flip to `true` to re-enable.
+const SHOW_DIMENSION_BREAKDOWN = false;
 
 interface FeatureSentiment {
   name: string;
@@ -57,6 +61,12 @@ export const FeatureSentimentsTable = ({
   analysisId
 }: FeatureSentimentsTableProps) => {
   const [expandedFeatures, setExpandedFeatures] = useState<Set<string>>(new Set());
+
+  // Show features with the most feedback first.
+  const sortedFeatures = useMemo(
+    () => [...(features ?? [])].sort((a, b) => (b.comment_count ?? 0) - (a.comment_count ?? 0)),
+    [features]
+  );
 
   const toggleExpand = (name: string) => {
     setExpandedFeatures(prev => {
@@ -110,9 +120,9 @@ export const FeatureSentimentsTable = ({
         )}
       </div>
 
-      {/* Accordion Cards */}
-      <div className="space-y-2">
-        {features.map((feature) => {
+      {/* Accordion Cards — cap to ~5 rows, scroll the rest */}
+      <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
+        {sortedFeatures.map((feature) => {
           const isExpanded = expandedFeatures.has(feature.name);
           const isSelected = selectedFeatures.includes(feature.name);
           const hasPositive = (feature.sample_comments?.positive?.length ?? 0) > 0;
@@ -209,8 +219,8 @@ export const FeatureSentimentsTable = ({
                     </div>
                   )}
 
-                  {/* Dimension Breakdown */}
-                  {projectId && analysisId && (
+                  {/* Dimension Breakdown (temporarily hidden — see SHOW_DIMENSION_BREAKDOWN) */}
+                  {SHOW_DIMENSION_BREAKDOWN && projectId && analysisId && (
                     <DimensionBreakdown
                       projectId={projectId}
                       analysisId={analysisId}

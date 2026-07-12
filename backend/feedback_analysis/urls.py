@@ -30,8 +30,11 @@ urlpatterns = [
 
     # Insights list/detail
     path('insights/', InsightsListView.as_view(), name='insights_list'),
-    path('insights/<str:insight_id>/', InsightDetailView.as_view(), name='insight_detail'),
+    # Specific insights/* routes MUST come before the '<str:insight_id>' catch-all,
+    # otherwise 'breakdown'/'type' get captured as an insight id and 404.
+    path('insights/breakdown/', DimensionBreakdownView.as_view(), name='dimension_breakdown'),
     path('insights/type/<str:analysis_type>/', InsightsByTypeView.as_view(), name='insights_by_type'),
+    path('insights/<str:insight_id>/', InsightDetailView.as_view(), name='insight_detail'),
 
     # Analysis history & quarterly analytics
     path('history/', AnalysisHistoryView.as_view(), name='analysis_history'),
@@ -48,6 +51,5 @@ urlpatterns = [
     # Dimension discovery and querying (structured-dimensions feature)
     path('projects/<str:project_id>/dimensions/', DimensionDiscoveryView.as_view(), name='dimension_discovery'),
     path('analysis/query/', DimensionQueryView.as_view(), name='dimension_query'),
-    path('insights/breakdown/', DimensionBreakdownView.as_view(), name='dimension_breakdown'),
     path('analysis/filtered/', FilteredAnalysisView.as_view(), name='filtered_analysis'),
 ]

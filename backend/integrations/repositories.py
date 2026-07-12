@@ -17,6 +17,7 @@ from .models import (
     OrganizationMembership,
     PromptOverride,
     Project,
+    ProjectLastViewed,
     ProjectRole,
     SlackFeedbackItem,
 )
@@ -625,6 +626,23 @@ class IntegrationsRepository:
             projects = projects.filter(organization_id=str(organization_id))
         projects = projects.order_by("-created_at")
         return [_project_to_dict(p) for p in projects]
+
+    def mark_project_viewed(self, user_id: str, project_id: str) -> None:
+        """Upsert the current user's last-viewed timestamp for a project."""
+        ProjectLastViewed.objects.update_or_create(
+            project_id=str(project_id),
+            user_id=str(user_id),
+            defaults={"viewed_at": timezone.now()},
+        )
+
+    def get_last_viewed_map(self, user_id: str, project_ids: List[str]) -> Dict[str, str]:
+        """Return {project_id: viewed_at ISO string} for the given user + projects."""
+        if not project_ids:
+            return {}
+        rows = ProjectLastViewed.objects.filter(
+            user_id=str(user_id), project_id__in=[str(pid) for pid in project_ids]
+        ).values_list("project_id", "viewed_at")
+        return {pid: _iso(viewed_at) for pid, viewed_at in rows}
 
     def get_projects_by_organization(self, organization_id: str) -> List[Dict[str, Any]]:
         projects = Project.objects.filter(organization_id=str(organization_id)).order_by("-created_at")

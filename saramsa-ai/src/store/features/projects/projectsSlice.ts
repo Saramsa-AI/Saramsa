@@ -18,6 +18,7 @@ export interface Project {
   userId: string;
   createdAt: string;
   updatedAt: string;
+  lastViewedAt?: string | null;
   externalLinks: ProjectExternalLink[];
   status?: string;
   type?: string;
@@ -58,6 +59,15 @@ export const fetchProjects = createAsyncThunk(
     }
   }
 );
+
+// Fire-and-forget: record that the user opened a project so the projects list
+// can order by most-recently-viewed. Intentionally NOT awaited — navigation
+// must not wait on (or fail because of) this request.
+export const markProjectViewed = (projectId: string): void => {
+  apiRequest('post', `/integrations/projects/${projectId}/viewed/`, {}, true).catch((error) => {
+    console.warn('Failed to record project view:', error);
+  });
+};
 
 export const createProject = createAsyncThunk(
   'projects/createProject',
