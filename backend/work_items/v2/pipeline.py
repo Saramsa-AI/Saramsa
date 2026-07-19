@@ -35,10 +35,18 @@ ANALYST_CONCURRENCY = int(os.getenv("V2_ANALYST_CONCURRENCY", "8"))
 
 
 class _LLMClient:
-    """Sync callable over the async generate_completions helper.
+    """Sync callable over the Azure OpenAI SYNC client.
 
-    Mirrors narration_service._call_generate_completions: safe when already
-    inside an event loop (runs in a one-off thread)."""
+    Deliberately does NOT use generate_completions/async_to_sync: this pipeline
+    runs from a fan-out of worker threads, and when the whole thing is invoked
+    from inside an async view (async_to_sync -> sync_to_async -> threads), a
+    nested async_to_sync deadlocks against the blocked main event loop. Calling
+    the sync client directly (as llm_aspect_service does across 20 threads) is
+    deadlock-free in every context: standalone script, Celery, and web request.
+
+    Trade-off: token/usage billing that generate_completions records is skipped
+    here — acceptable for the experimental path; wire it back before productionizing.
+    """
 
     def __init__(self, user_id: Optional[str], project_id: Optional[str]):
         self.user_id = user_id
@@ -47,43 +55,38 @@ class _LLMClient:
         self._calls_lock = threading.Lock()
 
     def __call__(self, prompt: str, max_tokens: int) -> str:
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-
-        from asgiref.sync import async_to_sync
-        from aiCore.services.completion_service import generate_completions
+        import time as _time
+        from aiCore.services.completion_service import (
+            get_azure_client_instance,
+            DEFAULT_MODEL,
+            DEFAULT_REQUEST_TIMEOUT,
+        )
 
         with self._calls_lock:
             self.calls += 1
 
+        messages = [{"role": "system", "content": prompt}]
+
         def _run():
-            return async_to_sync(generate_completions)(
-                prompt,
-                max_tokens=max_tokens,
-                user_id=self.user_id,
-                project_id=self.project_id,
-                task_type=TASK_TYPE,
+            client = get_azure_client_instance().with_options(
+                timeout=DEFAULT_REQUEST_TIMEOUT, max_retries=0
             )
+            completion = client.chat.completions.create(
+                model=DEFAULT_MODEL,
+                messages=messages,
+                max_completion_tokens=max_tokens,
+                stream=False,
+            )
+            return completion.choices[0].message.content or ""
 
-        def _run_in_context():
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                return _run()
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                return executor.submit(_run).result()
-
-        # Transient Azure disconnects ("Server disconnected without sending a
-        # response") killed a whole theme in run 1 — retry once after a pause.
+        # Transient Azure disconnects killed a whole theme in an earlier run —
+        # retry once after a short pause.
         try:
-            content, _usage = _run_in_context()
-        except ConnectionError:
-            import time as _time
-
-            logger.warning("v2 LLM call hit a connection error; retrying once in 5s")
+            return _run()
+        except Exception:
+            logger.warning("v2 LLM call failed; retrying once in 5s")
             _time.sleep(5)
-            content, _usage = _run_in_context()
-        return content
+            return _run()
 
 
 def _build_themes(
