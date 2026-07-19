@@ -399,8 +399,10 @@ class WorkItemsListView(APIView):
                     }
                 )
             
-            # Get the most recent work items data
-            latest_data = work_items_data[-1] if isinstance(work_items_data, list) else work_items_data
+            # Get the most recent work items data. get_work_items_by_project
+            # orders newest-first, so the most recent story is index [0] (was [-1],
+            # which returned the OLDEST story — often empty).
+            latest_data = work_items_data[0] if isinstance(work_items_data, list) else work_items_data
             work_items = latest_data.get('work_items', [])
             summary = latest_data.get('summary', {})
             

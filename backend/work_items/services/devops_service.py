@@ -405,9 +405,23 @@ class DevOpsService:
             logger.exception("Failed to remove work items")
             raise
     
-    def submit_to_external_platform(self, user_id: str, work_items: List[Dict[str, Any]], 
+    def submit_to_external_platform(self, user_id: str, work_items: List[Dict[str, Any]],
                                    platform: str, project_config: Dict[str, Any]) -> Dict[str, Any]:
         """Submit work items to external platform - delegate to integrations service."""
+        # Guard: adapters index into project_config; a None here previously crashed
+        # with AttributeError (unhandled 500). Fail gracefully in the uniform shape.
+        if not project_config:
+            logger.warning(
+                "submit_to_external_platform called without project_config",
+                extra={"platform": platform},
+            )
+            return {
+                "success": False,
+                "submitted_count": 0,
+                "failed_count": len(work_items or []),
+                "platform": platform,
+                "results": [{"success": False, "error": "No project configuration available for push"}],
+            }
         try:
             provider_config = get_provider_config(platform)
             return provider_config.submission_adapter.submit(
