@@ -19,6 +19,7 @@ from .views.review_views import (
     CandidateUpdateView,
     CandidateRetryPushView,
 )
+from .v2.views import WorkItemV2PreviewView
 
 urlpatterns = [
     # Review queue endpoints (Must come BEFORE generic <work_item_id> pattern)
@@ -39,6 +40,9 @@ urlpatterns = [
     path('remove/', WorkItemRemovalView.as_view(), name='work_items_remove'),
     path('quality-rules/', WorkItemQualityRulesView.as_view(), name='work_item_quality_rules'),
     path('quality-check/', WorkItemQualityCheckView.as_view(), name='work_item_quality_check'),
+
+    # Experimental V2 pipeline (preview-only, see work_items/v2/CONTRACT.md)
+    path('v2/generate-preview/', WorkItemV2PreviewView.as_view(), name='work_items_v2_preview'),
 
     # Generic patterns MUST come last
     path('<str:work_item_id>/update/', WorkItemUpdateView.as_view(), name='work_item_update'),
