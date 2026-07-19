@@ -5,6 +5,7 @@ This service delegates to the integrations app for external platform operations.
 
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
+import os
 import uuid
 import json
 import re
@@ -27,7 +28,79 @@ class DevOpsService:
     
     def __init__(self):
         self.work_item_repo = WorkItemRepository()
-    
+
+    @staticmethod
+    def _v2_enabled() -> bool:
+        """Experimental V2 generation toggle. Defaults ON on the experiment
+        branch (so the browser "Generate" button runs V2); set
+        WORKITEMS_V2_ENABLED=false to force the legacy V1 path.
+
+        The test suite always uses V1 unless explicitly overridden, so
+        `manage.py test` never fires real LLM calls through the V2 path."""
+        import sys
+        override = os.getenv("WORKITEMS_V2_ENABLED")
+        if override is not None:
+            return override.strip().lower() in ("1", "true", "yes", "on")
+        if "test" in sys.argv:
+            return False
+        return True
+
+    @staticmethod
+    def _rows_for_v2(analysis_data: Dict[str, Any], comments: Optional[List[Any]]) -> List[Dict[str, Any]]:
+        """Build V2 input rows from whatever feedback is available at generate
+        time. If the frontend/analysis ever passes structured rows (dicts with
+        their original columns), they flow through with metadata intact;
+        otherwise we fall back to plain text (metadata already stripped upstream
+        — see the ingestion gap noted in the audit)."""
+        source = comments if isinstance(comments, list) and comments else None
+        if not source and isinstance(analysis_data, dict):
+            source = (
+                analysis_data.get("original_comments")
+                or analysis_data.get("comments")
+                or analysis_data.get("feedback")
+                or []
+            )
+        rows: List[Dict[str, Any]] = []
+        for i, c in enumerate(source or []):
+            if isinstance(c, dict):
+                rows.append(c)
+            else:
+                rows.append({"feedback_id": f"R{i + 1:04d}", "feedback_text": str(c)})
+        return rows
+
+    async def _generate_v2(self, analysis_data: Dict[str, Any], platform: str,
+                           process_template: str, company_name: Optional[str],
+                           comments: Optional[List[Any]], user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Run the V2 pipeline and adapt its result to the V1 response shape."""
+        from asgiref.sync import sync_to_async
+        from work_items.v2.pipeline import run_v2_pipeline
+        from work_items.v2.adapter import pipeline_result_to_v1_response
+
+        rows = self._rows_for_v2(analysis_data, comments)
+        if not rows:
+            logger.warning("V2 enabled but no feedback rows available; using V1")
+            return None
+
+        project_id = analysis_data.get("project_id") if isinstance(analysis_data, dict) else None
+        analysis_id = None
+        if isinstance(analysis_data, dict):
+            analysis_id = analysis_data.get("analysis_id") or analysis_data.get("id")
+
+        # thread_sensitive=False runs the sync pipeline off the event loop; the
+        # pipeline's LLM client then takes its no-running-loop fast path.
+        result = await sync_to_async(run_v2_pipeline, thread_sensitive=False)(
+            rows,
+            company_name=company_name or "Company",
+            user_id=user_id,
+            project_id=str(project_id) if project_id else None,
+        )
+        return pipeline_result_to_v1_response(
+            result.to_dict(),
+            process_template=process_template,
+            platform=platform,
+            analysis_id=str(analysis_id) if analysis_id else None,
+        )
+
     async def generate_work_items_from_analysis(self, analysis_data: Dict[str, Any],
                                               platform: str = "azure",
                                               process_template: str = "Agile",
@@ -36,6 +109,31 @@ class DevOpsService:
                                               comments: List[str] = None,
                                               user_id: str = None) -> Dict[str, Any]:
         """Generate work items from analysis data using deterministic candidates + optional AI narration."""
+        # Experimental V2 swap: when WORKITEMS_V2_ENABLED is on (default on the
+        # experiment branch), route generation through the evidence-grounded V2
+        # pipeline and adapt its output to this endpoint's response shape so the
+        # existing UI renders it unchanged. Any failure falls back to V1 below,
+        # so the "Generate" button can never end up worse than before.
+        if self._v2_enabled():
+            try:
+                v2_response = await self._generate_v2(
+                    analysis_data=analysis_data,
+                    platform=platform,
+                    process_template=process_template,
+                    company_name=company_name,
+                    comments=comments,
+                    user_id=user_id,
+                )
+                if v2_response and v2_response.get("work_items"):
+                    logger.info(
+                        "Work items generated via V2 pipeline",
+                        extra={"work_item_count": len(v2_response["work_items"])},
+                    )
+                    return v2_response
+                logger.warning("V2 pipeline produced no items; falling back to V1")
+            except Exception:
+                logger.exception("V2 generation failed; falling back to V1")
+
         try:
             # Phase-2: deterministic candidates from analysis metrics (LLM does not decide existence/priority/type)
             # Reuse candidates from the celery pipeline if they're attached to the analysis. This keeps
