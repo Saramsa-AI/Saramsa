@@ -808,6 +808,22 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   }, [currentProjectId, projectId, dispatch]);
 
   // Load full analysis when a historical run is selected
+  // Whenever the selected analysis changes, drop work-item state carried over
+  // from the previous analysis. currentProjectUserStories is project-scoped
+  // (not analysis-keyed) and WorkItemsPanel renders it as a fallback, so without
+  // this a prior run's work items render under a different selected analysis.
+  // Safe: a freshly-completed analysis generates its items ~100s AFTER its id
+  // becomes selected, so this only ever clears genuinely stale data.
+  const prevSelectedAnalysisRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevSelectedAnalysisRef.current;
+    if (prev && prev !== selectedAnalysisId) {
+      dispatch(clearCurrentProjectUserStories());
+      dispatch(setDeepAnalysis(null));
+    }
+    prevSelectedAnalysisRef.current = selectedAnalysisId ?? null;
+  }, [selectedAnalysisId, dispatch]);
+
   useEffect(() => {
     if (!selectedAnalysisId) {
       setIsSwitchingAnalysis(false);

@@ -272,12 +272,24 @@ export const UserStoryList = ({
   // Set user stories or deep analysis data when component mounts or data changes
   useEffect(() => {
     
-    // Use userStories work items (prioritize prop over Redux state)
-    const workItemsToProcess = userStories && userStories.length > 0 
-      ? userStories[0]?.work_items // Use the first (most recent) user story from props
-      : currentProjectUserStories && currentProjectUserStories.length > 0
-      ? currentProjectUserStories[0]?.work_items // Fallback to Redux state
+    // Use userStories work items (prioritize prop over Redux state).
+    // Flatten across ALL story records and de-dupe by id — reading only record
+    // [0] silently dropped items when the persisted set was split across
+    // multiple UserStory records (e.g. 22 generated -> 13 shown).
+    const sourceStories = (userStories && userStories.length > 0)
+      ? userStories
+      : (currentProjectUserStories && currentProjectUserStories.length > 0)
+      ? currentProjectUserStories
       : [];
+    const seenWorkItemIds = new Set<string>();
+    const workItemsToProcess = sourceStories
+      .flatMap((s: any) => s?.work_items ?? [])
+      .filter((w: any) => {
+        const id = w?.id ?? w?.candidate_id;
+        if (!id || seenWorkItemIds.has(id)) return false;
+        seenWorkItemIds.add(id);
+        return true;
+      });
     
     
     if (workItemsToProcess && workItemsToProcess.length > 0) {
@@ -701,13 +713,17 @@ export const UserStoryList = ({
         story.work_items?.some(item => toDelete.includes(item.id))
       );
 
-      // If no matching user story, these are pipeline work items - just remove them locally
+      // If no matching user story, these are pipeline work items - remove them
+      // from the rendered list, clear the selection, and close the modal.
+      // (Previously this only toggled selection via handleActionSelect and
+      // returned, so the modal stayed open and the items remained visible; it
+      // also fired handleActionSelect's pushed/dismissed/snoozed alert mid-delete.)
       if (matchingUserStories.length === 0) {
         console.log('[Delete] Pipeline work items - removing locally');
-        // For pipeline work items, just deselect them (they're not persisted to backend)
-        toDelete.forEach((id) => handleActionSelect(id));
+        toDelete.forEach((id) => dispatch(removeActionItem(id)));
+        dispatch(clearSelectedActions());
+        setShowDeleteModal(false);
         setDeleteLoading(false);
-        // Modal will close automatically
         return;
       }
 

@@ -121,7 +121,13 @@ class CandidateApproveView(APIView):
             from integrations.services import get_project_service
             project_service = get_project_service()
             project_config = project_service.get_project(project_id, user_id)
-            if project_config and project_config.get('auto_push_on_approve', True):
+            # Skip auto-push when this candidate was already pushed — re-approving
+            # must not create a duplicate external ticket (idempotency guard).
+            if (
+                project_config
+                and project_config.get('auto_push_on_approve', True)
+                and not (isinstance(candidate, dict) and candidate.get('_already_pushed'))
+            ):
                 from ..services import get_devops_service
                 devops_service = get_devops_service()
                 push_result = devops_service.submit_to_external_platform(

@@ -7,6 +7,7 @@ UserStory-level CRUD is preserved for backward compatibility.
 
 from datetime import datetime
 import logging
+import uuid
 from typing import Any, Dict, List, Optional
 
 from django.db import transaction
@@ -410,9 +411,14 @@ class WorkItemRepository:
             kwargs = _dict_to_candidate_kwargs(d, project_id, story)
             c = WorkItemCandidate(**kwargs)
             if item_id:
+                # id is a UUID primary key: only adopt the incoming id when it is
+                # a valid UUID. Non-UUID ids (e.g. the V2 pipeline's "wi_<hash>")
+                # previously reached bulk_create and raised ValidationError, which
+                # the view swallowed -> nothing persisted. Keep the default uuid4
+                # instead; the original id is preserved in candidate_id.
                 try:
-                    c.id = item_id
-                except (ValueError, AttributeError):
+                    c.id = uuid.UUID(str(item_id))
+                except (ValueError, AttributeError, TypeError):
                     pass
             candidates.append(c)
 

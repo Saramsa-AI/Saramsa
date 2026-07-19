@@ -67,19 +67,34 @@ class ReviewService:
 
     def approve_candidate(self, candidate_id: str, user_id: str, project_id: str,
                           edits: Optional[Dict] = None) -> Dict[str, Any]:
-        """Approve a candidate, optionally applying edits."""
-        updates = {
+        """Approve a candidate, optionally applying edits.
+
+        Idempotent w.r.t. pushing: if the candidate was already pushed to an
+        external tracker, re-approving must NOT reset push_status to
+        'not_pushed' (that re-arms auto-push and creates a duplicate external
+        ticket). The returned dict carries `_already_pushed` so callers
+        (batch_approve / CandidateApproveView) can skip the re-push.
+        """
+        existing = self.repo.get_candidate_by_id(candidate_id=candidate_id, project_id=project_id)
+        already_pushed = bool(existing) and existing.get('push_status') == 'pushed'
+
+        updates: Dict[str, Any] = {
             'status': 'approved',
             'status_changed_at': datetime.now(timezone.utc).isoformat(),
             'status_changed_by': user_id,
-            'push_status': 'not_pushed',
         }
+        # Only (re)arm the push when it has NOT already succeeded.
+        if not already_pushed:
+            updates['push_status'] = 'not_pushed'
         if edits:
             for field in ('title', 'description', 'priority', 'acceptance_criteria', 'tags'):
                 if field in edits:
                     updates[field] = edits[field]
 
-        return self.repo.update_candidate_status(candidate_id, project_id, updates)
+        result = self.repo.update_candidate_status(candidate_id, project_id, updates)
+        if isinstance(result, dict):
+            result['_already_pushed'] = already_pushed
+        return result
 
     def dismiss_candidate(self, candidate_id: str, user_id: str, project_id: str,
                           reason: str) -> Dict[str, Any]:
@@ -137,7 +152,12 @@ class ReviewService:
         for cid in candidate_ids:
             try:
                 candidate = self.approve_candidate(cid, user_id, project_id)
-                if auto_push and project_config and project_config.get("auto_push_on_approve", True):
+                if (
+                    auto_push
+                    and project_config
+                    and project_config.get("auto_push_on_approve", True)
+                    and not (isinstance(candidate, dict) and candidate.get("_already_pushed"))
+                ):
                     from .devops_service import get_devops_service
 
                     result = get_devops_service().submit_to_external_platform(

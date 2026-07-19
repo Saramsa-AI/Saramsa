@@ -9,6 +9,7 @@ row's `extra` JSON and surface via to_dict(), while the core keys the UI reads
 match V1 one-for-one.
 """
 
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -42,8 +43,12 @@ def pipeline_result_to_v1_response(
 
     for w in result.get("work_items", []):
         theme_label = labels.get(w.get("theme"), (w.get("theme") or "").replace("_", " ").title())
+        # The DB row id is a UUID primary key, so it must be a real UUID and it
+        # must match the id sent to the frontend (later edit/delete/review look
+        # the row up by this id). The V2 stable id (wi_<hash>) is preserved in
+        # candidate_id for cross-run matching.
         item: Dict[str, Any] = {
-            "id": w.get("id"),
+            "id": str(uuid.uuid4()),
             "type": _TYPE_MAP.get(w.get("type"), "task"),
             "title": w.get("title", ""),
             "description": w.get("description", ""),
