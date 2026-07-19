@@ -30,6 +30,11 @@ class NarrationService:
     MAX_KEYWORDS_PER_ASPECT = 5
     MAX_COMMENT_SAMPLES_PER_CANDIDATE = 3
     MAX_OUTPUT_TOKENS = 8000  # GPT-5-mini uses reasoning tokens; need extra headroom
+    # Bounded retry for flaky/incomplete gpt-5-mini narration output. Each retry
+    # raises the token budget by NARRATION_RETRY_TOKEN_STEP (8000 -> 12000 -> 16000)
+    # so reasoning has more headroom to actually emit the JSON.
+    NARRATION_MAX_ATTEMPTS = int(os.getenv("NARRATION_MAX_ATTEMPTS", "3"))
+    NARRATION_RETRY_TOKEN_STEP = int(os.getenv("NARRATION_RETRY_TOKEN_STEP", "4000"))
     last_status = None
     last_errors = None
     last_cost = None
@@ -73,41 +78,65 @@ class NarrationService:
             extra={"prompt_chars": len(prompt), "approx_tokens": len(prompt) // 4},
         )
 
-        # Wrap the GPT call in a heartbeat so the 60-90s reasoning wait isn't
-        # invisible. Without this, the log shows "calling GPT" and then nothing
-        # for a minute+, which is indistinguishable from a hang.
-        with Heartbeat("narration_gpt", interval_s=10):
-            raw, actual_usage = self._call_generate_completions(prompt, user_id=user_id, project_id=project_id)
-        logger.debug("Narration response received", extra={"response_chars": len(raw)})
-
-        try:
-            import json
-            raw_parsed = json.loads(raw)
-            raw_work_items = raw_parsed.get("work_items", [])
-            raw_work_items_count = len(raw_work_items)
-            logger.debug(
-                "Narration response work_items before validation",
-                extra={"work_item_count": raw_work_items_count},
-            )
-        except Exception:
-            logger.warning("Failed to parse raw narration response for inspection")
-
         # Aspect keys can come from either feature analytics or work-item
         # candidates (e.g. __taxonomy__, __overall__ sentinels). Narration
         # prompt rule 10 permits any aspect_key "present in the input", so the
-        # validator must allow both sources.
+        # validator must allow both sources. (Input-derived; stable across retries.)
         allowed_aspect_keys = [
             f.get("aspect_key") for f in trimmed.get("features", [])
         ] + [
             c.get("aspect_key") for c in trimmed.get("work_item_candidates", [])
         ]
-        parsed, errors = validate_narration_output(
-            raw,
-            allowed_aspect_keys=allowed_aspect_keys,
-            allowed_candidate_ids=expected_ids,
-        )
+
+        # gpt-5-mini (a reasoning model) intermittently returns empty or
+        # structurally-incomplete JSON (missing insights/features/work_items),
+        # which previously failed the WHOLE analysis on the first bad response.
+        # Retry a bounded number of times, raising the token budget each attempt
+        # (reasoning can exhaust the budget before emitting output), and only
+        # fail after all attempts are exhausted.
+        parsed = None
+        errors: List[str] = []
+        actual_usage = None
+        last_error = "no attempts made"
+        for attempt in range(1, self.NARRATION_MAX_ATTEMPTS + 1):
+            max_tokens = self.MAX_OUTPUT_TOKENS + (attempt - 1) * self.NARRATION_RETRY_TOKEN_STEP
+            try:
+                # Heartbeat surfaces the 60-90s reasoning wait so it isn't
+                # indistinguishable from a hang.
+                with Heartbeat("narration_gpt", interval_s=10):
+                    raw, actual_usage = self._call_generate_completions(
+                        prompt, user_id=user_id, project_id=project_id, max_tokens=max_tokens,
+                    )
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {str(exc)[:150]}"
+                logger.warning(
+                    "Narration LLM call failed (attempt %d/%d, max_tokens=%d): %s",
+                    attempt, self.NARRATION_MAX_ATTEMPTS, max_tokens, last_error,
+                )
+                continue
+
+            logger.debug("Narration response received", extra={"response_chars": len(raw or "")})
+            parsed, errors = validate_narration_output(
+                raw,
+                allowed_aspect_keys=allowed_aspect_keys,
+                allowed_candidate_ids=expected_ids,
+            )
+            if parsed is not None:
+                if attempt > 1:
+                    logger.info("Narration succeeded on retry", extra={"attempt": attempt})
+                break
+            last_error = f"validation: {errors}"
+            logger.warning(
+                "Narration validation failed (attempt %d/%d, max_tokens=%d): %s",
+                attempt, self.NARRATION_MAX_ATTEMPTS, max_tokens, errors,
+            )
+
         if parsed is None:
-            raise RuntimeError(f"Narration validation failed: {errors}")
+            self.last_status = "FAILED"
+            self.last_errors = errors
+            raise RuntimeError(
+                f"Narration failed after {self.NARRATION_MAX_ATTEMPTS} attempts: {last_error}"
+            )
 
         validated_work_items_count = len(parsed.get("work_items", []))
         logger.debug(
@@ -184,7 +213,8 @@ class NarrationService:
 
         return trimmed
 
-    def _call_generate_completions(self, prompt: str, user_id: Optional[str] = None, project_id: Optional[str] = None):
+    def _call_generate_completions(self, prompt: str, user_id: Optional[str] = None,
+                                   project_id: Optional[str] = None, max_tokens: Optional[int] = None):
         """Call async generate_completions from sync code. Safe when already inside an async event loop.
 
         Note: token-billing org attribution falls back to the project→org
@@ -196,7 +226,7 @@ class NarrationService:
         """
         def _run():
             return async_to_sync(generate_completions)(
-                prompt, max_tokens=self.MAX_OUTPUT_TOKENS,
+                prompt, max_tokens=max_tokens or self.MAX_OUTPUT_TOKENS,
                 user_id=user_id, project_id=project_id, task_type="narration",
             )
 
