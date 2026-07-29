@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, ArrowRightLeft, Building2, Copy, Loader2, Mail, Save, Trash2, Users, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { apiRequest } from "@/lib/apiRequest";
 import { useAuth } from "@/lib/useAuth";
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type WorkspaceMember = {
   membership_id: string;
@@ -42,10 +45,14 @@ type PendingInvite = {
 };
 
 export function WorkspacePage() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [data, setData] = useState<WorkspacePayload>({ members: [] });
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  // Per-action busy marker (was a single shared `saving` boolean, which made
+  // every button in the page — Save, Transfer, Delete — spin together
+  // whenever ANY one of them was in flight). Each handler sets/clears its
+  // own tag; buttons only react to the tag that identifies them.
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
@@ -86,20 +93,25 @@ export function WorkspacePage() {
   }, [user?.active_organization_id]);
 
   const handleInvite = async () => {
-    if (!inviteEmail.trim()) {
+    const cleanedEmail = inviteEmail.trim();
+    if (!cleanedEmail) {
       setError("Email is required.");
+      return;
+    }
+    if (!EMAIL_RE.test(cleanedEmail)) {
+      setError("Enter a valid email address.");
       return;
     }
 
     try {
-      setSaving(true);
+      setBusyAction("invite");
       setError(null);
       setLastInviteUrl(null);
       setLastInviteEmail(null);
       const res = await apiRequest(
         "post",
         "/auth/organizations/invites/",
-        { email: inviteEmail.trim(), role: inviteRole },
+        { email: cleanedEmail, role: inviteRole },
         true,
       );
       const invite = res.data?.data;
@@ -109,21 +121,22 @@ export function WorkspacePage() {
         ? `${window.location.origin}/register?invite=${encodeURIComponent(token)}`
         : null;
       setLastInviteUrl(inviteUrl);
-      setLastInviteEmail(invite?.email || inviteEmail.trim());
+      setLastInviteEmail(invite?.email || cleanedEmail);
       setLastInviteEmailSent(emailSent);
       setInviteEmail("");
       setInviteRole("member");
+      toast.success(`Invite sent to ${invite?.email || cleanedEmail}`);
       await loadMembers();
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || "Failed to send invitation.");
     } finally {
-      setSaving(false);
+      setBusyAction(null);
     }
   };
 
   const handleRevokeInvite = async (inviteId: string) => {
     try {
-      setSaving(true);
+      setBusyAction(`revoke:${inviteId}`);
       setError(null);
       await apiRequest(
         "delete",
@@ -131,11 +144,12 @@ export function WorkspacePage() {
         undefined,
         true,
       );
+      toast.success("Invitation revoked");
       await loadMembers();
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || "Failed to revoke invitation.");
     } finally {
-      setSaving(false);
+      setBusyAction(null);
     }
   };
 
@@ -153,9 +167,10 @@ export function WorkspacePage() {
     }
   };
 
-  const handleRemove = async (memberUserId: string) => {
+  const handleRemove = async (memberUserId: string, displayName: string) => {
+    if (!confirm(`Remove ${displayName} from this workspace? This cannot be undone.`)) return;
     try {
-      setSaving(true);
+      setBusyAction(`remove:${memberUserId}`);
       setError(null);
       const res = await apiRequest(
         "delete",
@@ -164,10 +179,11 @@ export function WorkspacePage() {
         true,
       );
       setData(res.data?.data || { members: [] });
+      toast.success(`Removed ${displayName} from the workspace`);
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || "Failed to remove member.");
     } finally {
-      setSaving(false);
+      setBusyAction(null);
     }
   };
 
@@ -175,7 +191,7 @@ export function WorkspacePage() {
     const cleaned = renameDraft.trim();
     if (!cleaned || cleaned === data.organization?.name) return;
     try {
-      setSaving(true);
+      setBusyAction("rename");
       setError(null);
       const res = await apiRequest(
         "patch", "/auth/organizations/current/", { name: cleaned }, true,
@@ -184,12 +200,15 @@ export function WorkspacePage() {
       if (updatedOrg) {
         setData((current) => ({ ...current, organization: updatedOrg }));
       }
-      // Reload to refresh membership view; useAuth will refresh user via /me
-      await loadMembers();
+      // Refresh the Redux user so every consumer of active_organization.name
+      // (header chip, org switcher) picks up the new name immediately —
+      // loadMembers() only re-fetches /members and /invites, never /me.
+      await Promise.all([loadMembers(), refreshUser()]);
+      toast.success("Workspace renamed");
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || "Failed to rename workspace.");
     } finally {
-      setSaving(false);
+      setBusyAction(null);
     }
   };
 
@@ -197,17 +216,18 @@ export function WorkspacePage() {
     if (!transferTarget) return;
     if (!confirm("Transfer ownership of this workspace? You will be demoted to admin.")) return;
     try {
-      setSaving(true);
+      setBusyAction("transfer");
       setError(null);
       const res = await apiRequest(
         "post", "/auth/organizations/transfer/", { new_owner_user_id: transferTarget }, true,
       );
       setData(res.data?.data || data);
       setTransferTarget("");
+      toast.success("Ownership transferred");
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || "Failed to transfer ownership.");
     } finally {
-      setSaving(false);
+      setBusyAction(null);
     }
   };
 
@@ -217,7 +237,7 @@ export function WorkspacePage() {
       return;
     }
     try {
-      setSaving(true);
+      setBusyAction("delete");
       setError(null);
       await apiRequest("delete", "/auth/organizations/current/", undefined, true);
       // Hard reload: active org reassignment + token rotation happened
@@ -225,7 +245,7 @@ export function WorkspacePage() {
       window.location.href = "/settings?tab=workspace";
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || "Failed to delete workspace.");
-      setSaving(false);
+      setBusyAction(null);
     }
   };
 
@@ -243,7 +263,7 @@ export function WorkspacePage() {
           <p className="text-sm text-muted-foreground mt-2">Manage the active organization and its members.</p>
         </div>
         <div className="inline-flex items-center gap-2 rounded-md border border-border bg-secondary/60 px-2.5 py-1.5 text-xs font-medium text-foreground">
-          <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+          <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate max-w-[12rem]">{user?.active_organization?.name || "No workspace selected"}</span>
         </div>
       </header>
@@ -265,15 +285,15 @@ export function WorkspacePage() {
               <input
                 value={renameDraft}
                 onChange={(e) => setRenameDraft(e.target.value)}
-                className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                className="h-10 rounded-xl border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
               />
               <Button
                 onClick={handleRename}
-                disabled={saving || !renameDraft.trim() || renameDraft.trim() === data.organization.name}
+                disabled={busyAction === "rename" || !renameDraft.trim() || renameDraft.trim() === data.organization.name}
                 variant="saramsa"
                 className="h-10 flex items-center gap-2"
               >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {busyAction === "rename" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 Save
               </Button>
             </div>
@@ -290,36 +310,43 @@ export function WorkspacePage() {
             </p>
           </div>
           <div className="px-6 py-5 space-y-5">
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleInvite();
+              }}
+              className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3"
+            >
               <input
+                type="email"
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
                 placeholder="teammate@example.com"
-                className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                className="h-10 rounded-xl border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
               />
               <select
                 value={inviteRole}
                 onChange={(e) => setInviteRole(e.target.value)}
-                className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                className="h-10 rounded-xl border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
               >
                 <option value="viewer">Viewer</option>
                 <option value="member">Member</option>
                 <option value="admin">Admin</option>
               </select>
-              <Button onClick={handleInvite} disabled={saving} variant="saramsa" className="h-10 flex items-center gap-2">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+              <Button type="submit" disabled={busyAction === "invite"} variant="saramsa" className="h-10 flex items-center gap-2">
+                {busyAction === "invite" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
                 Send invite
               </Button>
-            </div>
+            </form>
 
             {lastInviteUrl && lastInviteEmail && (
               <div className="rounded-md border border-saramsa-brand/30 bg-saramsa-brand/5 px-3 py-3 space-y-2">
-                <p className="text-xs font-medium text-foreground">
+                <p className="text-xs font-medium text-foreground break-words">
                   Invite sent to <span className="font-semibold">{lastInviteEmail}</span>
                   {lastInviteEmailSent ? '.' : '. (Email delivery failed — share the link below manually.)'}
                 </p>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 truncate rounded border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground">
+                  <code className="flex-1 truncate rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground">
                     {lastInviteUrl}
                   </code>
                   <Button
@@ -355,12 +382,16 @@ export function WorkspacePage() {
                 </div>
                 <Button
                   onClick={() => handleRevokeInvite(inv.id)}
-                  disabled={saving}
+                  disabled={busyAction === `revoke:${inv.id}`}
                   variant="ghost"
                   className="h-8 px-2 text-destructive hover:bg-destructive/10"
                   title="Revoke invitation"
                 >
-                  <X className="h-4 w-4" />
+                  {busyAction === `revoke:${inv.id}` ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <X className="h-4 w-4" />
+                  )}
                 </Button>
               </li>
             ))}
@@ -379,13 +410,14 @@ export function WorkspacePage() {
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <ul className="divide-y divide-border">
+          <ul className="divide-y divide-border max-h-[28rem] overflow-y-auto">
             {data.members.map((member) => {
               const displayName =
                 `${member.first_name || ""} ${member.last_name || ""}`.trim() ||
                 member.username ||
                 member.email ||
                 member.user_id;
+              const removing = busyAction === `remove:${member.user_id}`;
               return (
                 <li key={member.membership_id} className="flex items-center justify-between gap-4 px-6 py-4">
                   <div className="min-w-0">
@@ -401,12 +433,12 @@ export function WorkspacePage() {
                     )}
                     {canManageMembers && member.role !== "owner" && !member.is_current_user && (
                       <Button
-                        onClick={() => handleRemove(member.user_id)}
-                        disabled={saving}
+                        onClick={() => handleRemove(member.user_id, displayName)}
+                        disabled={removing}
                         variant="ghost"
                         className="h-8 px-2 text-destructive hover:bg-destructive/10"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        {removing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                       </Button>
                     )}
                   </div>
@@ -440,7 +472,7 @@ export function WorkspacePage() {
                   value={transferTarget}
                   onChange={(e) => setTransferTarget(e.target.value)}
                   disabled={transferableMembers.length === 0}
-                  className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
+                  className="h-10 rounded-xl border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
                 >
                   <option value="">{transferableMembers.length === 0 ? "No eligible members" : "Choose a new owner"}</option>
                   {transferableMembers.map((m) => (
@@ -452,11 +484,11 @@ export function WorkspacePage() {
                 </select>
                 <Button
                   onClick={handleTransfer}
-                  disabled={saving || !transferTarget}
+                  disabled={busyAction === "transfer" || !transferTarget}
                   variant="outline"
                   className="h-10 flex items-center gap-2"
                 >
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightLeft className="h-4 w-4" />}
+                  {busyAction === "transfer" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightLeft className="h-4 w-4" />}
                   Transfer
                 </Button>
               </div>
@@ -474,15 +506,15 @@ export function WorkspacePage() {
                   value={deleteConfirm}
                   onChange={(e) => setDeleteConfirm(e.target.value)}
                   placeholder={`Type "${data.organization.name}" to confirm`}
-                  className="h-10 rounded-md border border-destructive/40 bg-background px-3 text-sm text-foreground outline-none focus:border-destructive focus:ring-2 focus:ring-destructive/30"
+                  className="h-10 rounded-xl border border-destructive/40 bg-background px-3 text-sm text-foreground outline-none focus:border-destructive focus:ring-2 focus:ring-destructive/30"
                 />
                 <Button
                   onClick={handleDelete}
-                  disabled={saving || deleteConfirm !== data.organization.name}
+                  disabled={busyAction === "delete" || deleteConfirm !== data.organization.name}
                   variant="ghost"
                   className="h-10 flex items-center gap-2 text-destructive hover:bg-destructive/10 disabled:opacity-50"
                 >
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  {busyAction === "delete" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                   Delete workspace
                 </Button>
               </div>

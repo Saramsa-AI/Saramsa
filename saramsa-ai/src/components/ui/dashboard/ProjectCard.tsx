@@ -94,8 +94,8 @@ export function ProjectCard({ project, onClick, onDelete, onEdit, onGoToProject,
     <motion.div
       whileHover={{ y: -1 }}
       className={`relative bg-card/80 rounded-2xl border transition-all duration-200 group flex flex-col shadow-sm ${
-        isSelected 
-          ? 'border-border/70' 
+        isSelected
+          ? 'border-border/70'
           : 'border-border/60 hover:border-border'
       }`}
       onClick={onClick}

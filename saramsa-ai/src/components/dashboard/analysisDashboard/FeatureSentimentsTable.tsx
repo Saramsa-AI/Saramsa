@@ -121,8 +121,13 @@ export const FeatureSentimentsTable = ({
         )}
       </div>
 
-      {/* Accordion Cards — cap to ~5 rows, scroll the rest */}
-      <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
+      {/* Accordion Cards — show exactly 4 rows, scroll the rest.
+          A collapsed row is ~46px (py-3 = 24px + ~20px content + border) and
+          space-y-2 adds an 8px gap, so 4 rows = 4*46 + 3*8 = 208px. The extra
+          ~12px deliberately reveals a sliver of the 5th row as a scroll
+          affordance. Capping here (down from 340px, which fit ~6) also pulls
+          the sentiment charts below up into the first viewport. */}
+      <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
         {sortedFeatures.map((feature) => {
           const isExpanded = expandedFeatures.has(feature.name);
           const isSelected = selectedFeatures.includes(feature.name);
@@ -208,8 +213,10 @@ export const FeatureSentimentsTable = ({
               {/* Expanded Content */}
               {isExpanded && (
                 <div className="px-4 pb-4 pt-1 border-t border-border/40 space-y-3">
-                  {/* Description */}
-                  <p className="text-sm text-muted-foreground leading-relaxed">
+                  {/* Description. whitespace-pre-line preserves paragraph
+                      breaks in the generated text — without it, multi-paragraph
+                      descriptions collapsed onto one squished line. */}
+                  <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
                     {feature.description}
                   </p>
 
@@ -245,19 +252,19 @@ export const FeatureSentimentsTable = ({
                           <p className="text-xs font-semibold text-saramsa-brand">
                             Positive ({feature.sample_comments!.positive!.length})
                           </p>
-                          <div className="space-y-1 max-h-[160px] overflow-y-auto pr-1">
+                          <ul className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1 list-disc pl-4 marker:text-saramsa-brand/50">
                             {feature.sample_comments!.positive!.slice(0, 10).map((c, i) => {
                               const { text } = evidenceParts(c);
                               return (
-                                <div
+                                <li
                                   key={`pos-${i}`}
-                                  className="pl-2 border-l-2 border-saramsa-brand/40"
+                                  className="text-xs text-foreground/80 leading-relaxed whitespace-pre-line"
                                 >
-                                  <p className="text-xs text-foreground/80 leading-relaxed">{text}</p>
-                                </div>
+                                  {text}
+                                </li>
                               );
                             })}
-                          </div>
+                          </ul>
                         </div>
                       )}
                       {hasNegative && (
@@ -265,19 +272,19 @@ export const FeatureSentimentsTable = ({
                           <p className="text-xs font-semibold text-saramsa-gradient-to">
                             Negative ({feature.sample_comments!.negative!.length})
                           </p>
-                          <div className="space-y-1 max-h-[160px] overflow-y-auto pr-1">
+                          <ul className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1 list-disc pl-4 marker:text-saramsa-gradient-to/50">
                             {feature.sample_comments!.negative!.slice(0, 10).map((c, i) => {
                               const { text } = evidenceParts(c);
                               return (
-                                <div
+                                <li
                                   key={`neg-${i}`}
-                                  className="pl-2 border-l-2 border-saramsa-gradient-to/40"
+                                  className="text-xs text-foreground/80 leading-relaxed whitespace-pre-line"
                                 >
-                                  <p className="text-xs text-foreground/80 leading-relaxed">{text}</p>
-                                </div>
+                                  {text}
+                                </li>
                               );
                             })}
-                          </div>
+                          </ul>
                         </div>
                       )}
                     </div>

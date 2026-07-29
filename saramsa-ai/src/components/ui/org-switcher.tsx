@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Building2, Check, Loader2, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "@/lib/useAuth";
 import { Button } from "@/components/ui/button";
 
@@ -41,7 +42,7 @@ export function OrgSwitcher() {
           if (typeof window !== "undefined") window.location.reload();
         }}
         title={`Workspace context unavailable: ${contextError}. Click to retry.`}
-        className="h-9 px-3 inline-flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 text-xs font-medium text-amber-300 hover:bg-amber-500/15"
+        className="h-9 px-3 inline-flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 text-xs font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/15 cursor-pointer"
       >
         <AlertTriangle className="h-3.5 w-3.5" />
         Workspace unavailable — retry
@@ -57,11 +58,18 @@ export function OrgSwitcher() {
       return;
     }
     setSwitchingId(id);
-    const result = await switchOrganization(id);
-    setSwitchingId(null);
-    if (result.success) {
-      setOpen(false);
-      if (typeof window !== "undefined") window.location.reload();
+    try {
+      const result = await switchOrganization(id);
+      if (result.success) {
+        setOpen(false);
+        if (typeof window !== "undefined") window.location.reload();
+      } else {
+        toast.error(result.error || "Couldn't switch workspace. Please try again.");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Couldn't switch workspace. Please try again.");
+    } finally {
+      setSwitchingId(null);
     }
   };
 
@@ -81,7 +89,7 @@ export function OrgSwitcher() {
       {open && (
         <div
           role="menu"
-          className="absolute z-50 right-0 mt-2 w-72 rounded-lg border border-border/60 bg-popover shadow-lg dark:bg-popover/95"
+          className="absolute z-50 right-0 mt-2 w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-border/60 bg-popover shadow-lg dark:bg-popover/95"
         >
           <div className="px-3 py-2 text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border/60">
             Switch workspace
@@ -96,7 +104,7 @@ export function OrgSwitcher() {
                   role="menuitem"
                   onClick={() => handleSwitch(org.id)}
                   disabled={isSwitching}
-                  className="flex items-center justify-between w-full px-3 py-2 text-sm text-foreground hover:bg-accent/60 disabled:opacity-60"
+                  className="flex items-center justify-between w-full px-3 py-2 text-sm text-foreground hover:bg-accent/60 disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed"
                 >
                   <span className="flex items-center gap-2 min-w-0">
                     <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -118,7 +126,7 @@ export function OrgSwitcher() {
                 setOpen(false);
                 window.location.href = "/settings?tab=workspace";
               }}
-              className="flex items-center gap-2 w-full px-3 py-2 text-sm text-foreground hover:bg-accent/60"
+              className="flex items-center gap-2 w-full px-3 py-2 text-sm text-foreground hover:bg-accent/60 cursor-pointer"
             >
               <Plus className="h-3.5 w-3.5" />
               Manage workspaces

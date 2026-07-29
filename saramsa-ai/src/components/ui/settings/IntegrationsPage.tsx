@@ -745,7 +745,7 @@ export function IntegrationsPage() {
             <ul className="list-disc list-inside space-y-1 text-muted-foreground dark:text-muted-foreground">
               <li>Associated Saramsa projects</li>
               <li>Stored analysis results</li>
-              <li>Work items generated from those projects</li>
+              <li>User stories generated from those projects</li>
             </ul>
             <p className="text-red-600 dark:text-red-400 font-medium">This cannot be undone.</p>
           </div>
