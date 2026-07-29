@@ -211,28 +211,34 @@ class TaskService:
                 mapping_rate is not None
                 and ADDITIVE_GROWTH_MIN <= mapping_rate < ADDITIVE_GROWTH_MAX
             )
+            # Domain drift (10-30%): honor cooldown by falling back to additive
+            # growth; when cooldown is NOT active this must fall through to a
+            # FULL regen below. Previously neither `severe` nor `partial` was
+            # set for this band when cooldown was inactive, so the early-return
+            # below fired unconditionally and the taxonomy was silently left
+            # untouched — root cause of the 2026-07-19 run where a stale hotel
+            # taxonomy kept serving a fintech upload at 16.5% mapped.
+            drift = (
+                mapping_rate is not None
+                and SEVERE_MISMATCH_THRESHOLD <= mapping_rate < ADDITIVE_GROWTH_MIN
+            )
+            if drift and cooldown_active and taxonomy:
+                last_regen = taxonomy.get("last_regenerated_at")
+                uploads_since = taxonomy.get("uploads_since_regen", 0)
+                logger.info(
+                    "Taxonomy regeneration cooldown active; falling back to additive growth",
+                    extra={
+                        "domain": current_domain,
+                        "last_regenerated_at": last_regen,
+                        "uploads_since_regen": uploads_since,
+                    },
+                )
+                partial = True
 
             # Decide the action BEFORE paying for the LLM aspect suggestion.
             # If we're going to do nothing, return immediately.
-            if not severe and not partial and not force_regenerate:
-                if mapping_rate is not None and mapping_rate < ADDITIVE_GROWTH_MIN:
-                    # Domain drift (10-30%). Honor cooldown to avoid flip-flop.
-                    if cooldown_active and taxonomy:
-                        last_regen = taxonomy.get("last_regenerated_at")
-                        uploads_since = taxonomy.get("uploads_since_regen", 0)
-                        logger.info(
-                            "Taxonomy regeneration cooldown active; falling back to additive growth",
-                            extra={
-                                "domain": current_domain,
-                                "last_regenerated_at": last_regen,
-                                "uploads_since_regen": uploads_since,
-                            },
-                        )
-                        # Fall through to additive growth path below.
-                        partial = True
-                # else mapping_rate is healthy or unknown — nothing to do.
-                if not partial:
-                    return None
+            if not severe and not partial and not drift and not force_regenerate:
+                return None
 
             suggestion_service = get_aspect_discovery_service()
             result = asyncio.run(suggestion_service.suggest_aspects(
@@ -275,6 +281,7 @@ class TaskService:
                 bypass_reason = (
                     "force_regenerate" if force_regenerate else
                     f"catastrophic mismatch ({mapping_rate:.1%})" if severe else
+                    f"domain drift ({mapping_rate:.1%}), no active cooldown" if drift else
                     "cooldown cleared"
                 )
                 logger.info(

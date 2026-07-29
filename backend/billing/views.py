@@ -12,7 +12,13 @@ from apis.core.response import StandardResponse
 from authentication.authentication import AppJWTAuthentication
 
 from .models import BillingWebhookEvent
-from .quota import _get_or_create_record, _get_limits
+from .quota import (
+    _get_or_create_record,
+    _get_limits,
+    _resolve_active_org_id,
+    get_or_create_record_for_org,
+    get_limits_for_org,
+)
 from .services import StripeBillingService
 
 logger = logging.getLogger(__name__)
@@ -89,8 +95,13 @@ class UsageView(APIView):
     @handle_service_errors
     def get(self, request):
         user_id = str(request.user.id)
-        record = _get_or_create_record(user_id)
-        limits = _get_limits(user_id)
+        # Resolve the org ONCE. Calling _get_or_create_record() and
+        # _get_limits() separately made each resolve it independently, so this
+        # endpoint issued the same `SELECT users` twice — ~360ms of pure Neon
+        # round-trip wasted on every page load.
+        org_id = _resolve_active_org_id(user_id)
+        record = get_or_create_record_for_org(user_id, org_id)
+        limits = get_limits_for_org(user_id, org_id)
 
         data = {
             "period": record.period,

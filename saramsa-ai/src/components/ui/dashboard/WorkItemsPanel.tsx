@@ -330,16 +330,16 @@ export function WorkItemsPanel(props: WorkItemsPanelProps) {
         <div className="bg-card/80 rounded-2xl border border-border/60 p-6">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h3 className="text-lg font-semibold text-foreground">Review Queue</h3>
+              <h3 className="text-lg font-semibold text-foreground">User Stories</h3>
               <p className="text-sm text-muted-foreground">
-                Review generated work items before pushing them.
+                Review generated user stories before pushing them.
               </p>
             </div>
             <a
               href={`/projects/${encryptProjectId(currentProjectId)}/review/`}
               className="inline-flex items-center rounded-lg bg-saramsa-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-saramsa-brand-hover"
             >
-              Open Review Queue
+              Open User Stories
             </a>
           </div>
         </div>

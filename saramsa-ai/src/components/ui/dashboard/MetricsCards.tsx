@@ -49,8 +49,12 @@ export function MetricsCards({ metrics }: MetricsCardsProps) {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: index * 0.1 }}
+          className="h-full"
         >
-          <div className={`${getCardStyles()} border rounded-2xl p-6 shadow-sm transition-all duration-300 hover:shadow-md`}>
+          {/* h-full on both the motion wrapper and the card makes every card
+              fill its stretched grid cell, so cards stay the same height even
+              when their descriptions wrap to a different number of lines. */}
+          <div className={`${getCardStyles()} border rounded-2xl p-6 shadow-sm transition-all duration-300 hover:shadow-md h-full`}>
             <div className="space-y-3">
               {/* Title */}
               <div className="flex items-center justify-between">

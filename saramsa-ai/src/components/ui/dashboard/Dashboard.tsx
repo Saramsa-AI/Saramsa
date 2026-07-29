@@ -430,7 +430,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       { label: 'Ingestion', status: 'idle' as 'idle' | 'running' | 'success' | 'error' },
       { label: 'Processing', status: 'idle' as 'idle' | 'running' | 'success' | 'error' },
       { label: 'Synthesis', status: 'idle' as 'idle' | 'running' | 'success' | 'error' },
-      { label: 'Work Items', status: 'idle' as 'idle' | 'running' | 'success' | 'error' },
+      { label: 'User Stories', status: 'idle' as 'idle' | 'running' | 'success' | 'error' },
     ];
 
     if (!isViewingActiveAnalysis) return base;
@@ -808,6 +808,22 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   }, [currentProjectId, projectId, dispatch]);
 
   // Load full analysis when a historical run is selected
+  // Whenever the selected analysis changes, drop work-item state carried over
+  // from the previous analysis. currentProjectUserStories is project-scoped
+  // (not analysis-keyed) and WorkItemsPanel renders it as a fallback, so without
+  // this a prior run's work items render under a different selected analysis.
+  // Safe: a freshly-completed analysis generates its items ~100s AFTER its id
+  // becomes selected, so this only ever clears genuinely stale data.
+  const prevSelectedAnalysisRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevSelectedAnalysisRef.current;
+    if (prev && prev !== selectedAnalysisId) {
+      dispatch(clearCurrentProjectUserStories());
+      dispatch(setDeepAnalysis(null));
+    }
+    prevSelectedAnalysisRef.current = selectedAnalysisId ?? null;
+  }, [selectedAnalysisId, dispatch]);
+
   useEffect(() => {
     if (!selectedAnalysisId) {
       setIsSwitchingAnalysis(false);
@@ -1526,6 +1542,26 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
     }
   }
 
+  // The analysis payload carries the SAME work items in up to three shapes:
+  //   narration.work_items / pipeline_work_items -> the LLM phrasing output,
+  //     only { title, description, candidate_id, business_value,
+  //     acceptance_criteria }
+  //   userStories.work_items -> the persisted candidate row, which also has
+  //     id, type, priority, status, push_status, feature_area, evidence...
+  // Always prefer the persisted shape. Taking the phrasing-only one left
+  // `priority`/`type` undefined (the badges rendered as empty 14x2px slivers),
+  // made the priority sort a no-op, stopped pushed items from greying out, and
+  // — worst — forced the `id` fallback below onto the `candidate_id` column,
+  // which is NOT what the review/approve/push endpoints look up (they filter
+  // on the row's own `id`).
+  function pickWorkItems(input: any): any[] {
+    const stories = input?.userStories ?? input?.user_stories;
+    const shapes = [stories?.work_items, input?.work_items, input?.pipeline_work_items];
+    const nonEmpty = shapes.filter((l: any) => Array.isArray(l) && l.length > 0);
+    // "Rich" = carries the fields the phrasing-only shape lacks.
+    return nonEmpty.find((l: any) => l[0]?.priority && l[0]?.id) ?? nonEmpty[0] ?? [];
+  }
+
   // Normalize backend keys to frontend shape
   function normalizeAnalysis(input: any): AnalysisData {
     if (!input) return input as AnalysisData;
@@ -1578,13 +1614,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         work_item_candidates:
           input.work_item_candidates ?? input.analysisData.work_item_candidates ?? null,
         // CRITICAL: Extract final work items (not just candidates!) and add id field
-        work_items: (input.work_items ?? input.pipeline_work_items ?? []).map((item: any) => {
-          const workItem = {
-            ...item,
-            id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
-          };
-          return workItem;
-        }),
+        work_items: pickWorkItems(input).map((item: any) => ({
+          ...item,
+          id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
+        })),
         userStories: input.userStories ?? input.user_stories ?? null,
       } as AnalysisData;
 
@@ -1635,13 +1668,10 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
         narration: input.narration ?? null,
         work_item_candidates: input.work_item_candidates ?? null,
         // CRITICAL: Extract final work items (not just candidates!) and add id field
-        work_items: (input.work_items ?? input.pipeline_work_items ?? []).map((item: any) => {
-          const workItem = {
-            ...item,
-            id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
-          };
-          return workItem;
-        }),
+        work_items: pickWorkItems(input).map((item: any) => ({
+          ...item,
+          id: item.id || item.candidate_id,  // Ensure each item has an id for React keys
+        })),
         userStories: input.userStories ?? input.user_stories ?? null,
       } as AnalysisData;
 
@@ -1730,6 +1760,22 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
   }));
 
 
+  // Top-3 feature-level sentiment names, used as the Positive/Negative
+  // Comments card descriptions below. Replaces a duplicated generic
+  // "Comments with positive/negative sentiment" line (removed, then left the
+  // two cards shorter than "Total Comments" since only that one still had a
+  // description) with the actual top features driving each sentiment.
+  const topPositiveFeatureNames = [...featureSentimentData]
+    .sort((a: any, b: any) => (b.positive ?? 0) - (a.positive ?? 0))
+    .map((f: any) => f.name)
+    .filter(Boolean)
+    .slice(0, 3);
+  const topNegativeFeatureNames = [...featureSentimentData]
+    .sort((a: any, b: any) => (b.negative ?? 0) - (a.negative ?? 0))
+    .map((f: any) => f.name)
+    .filter(Boolean)
+    .slice(0, 3);
+
   const metrics = [
     {
       title: "Total Comments",
@@ -1741,13 +1787,17 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
       title: "Positive Comments",
       value: String(activeAnalysisData?.analysisData?.counts?.positive ?? 0),
       color: "green" as const,
-      description: "Comments with positive sentiment"
+      description: topPositiveFeatureNames.length
+        ? `Top: ${topPositiveFeatureNames.join(', ')}`
+        : undefined,
     },
     {
       title: "Negative Comments",
       value: String(activeAnalysisData?.analysisData?.counts?.negative ?? 0),
       color: "red" as const,
-      description: "Comments with negative sentiment"
+      description: topNegativeFeatureNames.length
+        ? `Top: ${topNegativeFeatureNames.join(', ')}`
+        : undefined,
     }
   ];
 
@@ -2067,7 +2117,7 @@ export function DashboardComponent({ data, onProjectSelect, initialProjectId, in
                         : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    Work items
+                    User stories
                   </button>
                 </div>
               </div>

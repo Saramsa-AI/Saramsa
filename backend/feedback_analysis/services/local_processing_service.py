@@ -194,7 +194,8 @@ class LocalProcessingService:
         # Step 1: Aspect classification (via factory)
         with phase("aspect_classify_pass1", n_items=len(stripped_comments), n_aspects=len(aspects)):
             similarity_results = self.aspect_service.classify_aspects(
-                stripped_comments, aspects, run_id, is_cancelled=is_cancelled
+                stripped_comments, aspects, run_id, is_cancelled=is_cancelled,
+                project_id=project_id, user_id=user_id, analysis_id=analysis_id,
             )
 
         # Step 1b: Check mapping rate and adaptive taxonomy update
@@ -233,7 +234,8 @@ class LocalProcessingService:
                         # Re-run aspect classification with updated aspects
                         with phase("aspect_classify_pass2", n_items=len(stripped_comments), n_aspects=len(aspects)):
                             similarity_results = self.aspect_service.classify_aspects(
-                                stripped_comments, aspects, f"{run_id}_regen", is_cancelled=is_cancelled
+                                stripped_comments, aspects, f"{run_id}_regen", is_cancelled=is_cancelled,
+                                project_id=project_id, user_id=user_id, analysis_id=analysis_id,
                             )
                         scored_after = [r for r in similarity_results if not r.get("errored")]
                         new_unmapped = sum(1 for r in scored_after if not r.get("matched_aspects") or r.get("matched_aspects") == ["UNMAPPED"])

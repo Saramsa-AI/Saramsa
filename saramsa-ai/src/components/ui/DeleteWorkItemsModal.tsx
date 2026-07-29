@@ -30,7 +30,7 @@ export function DeleteWorkItemsModal({
   warningDescription,
   confirmLabel,
 }: DeleteWorkItemsModalProps) {
-  const defaultTitle = title ?? 'Delete Work Items';
+  const defaultTitle = title ?? 'Delete User Stories';
   const defaultDescription =
     description ??
     (

@@ -3,6 +3,12 @@ import uuid
 from django.db import models
 from django.utils import timezone
 
+# Single source of truth for the WorkItemCandidate review lifecycle. Referenced
+# by both repositories.py (to reject invalid values reaching the DB — see
+# _apply_updates) and review_service.py (to validate service-level transitions),
+# so the two can't drift out of sync.
+WORK_ITEM_VALID_STATUSES = {"pending", "approved", "dismissed", "snoozed", "merged"}
+
 
 class TimestampedModel(models.Model):
     created_at = models.DateTimeField(default=timezone.now, db_index=True)

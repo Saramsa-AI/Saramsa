@@ -33,6 +33,7 @@ import json
 import logging
 import math
 import re
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from aiCore.services.openai_client import get_azure_client, get_azure_deployment_name
@@ -202,12 +203,34 @@ def _normalize_label(s: str) -> str:
     return rename.get(cleaned, cleaned)
 
 
+def _record_usage(completion, model, latency_ms, project_id, user_id, organization_id) -> None:
+    """Best-effort LLM cost ledger write. Never raises — a tracking failure
+    must not turn a successful column classification into a 500."""
+    try:
+        from billing.llm_usage import extract_usage, record_llm_usage
+
+        record_llm_usage(
+            model=model,
+            usage=extract_usage(completion),
+            task_type="column_classification",
+            project_id=project_id,
+            user_id=user_id,
+            organization_id=organization_id,
+            latency_ms=latency_ms,
+            metadata={"component": "column_classifier_service.classify_columns"},
+        )
+    except Exception:
+        logger.exception("Failed to record column-classifier LLM usage")
+
+
 def _empty_classification() -> Dict[str, Any]:
     """A 'no feedback column found' result; the caller turns this into a 400."""
     return {"primary_text": [], "context": [], "noise": [], "taxonomy_seed_column": None, "source": "llm"}
 
 
-def classify_columns(headers: List[str], rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def classify_columns(headers: List[str], rows: List[Dict[str, Any]],
+                     project_id: Optional[str] = None, user_id: Optional[str] = None,
+                     organization_id: Optional[str] = None) -> Dict[str, Any]:
     """Return ``{primary_text, context, noise, taxonomy_seed_column, source}``.
 
     Raises ``RuntimeError`` if the LLM call itself fails (an infra problem the
@@ -220,15 +243,21 @@ def classify_columns(headers: List[str], rows: List[Dict[str, Any]]) -> Dict[str
 
     sample = _sample_rows(rows)
 
+    deployment = get_azure_deployment_name()
+    t0 = time.perf_counter()
     try:
         client = get_azure_client().get_client()
         completion = client.chat.completions.create(
-            model=get_azure_deployment_name(),
+            model=deployment,
             messages=[
                 {"role": "system", "content": "You classify spreadsheet columns. You always return a single valid JSON object and nothing else."},
                 {"role": "user", "content": _build_prompt(headers, sample)},
             ],
             response_format={"type": "json_object"},
+        )
+        _record_usage(
+            completion, deployment, (time.perf_counter() - t0) * 1000,
+            project_id, user_id, organization_id,
         )
         content = completion.choices[0].message.content if completion.choices else ""
     except Exception as exc:

@@ -20,6 +20,10 @@ export interface ActionItem {
   submittedAt?: string;
   review_status?: 'pending' | 'approved' | 'dismissed' | 'snoozed' | 'merged';
   push_status?: 'not_pushed' | 'pushed' | 'failed';
+  /** Number of (mostly negative) feedback comments backing this item, when
+   * known — from the V2 evidence array or the V1 rule's reason.comment_count.
+   * Used as a same-priority tie-breaker in sortWorkItemsByPriority. */
+  commentCount?: number;
 }
 
 export interface Feature {

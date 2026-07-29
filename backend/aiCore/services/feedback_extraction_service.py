@@ -31,6 +31,7 @@ from typing import List, Dict, Any, Optional
 from openai import BadRequestError
 
 from aiCore.services.openai_client import get_azure_client, get_azure_deployment_name
+from aiCore.services.usage_tracking import make_usage_accumulator as _make_usage_accumulator
 
 logger = logging.getLogger(__name__)
 
@@ -79,30 +80,62 @@ class FeedbackExtractionService:
             self.deployment, self.concurrency,
         )
 
-    def qualify(self, comments: List[str], is_cancelled: Optional[Any] = None) -> List[Dict[str, Any]]:
-        """Return one {index, core_content, kind, has_signal} per input, in input order."""
+    def qualify(
+        self,
+        comments: List[str],
+        is_cancelled: Optional[Any] = None,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
+        analysis_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return one {index, core_content, kind, has_signal} per input, in input order.
+
+        The attribution kwargs only route this batch's token cost in the LLM
+        usage ledger; they never affect the result.
+        """
         if not comments:
             return []
         results: List[Optional[Dict[str, Any]]] = [None] * len(comments)
         client = get_azure_client().get_client()
 
-        with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
-            fut_to_idx = {
-                pool.submit(self._qualify_one, client, i, comments[i]): i
-                for i in range(len(comments))
-            }
-            done = 0
-            for fut in as_completed(fut_to_idx):
-                idx = fut_to_idx[fut]
-                try:
-                    results[idx] = fut.result()
-                except Exception as e:
-                    pool.shutdown(wait=False, cancel_futures=True)
-                    raise RuntimeError(f"Feedback extraction failed on item {idx}: {e}") from e
-                done += 1
-                if is_cancelled and done % 10 == 0 and is_cancelled():
-                    pool.shutdown(wait=False, cancel_futures=True)
-                    raise RuntimeError("Cancelled during feedback extraction")
+        # One LLM call per comment -> accumulate and write ONE aggregated
+        # ledger row after the pool drains (see billing.llm_usage).
+        usage_acc = _make_usage_accumulator(
+            model=self.deployment,
+            task_type="feedback_extraction",
+            project_id=project_id,
+            user_id=user_id,
+            organization_id=organization_id,
+            analysis_id=analysis_id,
+        )
+        t0 = time.time()
+
+        try:
+            with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
+                fut_to_idx = {
+                    pool.submit(self._qualify_one, client, i, comments[i], usage_acc): i
+                    for i in range(len(comments))
+                }
+                done = 0
+                for fut in as_completed(fut_to_idx):
+                    idx = fut_to_idx[fut]
+                    try:
+                        results[idx] = fut.result()
+                    except Exception as e:
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        raise RuntimeError(f"Feedback extraction failed on item {idx}: {e}") from e
+                    done += 1
+                    if is_cancelled and done % 10 == 0 and is_cancelled():
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        raise RuntimeError("Cancelled during feedback extraction")
+        finally:
+            # Tokens spent before an abort are still real money.
+            if usage_acc is not None:
+                usage_acc.flush(
+                    latency_ms=(time.time() - t0) * 1000,
+                    extra_metadata={"comment_count": len(comments)},
+                )
 
         signal = sum(1 for r in results if r and r["has_signal"])
         logger.info(
@@ -122,7 +155,7 @@ class FeedbackExtractionService:
         noise = [q for q in qualified if not q["has_signal"]]
         return signal, noise
 
-    def _qualify_one(self, client, idx: int, comment: str) -> Dict[str, Any]:
+    def _qualify_one(self, client, idx: int, comment: str, usage_acc: Optional[Any] = None) -> Dict[str, Any]:
         text = (comment or "").strip()
         if not text:
             return {"index": idx, "core_content": "", "kind": "empty", "has_signal": False}
@@ -139,6 +172,8 @@ class FeedbackExtractionService:
                 if reasoning:
                     kwargs["reasoning_effort"] = reasoning
                 resp = call.chat.completions.create(**kwargs)
+                if usage_acc is not None:
+                    usage_acc.add_completion(resp)
                 return self._parse(idx, comment, resp.choices[0].message.content or "{}")
             except (TypeError, BadRequestError) as e:
                 if reasoning and "reasoning_effort" in str(e).lower():

@@ -26,7 +26,7 @@ export function WorkItemReviewModal({
     <BaseModal
       isOpen={isOpen}
       onClose={onClose}
-      title="Review Work Items"
+      title="Review User Stories"
       description={`Confirm the items that will be pushed to ${platformLabel}.`}
       size="lg"
     >

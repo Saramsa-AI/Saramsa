@@ -57,8 +57,21 @@ def _resolve_active_org_id(user_id: str) -> Optional[str]:
         return None
 
 
+# Sentinel distinguishing "caller didn't supply an org" from "caller already
+# resolved it and the answer was None (no active org)". Without this, passing
+# None forces a re-resolution, so a view calling two quota helpers pays the
+# users lookup twice — ~360ms each against the remote Neon instance.
+_ORG_UNRESOLVED = object()
+
+
 def _resolve_org_id(user_id: str, organization_id: Optional[str]) -> Optional[str]:
-    """Pick the org to charge: explicit arg wins, else the user's active org."""
+    """Pick the org to charge: explicit arg wins, else the user's active org.
+
+    Pass a value obtained from a previous _resolve_org_id call (including None)
+    as `organization_id` via the `_resolved` helpers below to avoid re-querying.
+    """
+    if organization_id is _ORG_UNRESOLVED:
+        return _resolve_active_org_id(user_id)
     if organization_id:
         return str(organization_id)
     return _resolve_active_org_id(user_id)
@@ -87,6 +100,27 @@ def _get_or_create_record(user_id: str, organization_id: Optional[str] = None):
     return record
 
 
+def get_or_create_record_for_org(user_id: str, org_id: Optional[str]):
+    """Like _get_or_create_record but takes an ALREADY-resolved org (which may
+    legitimately be None). Lets a caller needing both the record and the limits
+    resolve the org once instead of twice."""
+    from .models import UsageRecord
+    period = _current_period()
+    if org_id:
+        filter_kwargs = {"organization_id": str(org_id), "period": period}
+        defaults = {"user_id": str(user_id)}
+    else:
+        filter_kwargs = {"organization_id": "", "user_id": str(user_id), "period": period}
+        defaults = {}
+    record, _ = UsageRecord.objects.get_or_create(defaults=defaults, **filter_kwargs)
+    return record
+
+
+def get_limits_for_org(user_id: str, org_id: Optional[str]) -> dict:
+    """Like _get_limits but takes an ALREADY-resolved org (see above)."""
+    return _limits_for_resolved_org(user_id, org_id)
+
+
 def _get_limits(user_id: str, organization_id: Optional[str] = None) -> dict:
     """Limits attach to the org first (so all teammates share one plan),
     falling back to a user-keyed BillingProfile for legacy single-user
@@ -94,10 +128,16 @@ def _get_limits(user_id: str, organization_id: Optional[str] = None) -> dict:
     Failure here drops back to env-var defaults so quota enforcement is
     never disabled — but the failure is logged so a corrupt
     BillingProfile doesn't go invisible."""
+    org_id = _resolve_org_id(user_id, organization_id)
+    return _limits_for_resolved_org(user_id, org_id)
+
+
+def _limits_for_resolved_org(user_id: str, org_id: Optional[str]) -> dict:
+    """Limit lookup once the org is known. Split out of _get_limits so callers
+    that already resolved the org don't pay for a second users query."""
     from .models import BillingProfile, UsageRecord
     defaults = UsageRecord.default_limits()
     try:
-        org_id = _resolve_org_id(user_id, organization_id)
         profile = None
         if org_id:
             profile = BillingProfile.objects.filter(organization_id=org_id).first()
@@ -111,7 +151,7 @@ def _get_limits(user_id: str, organization_id: Optional[str] = None) -> dict:
     except Exception:
         logger.exception(
             "Failed to look up quota limits; falling back to env defaults",
-            extra={"user_id": user_id, "organization_id": organization_id},
+            extra={"user_id": user_id, "organization_id": org_id},
         )
     return defaults
 

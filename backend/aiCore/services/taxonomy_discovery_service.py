@@ -27,6 +27,7 @@ from openai import BadRequestError
 from aiCore.services.openai_client import get_azure_client, get_azure_deployment_name
 from aiCore.services.embedding_api_service import get_api_embedding_service
 from aiCore.services.feedback_extraction_service import get_feedback_extraction_service
+from aiCore.services.usage_tracking import make_usage_accumulator as _make_usage_accumulator
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,12 @@ class TaxonomyDiscoveryService:
         )
 
     # ---- public API (matches AspectSuggestionService) ----
-    def discover(self, comments: List[str], company_name: Optional[str] = None) -> Dict[str, Any]:
+    def discover(self, comments: List[str], company_name: Optional[str] = None,
+                 project_id: Optional[str] = None, user_id: Optional[str] = None,
+                 organization_id: Optional[str] = None,
+                 analysis_id: Optional[str] = None) -> Dict[str, Any]:
+        """Discover an aspect taxonomy. The attribution kwargs only route this
+        run's token cost in the LLM usage ledger; they never affect output."""
         if not comments:
             raise ValueError("Comments list cannot be empty")
 
@@ -76,13 +82,38 @@ class TaxonomyDiscoveryService:
         if not raw:
             raise ValueError("No non-empty comments to discover from")
 
+        # Discovery makes a handful of LLM calls across several stages; roll
+        # them into one aggregated ledger row for the run.
+        acc = _make_usage_accumulator(
+            model=self.deployment,
+            task_type="taxonomy_discovery",
+            project_id=project_id,
+            user_id=user_id,
+            organization_id=organization_id,
+            analysis_id=analysis_id,
+        )
+        t0 = time.time()
+        try:
+            return self._discover_inner(comments, raw, company_name, acc,
+                                        project_id, user_id, organization_id, analysis_id)
+        finally:
+            if acc is not None:
+                acc.flush(latency_ms=(time.time() - t0) * 1000)
+
+    def _discover_inner(self, comments: List[str], raw: List[str], company_name: Optional[str],
+                        acc: Optional[Any], project_id: Optional[str], user_id: Optional[str],
+                        organization_id: Optional[str], analysis_id: Optional[str]) -> Dict[str, Any]:
+
         # Universal front door: LLM extract-and-qualify cleans any format (review, ticket
         # thread, survey...) and filters non-feedback (acknowledgments / system / empty).
         # Customer-agnostic — no per-format rules. Clustering/labeling then run on the
         # distilled, signal-only content.
         n_filtered = 0
         if self.qualify:
-            qualified = get_feedback_extraction_service().qualify(raw)
+            qualified = get_feedback_extraction_service().qualify(
+                raw, project_id=project_id, user_id=user_id,
+                organization_id=organization_id, analysis_id=analysis_id,
+            )
             work = [q["core_content"] for q in qualified if q["has_signal"]]
             n_filtered = len(raw) - len(work)
             if not work:
@@ -99,7 +130,7 @@ class TaxonomyDiscoveryService:
                 "Using direct induction; signal items below clustering threshold",
                 extra={"signal_count": len(work), "min_for_cluster": self.min_for_cluster},
             )
-            result = self._induce_directly(work, company_name)
+            result = self._induce_directly(work, company_name, acc)
             result.update({"total_comments": len(comments), "n_signal": len(work),
                             "n_filtered": n_filtered, "method": "direct", "n_clusters": 0, "n_outliers": 0})
             return result
@@ -118,24 +149,24 @@ class TaxonomyDiscoveryService:
             if lab == -1:
                 continue
             sample = self._sample([work[i] for i in members], self.label_sample)
-            aspect = self._label_cluster(sample, company_name)
+            aspect = self._label_cluster(sample, company_name, acc)
             if aspect:
                 candidates.append(aspect)
 
         outliers = groups.get(-1, [])
         if len(outliers) >= self.outlier_min:
             outlier_sample = self._sample([work[i] for i in outliers], self.label_sample * 2)
-            candidates.extend(self._mine_outliers(outlier_sample, company_name))
+            candidates.extend(self._mine_outliers(outlier_sample, company_name, acc))
 
         if not candidates:
             # Clustering produced nothing usable -> fall back to direct induction.
             logger.warning("Clustering produced no labeled aspects; using direct induction fallback")
-            result = self._induce_directly(work, company_name)
+            result = self._induce_directly(work, company_name, acc)
             result.update({"total_comments": len(comments), "n_signal": len(work),
                             "n_filtered": n_filtered, "method": "direct_fallback", "n_clusters": 0, "n_outliers": len(outliers)})
             return result
 
-        refined = self._refine(candidates, work, company_name)
+        refined = self._refine(candidates, work, company_name, acc)
         refined.update({
             "total_comments": len(comments),
             "n_signal": len(work),
@@ -163,7 +194,13 @@ class TaxonomyDiscoveryService:
                               user_id: Optional[str] = None, project_id: Optional[str] = None) -> Dict[str, Any]:
         import asyncio
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: self.discover(comments, company_name=company_name))
+        return await loop.run_in_executor(
+            None,
+            lambda: self.discover(
+                comments, company_name=company_name,
+                project_id=project_id, user_id=user_id,
+            ),
+        )
 
     # ---- pipeline steps ----
     def _reduce(self, vectors: List[List[float]]):
@@ -186,7 +223,8 @@ class TaxonomyDiscoveryService:
         )
         return clusterer.fit_predict(reduced)
 
-    def _label_cluster(self, sample_comments: List[str], company_name: Optional[str]) -> Optional[Dict[str, str]]:
+    def _label_cluster(self, sample_comments: List[str], company_name: Optional[str],
+                       acc: Optional[Any] = None) -> Optional[Dict[str, str]]:
         ctx = f" The company is {company_name}." if company_name else ""
         system = (
             "You label a cluster of similar customer-feedback comments with ONE aspect "
@@ -197,7 +235,7 @@ class TaxonomyDiscoveryService:
         )
         user = "Comments in this cluster:\n" + "\n".join(f"- {c}" for c in sample_comments)
         try:
-            data = self._llm_json(system, user)
+            data = self._llm_json(system, user, acc)
             name = str(data.get("name", "")).strip()
             if not name or name.lower() in _GENERIC:
                 return None
@@ -206,7 +244,8 @@ class TaxonomyDiscoveryService:
             logger.exception("Failed to label cluster; skipping cluster")
             return None
 
-    def _mine_outliers(self, outlier_comments: List[str], company_name: Optional[str]) -> List[Dict[str, str]]:
+    def _mine_outliers(self, outlier_comments: List[str], company_name: Optional[str],
+                       acc: Optional[Any] = None) -> List[Dict[str, str]]:
         """Re-discover aspects among comments that matched no cluster (the rare tail)."""
         ctx = f" The company is {company_name}." if company_name else ""
         system = (
@@ -217,7 +256,7 @@ class TaxonomyDiscoveryService:
         )
         user = "Unmatched comments:\n" + "\n".join(f"- {c}" for c in outlier_comments)
         try:
-            data = self._llm_json(system, user)
+            data = self._llm_json(system, user, acc)
             out = []
             for a in data.get("aspects", []) or []:
                 if isinstance(a, dict):
@@ -229,7 +268,8 @@ class TaxonomyDiscoveryService:
             logger.exception("Failed to mine outliers")
             return []
 
-    def _refine(self, candidates: List[Dict[str, str]], comments: List[str], company_name: Optional[str]) -> Dict[str, Any]:
+    def _refine(self, candidates: List[Dict[str, str]], comments: List[str], company_name: Optional[str],
+                acc: Optional[Any] = None) -> Dict[str, Any]:
         """Merge near-duplicate candidate aspects, drop generic ones, cap, and name the domain."""
         listing = "\n".join(f"- {c['name']}: {c.get('definition', '')}" for c in candidates)
         ctx = f" The company is {company_name}." if company_name else ""
@@ -240,7 +280,7 @@ class TaxonomyDiscoveryService:
             "important first. Also identify the overall domain. Keep customer terminology, 2-4 word "
             'names. Respond as JSON: {"identified_domain": "...", "suggested_aspects": ["...", ...]}.'
         )
-        data = self._llm_json(system, "Candidate aspects:\n" + listing)
+        data = self._llm_json(system, "Candidate aspects:\n" + listing, acc)
         domain = str(data.get("identified_domain", "")).strip() or "General"
         aspects = self._dedupe_cap(data.get("suggested_aspects", []))
         if not aspects:
@@ -249,7 +289,8 @@ class TaxonomyDiscoveryService:
         return {"identified_domain": domain, "suggested_aspects": aspects,
                 "aspect_details": [c for c in candidates if c["name"] in set(aspects)]}
 
-    def _induce_directly(self, comments: List[str], company_name: Optional[str]) -> Dict[str, Any]:
+    def _induce_directly(self, comments: List[str], company_name: Optional[str],
+                         acc: Optional[Any] = None) -> Dict[str, Any]:
         """Small-corpus path: induce the taxonomy from ALL comments in one LLM call."""
         ctx = f" The company is {company_name}." if company_name else ""
         system = (
@@ -259,7 +300,7 @@ class TaxonomyDiscoveryService:
             'Respond as JSON: {"identified_domain": "...", "suggested_aspects": ["...", ...]}.'
         )
         user = "Comments:\n" + "\n".join(f"- {c}" for c in comments)
-        data = self._llm_json(system, user)
+        data = self._llm_json(system, user, acc)
         domain = str(data.get("identified_domain", "")).strip() or "General"
         aspects = self._dedupe_cap(data.get("suggested_aspects", []))
         if not aspects:
@@ -285,7 +326,7 @@ class TaxonomyDiscoveryService:
             return items
         return random.sample(items, k)
 
-    def _llm_json(self, system: str, user: str) -> Dict[str, Any]:
+    def _llm_json(self, system: str, user: str, acc: Optional[Any] = None) -> Dict[str, Any]:
         client = get_azure_client().get_client()
         call = client.with_options(timeout=self.request_timeout, max_retries=0)
         reasoning = self.reasoning
@@ -299,6 +340,8 @@ class TaxonomyDiscoveryService:
                 if reasoning:
                     kwargs["reasoning_effort"] = reasoning
                 resp = call.chat.completions.create(**kwargs)
+                if acc is not None:
+                    acc.add_completion(resp)
                 return json.loads(resp.choices[0].message.content or "{}")
             except (TypeError, BadRequestError) as e:
                 if reasoning and "reasoning_effort" in str(e).lower():

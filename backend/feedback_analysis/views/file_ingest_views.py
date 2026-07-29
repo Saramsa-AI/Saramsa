@@ -181,7 +181,10 @@ class FeedbackFileIngestView(APIView):
                         headers = list(df.columns)
 
                         # Classify columns
-                        classification = classify_columns(headers, csv_data)
+                        classification = classify_columns(
+                            headers, csv_data, project_id=project_id,
+                            user_id=user_id_str, organization_id=project_org_id,
+                        )
                         if not classification.get("primary_text"):
                             return StandardResponse.validation_error(
                                 detail='Could not identify a feedback text column in the file.',
@@ -251,7 +254,10 @@ class FeedbackFileIngestView(APIView):
                     headers = list(df.columns)
 
                     # Classify columns
-                    classification = classify_columns(headers, csv_data)
+                    classification = classify_columns(
+                        headers, csv_data, project_id=project_id,
+                        user_id=user_id_str, organization_id=project_org_id,
+                    )
                     if not classification.get("primary_text"):
                         return StandardResponse.validation_error(
                             detail='Could not identify a feedback text column in the file.',

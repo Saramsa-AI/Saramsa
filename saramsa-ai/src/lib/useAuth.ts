@@ -40,6 +40,7 @@ type HookResult = {
   logout: () => void;
   refreshToken: () => Promise<boolean>;
   switchOrganization: (organizationId: string) => Promise<{ success: true } | { success: false; error?: string }>;
+  refreshUser: () => Promise<void>;
 };
 
 export function useAuth(): HookResult {
@@ -212,6 +213,28 @@ export function useAuth(): HookResult {
     }
   }, [dispatch]);
 
+  // Re-fetch /me and push it into Redux + localStorage. Use after a mutation
+  // the server applies to the current user's profile/org (e.g. renaming the
+  // active workspace) so every consumer of user.active_organization.* (navbar
+  // chip, org switcher) updates without waiting for the next background poll
+  // or a full page reload.
+  const refreshUser = useCallback(async (): Promise<void> => {
+    try {
+      let validToken = await authService.getValidToken();
+      if (!validToken) {
+        validToken = await authService.refreshTokenIfNeeded();
+      }
+      if (!validToken) return;
+      const fresh = await getCurrentUser(validToken);
+      setStoredUser(fresh);
+      dispatch(setUser(fresh));
+    } catch (err) {
+      if (typeof console !== 'undefined') {
+        console.warn('useAuth: refreshUser failed', err);
+      }
+    }
+  }, [dispatch]);
+
   const refreshToken = useCallback(async (): Promise<boolean> => {
     try {
       const newToken = await authService.refreshTokenIfNeeded();
@@ -232,7 +255,8 @@ export function useAuth(): HookResult {
     logout,
     refreshToken,
     switchOrganization,
-  }), [auth.user, auth.isAuthenticated, auth.loading, auth.error, hydrating, login, register, logout, refreshToken, switchOrganization]);
+    refreshUser,
+  }), [auth.user, auth.isAuthenticated, auth.loading, auth.error, hydrating, login, register, logout, refreshToken, switchOrganization, refreshUser]);
 }
 
 

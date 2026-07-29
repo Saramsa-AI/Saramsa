@@ -40,7 +40,7 @@ import apiRequest from "@/lib/apiRequest";
 import { getRelatedInsightsForWorkItem } from "@/lib/insightTraceability";
 import { getProviderLabel, getProviderProcessTemplate, type WorkProvider } from "@/lib/providers";
 import { DEFAULT_QUALITY_RULES, evaluateWorkItems, type QualityReport, type QualityRules } from "@/lib/workItemQuality";
-import { sortWorkItemsByPriority } from "@/lib/workItemPrioritySort";
+import { sortWorkItemsByPriority, workItemPriorityNumber } from "@/lib/workItemPrioritySort";
 
 interface WorkItem {
   id: string;
@@ -115,6 +115,9 @@ export const UserStoryList = ({
     new Set()
   );
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  /** When set, the delete modal targets this single row instead of the
+   *  current multi-select. Cleared whenever the modal closes. */
+  const [rowDeleteId, setRowDeleteId] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [showIntegrationModal, setShowIntegrationModal] = useState(false);
   const [expandedDescriptionIds, setExpandedDescriptionIds] = useState<Record<string, boolean>>({});
@@ -272,12 +275,24 @@ export const UserStoryList = ({
   // Set user stories or deep analysis data when component mounts or data changes
   useEffect(() => {
     
-    // Use userStories work items (prioritize prop over Redux state)
-    const workItemsToProcess = userStories && userStories.length > 0 
-      ? userStories[0]?.work_items // Use the first (most recent) user story from props
-      : currentProjectUserStories && currentProjectUserStories.length > 0
-      ? currentProjectUserStories[0]?.work_items // Fallback to Redux state
+    // Use userStories work items (prioritize prop over Redux state).
+    // Flatten across ALL story records and de-dupe by id — reading only record
+    // [0] silently dropped items when the persisted set was split across
+    // multiple UserStory records (e.g. 22 generated -> 13 shown).
+    const sourceStories = (userStories && userStories.length > 0)
+      ? userStories
+      : (currentProjectUserStories && currentProjectUserStories.length > 0)
+      ? currentProjectUserStories
       : [];
+    const seenWorkItemIds = new Set<string>();
+    const workItemsToProcess = sourceStories
+      .flatMap((s: any) => s?.work_items ?? [])
+      .filter((w: any) => {
+        const id = w?.id ?? w?.candidate_id;
+        if (!id || seenWorkItemIds.has(id)) return false;
+        seenWorkItemIds.add(id);
+        return true;
+      });
     
     
     if (workItemsToProcess && workItemsToProcess.length > 0) {
@@ -309,6 +324,12 @@ export const UserStoryList = ({
           review_status: item.status || 'pending',
           push_status: item.push_status || (item.submitted ? 'pushed' : 'not_pushed'),
           submitted: item.submitted || item.push_status === 'pushed',
+          // Feeds the same-priority tie-breaker in sortWorkItemsByPriority
+          // ("sort work items by most negative comments"). V2 items carry an
+          // evidence array; V1 rule-based candidates carry reason.comment_count.
+          commentCount: Array.isArray(item.evidence)
+            ? item.evidence.length
+            : (item.reason?.comment_count ?? item.comment_count ?? undefined),
         };
         dispatch(addActionItem(actionItem));
       });
@@ -317,24 +338,23 @@ export const UserStoryList = ({
     }
   }, [userStories, currentProjectUserStories, dispatch, platform]);
 
-  const handleActionSelect = (actionId: string) => {
-    // Check if this work item has already been submitted or is in a non-selectable state
+  // Shared with the checkbox's disabled/greyed rendering below, so "looks
+  // selectable" and "is selectable" never disagree (previously the checkbox
+  // rendered fully active for a pushed/dismissed/snoozed item, and clicking it
+  // just popped an alert() instead of visually communicating the state).
+  const getActionSelectBlockReason = (actionId: string): string | null => {
     const workItem = currentProjectUserStoryWorkItems.find(item => item.id === actionId);
     const reviewStatus = workItem?.status || 'pending';
     const isPushed = workItem?.submitted || workItem?.push_status === 'pushed';
 
-    if (isPushed) {
-      alert('This work item has already been pushed and cannot be selected again.');
-      return;
-    }
-    if (reviewStatus === 'dismissed') {
-      alert('This work item has been dismissed. Restore it from the Review Queue first.');
-      return;
-    }
-    if (reviewStatus === 'snoozed') {
-      alert('This work item is snoozed. Unsnooze it from the Review Queue first.');
-      return;
-    }
+    if (isPushed) return 'This user story has already been pushed and cannot be selected again.';
+    if (reviewStatus === 'dismissed') return 'This user story has been dismissed. Restore it from User Stories first.';
+    if (reviewStatus === 'snoozed') return 'This user story is snoozed. Unsnooze it from User Stories first.';
+    return null;
+  };
+
+  const handleActionSelect = (actionId: string) => {
+    if (getActionSelectBlockReason(actionId)) return;
     dispatch(toggleActionSelection(actionId));
   };
 
@@ -658,11 +678,11 @@ export const UserStoryList = ({
       return;
     }
     if (reviewStatus === "dismissed") {
-      alert("This work item has been dismissed. Restore it from the Review Queue first.");
+      alert("This user story has been dismissed. Restore it from User Stories first.");
       return;
     }
     if (reviewStatus === "snoozed") {
-      alert("This work item is snoozed. Unsnooze it from the Review Queue first.");
+      alert("This user story is snoozed. Unsnooze it from User Stories first.");
       return;
     }
 
@@ -686,36 +706,47 @@ export const UserStoryList = ({
       alert("Please select work items to delete");
       return;
     }
-    
+    setRowDeleteId(null); // bulk mode
+    setShowDeleteModal(true);
+  };
+
+  /** Per-row delete. Routes through the same confirm modal + delete pipeline as
+   *  the bulk path so persisted vs pipeline items are handled identically —
+   *  it just narrows the target to this one id instead of the selection. */
+  const handleRowDeleteClick = (item: ActionItem) => {
+    setRowDeleteId(item.id);
     setShowDeleteModal(true);
   };
 
   const handleConfirmDelete = async () => {
-    const toDelete = [...selectedActions];
+    const toDelete = rowDeleteId ? [rowDeleteId] : [...selectedActions];
 
     try {
       setDeleteLoading(true);
 
-      // Check if these are pipeline work items (from deepAnalysis) or traditional user story work items
+      // Locate the owning story so we can patch its cached copy below. Not
+      // finding one is NOT a reason to skip the API call: the backend deletes
+      // WorkItemCandidate rows by id (repositories.remove_embedded_work_item)
+      // and treats user_story_id as informational only.
+      //
+      // This used to early-return and merely dispatch removeActionItem, so a
+      // "delete" on the dashboard tab only dropped the row from Redux — the DB
+      // row survived and the item reappeared on refresh. currentProjectUserStories
+      // is frequently empty or holds a *different* analysis's items (selecting a
+      // run from the sidebar refreshes analysisData but not this list), so that
+      // local-only branch was the common path, not the rare one.
       const matchingUserStories = currentProjectUserStories.filter(story =>
         story.work_items?.some(item => toDelete.includes(item.id))
       );
+      const userStoryId =
+        matchingUserStories[0]?.id ??
+        userStories?.find((story) =>
+          story.work_items?.some((item: any) => toDelete.includes(item.id))
+        )?.id ??
+        '';
 
-      // If no matching user story, these are pipeline work items - just remove them locally
-      if (matchingUserStories.length === 0) {
-        console.log('[Delete] Pipeline work items - removing locally');
-        // For pipeline work items, just deselect them (they're not persisted to backend)
-        toDelete.forEach((id) => handleActionSelect(id));
-        setDeleteLoading(false);
-        // Modal will close automatically
-        return;
-      }
-
-      // Use the first matching user story
-      const userStoryId = matchingUserStories[0].id;
-      
       // Use the proper Redux action for deleting work items
-      await dispatch(deleteWorkItems({ 
+      await dispatch(deleteWorkItems({
         workItemIds: toDelete,
         userStoryId: userStoryId,
         projectId: projectId
@@ -758,6 +789,7 @@ export const UserStoryList = ({
       
       // Close modal
       setShowDeleteModal(false);
+      setRowDeleteId(null);
       
     } catch (err) {
       console.error('Failed to delete work items:', err);
@@ -882,14 +914,21 @@ export const UserStoryList = ({
         >
           {/* Checkbox */}
           {!isSubmitted ? (
-            <Checkbox
-              checked={isSelected}
-              onCheckedChange={(e) => {
-                handleActionSelect(item.id);
-              }}
-              onClick={(e) => e.stopPropagation()}
-              className="shrink-0"
-            />
+            (() => {
+              const blockReason = getActionSelectBlockReason(item.id);
+              return (
+                <Checkbox
+                  checked={isSelected}
+                  disabled={!!blockReason}
+                  title={blockReason ?? undefined}
+                  onCheckedChange={(e) => {
+                    handleActionSelect(item.id);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="shrink-0"
+                />
+              );
+            })()
           ) : (
             <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
           )}
@@ -906,13 +945,21 @@ export const UserStoryList = ({
             {item.title}
           </span>
 
-          {/* Badges */}
-          <Badge className={`text-[10px] px-1.5 py-0 shrink-0 ${getPriorityColor(item.priority || 'medium')}`}>
-            {item.priority}
-          </Badge>
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
-            {item.type}
-          </Badge>
+          {/* Badges. Render nothing when the value is missing — an empty Badge
+              collapses to a 14x2px sliver that reads as a stray dash. */}
+          {workItemPriorityNumber(item.priority) !== null && (
+            <Badge
+              className={`text-[10px] px-1.5 py-0 shrink-0 tabular-nums ${getPriorityColor(item.priority)}`}
+              title={`Priority ${workItemPriorityNumber(item.priority)} (${item.priority}) — 1 is most urgent`}
+            >
+              {workItemPriorityNumber(item.priority)}
+            </Badge>
+          )}
+          {item.type && (
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
+              {item.type}
+            </Badge>
+          )}
           {isSubmitted && (
             <Badge className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300 shrink-0">
               Pushed
@@ -949,6 +996,18 @@ export const UserStoryList = ({
                 title="Edit"
               >
                 <Edit className="w-3.5 h-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRowDeleteClick(item);
+                }}
+                className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                title="Delete this user story"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
               </Button>
             </div>
           )}
@@ -1053,7 +1112,7 @@ export const UserStoryList = ({
                 className="text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-900/20 h-8 text-xs"
               >
                 <Trash2 className="w-3.5 h-3.5 mr-1" />
-                Delete
+                Delete selected
               </Button>
               <Button
                 size="sm"
@@ -1173,9 +1232,9 @@ export const UserStoryList = ({
       {/* Delete Confirmation Modal */}
       {showDeleteModal && (
         <DeleteWorkItemsModal
-          workItemCount={selectedActions.length}
+          workItemCount={rowDeleteId ? 1 : selectedActions.length}
           onConfirm={handleConfirmDelete}
-          onCancel={() => setShowDeleteModal(false)}
+          onCancel={() => { setShowDeleteModal(false); setRowDeleteId(null); }}
           loading={deleteLoading}
         />
       )}

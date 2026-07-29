@@ -27,6 +27,11 @@ dump.rdb
 .env.development.local
 .env.test.local
 .env.production.local
+# Timestamped backups (.env.bak-20260729-120303 etc). The bare `.env` rule
+# above does NOT match these, so without this line an `add -A` commits live
+# credentials.
+.env.bak*
+*.env.bak*
 
 # Node modules
 node_modules/

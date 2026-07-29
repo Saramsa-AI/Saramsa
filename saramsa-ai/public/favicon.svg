@@ -1,8 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
+    <!-- Brand gradient, kept in sync with globals.css:
+         --saramsa-gradient-from #ff8921 -> --saramsa-gradient-to #ff2f4b.
+         Previously #FE3C36 -> #F1A452, which was both off-hue (read as pink)
+         and reversed relative to the logo. -->
     <linearGradient id="saramsaBarGrad" x1="257.266" y1="125.257" x2="421.266" y2="125.257" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#FE3C36"/>
-      <stop offset="100%" stop-color="#F1A452"/>
+      <stop offset="0%" stop-color="#ff8921"/>
+      <stop offset="100%" stop-color="#ff2f4b"/>
     </linearGradient>
   </defs>
   <circle cx="32" cy="32" r="32" fill="#0a0a0a"/>

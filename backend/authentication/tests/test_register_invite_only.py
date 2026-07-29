@@ -6,8 +6,10 @@ public self-serve signup path, and the OTP request endpoint is gone.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -246,6 +248,13 @@ class RegisterInviteOnlyTest(TestCase):
         self.assertIn("admin", detail)
 
     def test_invite_links_point_to_register_route(self) -> None:
+        """Host-derived fallback, used when FRONTEND_BASE_URL is unset.
+
+        The env var must be cleared explicitly: _build_invite_url reads it
+        straight from os.environ, so a developer with FRONTEND_BASE_URL in
+        backend/.env used to fail this test while CI (which has no .env)
+        passed. Pin the environment rather than inheriting it.
+        """
         class _Request:
             def get_host(self):
                 return "example.com"
@@ -253,8 +262,24 @@ class RegisterInviteOnlyTest(TestCase):
             def is_secure(self):
                 return False
 
-        invite_url = _build_invite_url(_Request(), "tok-123")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FRONTEND_BASE_URL", None)
+            invite_url = _build_invite_url(_Request(), "tok-123")
         self.assertEqual(invite_url, "http://example.com/register?invite=tok-123")
+
+    def test_invite_links_prefer_frontend_base_url_when_set(self) -> None:
+        """The configured frontend origin wins over the request host — that is
+        what makes invite links point at the SPA instead of the API domain."""
+        class _Request:
+            def get_host(self):
+                return "api.example.com"
+
+            def is_secure(self):
+                return False
+
+        with patch.dict(os.environ, {"FRONTEND_BASE_URL": "https://agent.saramsa.ai/"}):
+            invite_url = _build_invite_url(_Request(), "tok-123")
+        self.assertEqual(invite_url, "https://agent.saramsa.ai/register?invite=tok-123")
 
     def test_register_cannot_self_assign_admin_role(self) -> None:
         """SECURITY: a registration request that smuggles in
