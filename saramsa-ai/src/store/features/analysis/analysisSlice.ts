@@ -152,6 +152,20 @@ function shouldSelect(getState: () => any, newId: string): boolean {
 }
 
 /**
+ * The analysis payload repeats the same work items in several shapes. Only
+ * `userStories.work_items` carries the persisted row fields (id, type,
+ * priority, status, push_status); `pipeline_work_items` and
+ * `narration.work_items` are the LLM phrasing output and have none of them.
+ * Pick the richest available list.
+ */
+export function pickRichWorkItems(input: any): any[] {
+  const stories = input?.userStories ?? input?.user_stories;
+  const shapes = [stories?.work_items, input?.work_items, input?.pipeline_work_items];
+  const nonEmpty = shapes.filter((l: any) => Array.isArray(l) && l.length > 0);
+  return nonEmpty.find((l: any) => l[0]?.priority && l[0]?.id) ?? nonEmpty[0] ?? [];
+}
+
+/**
  * Normalize API response to expected frontend structure
  * The API can return data in many formats - handle them all
  */
@@ -184,7 +198,11 @@ function normalizeAnalysisData(input: any): AnalysisData {
     analysisType: input.analysisType || input.analysis_type || 'commentSentiment',
     analysisData: analysisData,
     userStories: input.userStories || input.user_stories,
-    work_items: input.work_items || input.pipeline_work_items,  // CRITICAL: Extract work items!
+    // Prefer the persisted candidate rows over the phrasing-only
+    // pipeline/narration shape — the latter has no type/priority/status/id,
+    // which blanks the row badges and breaks push + priority sorting.
+    // See pickWorkItems() in Dashboard.tsx for the full explanation.
+    work_items: pickRichWorkItems(input),
     comments: input.comments,
     rawLlm: input.rawLlm || input.raw_llm,
   } as AnalysisData;

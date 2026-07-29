@@ -1022,17 +1022,52 @@ class DevOpsService:
             # Use human-readable tag, not internal keys like __taxonomy__
             tag = label.lower().replace(" ", "-") if label else "customer-feedback"
             reason = c.get("reason") or {}
-            neg_pct = reason.get("neg_pct", 0)
             comment_count = reason.get("comment_count", 0)
-            pct_str = f"{neg_pct:.0%}" if isinstance(neg_pct, float) else str(neg_pct)
+            # business_value/acceptance_criteria were previously hardcoded to a
+            # "X% negative sentiment" template for EVERY candidate — strength
+            # candidates carry reason.pos_pct (no neg_pct) and taxonomy_gap
+            # candidates carry reason.unmapped_rate, so both rendered nonsensical
+            # "0% negative sentiment" text. Branch by candidate type instead.
+            candidate_type = c.get("type")
+            if candidate_type == "strength":
+                pos_pct = reason.get("pos_pct", 0)
+                pct_str = f"{pos_pct:.0%}" if isinstance(pos_pct, float) else str(pos_pct)
+                acceptance_criteria = (
+                    f"Document what drives satisfaction in {label} | "
+                    f"Confirm the pattern holds across {comment_count} feedback comments | "
+                    f"Protect this behavior in future releases (regression coverage / guardrails) | "
+                    f"Consider highlighting it in marketing or onboarding"
+                )
+                business_value = (
+                    f"{label} has {pct_str} positive sentiment across {comment_count} comments. "
+                    f"Protecting and amplifying this strength supports retention and can be used as a differentiator."
+                )
+            elif candidate_type == "taxonomy_gap":
+                unmapped_rate = reason.get("unmapped_rate", 0)
+                pct_str = f"{unmapped_rate:.0%}" if isinstance(unmapped_rate, float) else str(unmapped_rate)
+                acceptance_criteria = (
+                    f"Review the {pct_str} of feedback that didn't map to any known feature | "
+                    f"Identify recurring themes in the unmapped comments | "
+                    f"Extend the taxonomy with new aspects or refine existing ones | "
+                    f"Re-run classification and confirm the unmapped rate drops"
+                )
+                business_value = (
+                    f"{pct_str} of feedback ({comment_count} comments) isn't mapped to any tracked feature area, "
+                    f"hiding potential issues or requests from analysis. Expanding the taxonomy restores visibility into this feedback."
+                )
+            else:
+                neg_pct = reason.get("neg_pct", 0)
+                pct_str = f"{neg_pct:.0%}" if isinstance(neg_pct, float) else str(neg_pct)
+                acceptance_criteria = f"Investigate top customer concerns in {label} | Identify root causes from {comment_count} feedback comments | Define measurable improvement targets | Implement changes and validate with follow-up feedback"
+                business_value = f"{label} has {pct_str} negative sentiment across {comment_count} comments. Addressing this area will directly reduce customer dissatisfaction."
             work_items.append({
                 "type": item_type,
                 "title": title,
                 "description": description,
                 "priority": priority,
                 "tags": [tag, "customer-feedback"],
-                "acceptance_criteria": f"Investigate top customer concerns in {label} | Identify root causes from {comment_count} feedback comments | Define measurable improvement targets | Implement changes and validate with follow-up feedback",
-                "business_value": f"{label} has {pct_str} negative sentiment across {comment_count} comments. Addressing this area will directly reduce customer dissatisfaction.",
+                "acceptance_criteria": acceptance_criteria,
+                "business_value": business_value,
                 "effort_estimate": "3",
                 "feature_area": label,
                 "candidate_id": c.get("candidate_id"),

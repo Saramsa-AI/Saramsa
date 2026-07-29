@@ -7,6 +7,7 @@ LLMs may only phrase candidates and must not decide existence, type, or priority
 
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
+import re
 import uuid
 import logging
 
@@ -96,7 +97,7 @@ class WorkItemCandidateService:
                 continue
 
             if neg_pct >= self.NEGATIVE_CREATE_THRESHOLD and comment_count >= effective_min_comments:
-                priority = self._priority_from_negative(neg_pct)
+                priority = self._priority_from_negative(neg_pct, comment_count)
                 candidate_type = "bug" if aspect_key in self.KNOWN_BUG_ASPECT_KEYS else "improvement"
                 candidates.append(self._build_candidate(
                     project_id=project_id,
@@ -141,7 +142,7 @@ class WorkItemCandidateService:
             )
             if extra_count <= 0:
                 continue
-            base_priority = self._priority_from_negative(neg_pct)
+            base_priority = self._priority_from_negative(neg_pct, comment_count)
             for i, keyword in enumerate(keywords[:extra_count]):
                 sub_key = f"{aspect_key}:{keyword}"
                 candidate_type = "bug" if aspect_key in self.KNOWN_BUG_ASPECT_KEYS else "improvement"
@@ -212,7 +213,7 @@ class WorkItemCandidateService:
         if (overall_neg >= self.OVERALL_NEGATIVE_THRESHOLD
                 and total_comments >= self.OVERALL_MIN_COMMENTS
                 and feature_candidate_count == 0):
-            priority = self._priority_from_negative(overall_neg)
+            priority = self._priority_from_negative(overall_neg, total_comments)
             candidates.append(self._build_candidate(
                 project_id=project_id,
                 analysis_id=analysis_id,
@@ -276,8 +277,55 @@ class WorkItemCandidateService:
         )
         return candidates
 
+    # Token-Jaccard threshold for multi-word aspect keys (robust to separator
+    # punctuation differences, e.g. 'check-in_/_front_desk' vs
+    # 'check-in_&_front_desk' -> identical token sets -> Jaccard 1.0).
+    DEDUP_TOKEN_JACCARD_THRESHOLD = 0.5
+    # Common English inflectional suffixes for the single-token fallback (e.g.
+    # 'price'->'pricing', 'bug'->'bugs', 'crash'->'crashes'). A raw whole-string
+    # similarity ratio was tried first and rejected: it scores unrelated compound
+    # words that merely share a prefix (checkout/checkbox: ratio 0.75) as MORE
+    # similar than a genuine inflectional variant (price/pricing: ratio 0.667),
+    # so no single ratio threshold can accept the latter without also accepting
+    # the former. Checking for an actual suffix relationship (with the standard
+    # silent-e-drop-before-ing/ed spelling rule) discriminates correctly.
+    _INFLECTION_SUFFIXES = ("ing", "es", "ers", "er", "ed", "s")
+
+    @classmethod
+    def _is_inflectional_variant(cls, shorter: str, longer: str) -> bool:
+        if len(longer) <= len(shorter):
+            return False
+        for suffix in cls._INFLECTION_SUFFIXES:
+            if longer == shorter + suffix:
+                return True
+            if shorter.endswith("e") and longer == shorter[:-1] + suffix:
+                return True
+        return False
+
+    @classmethod
+    def _aspect_keys_are_near_duplicate(cls, a: str, b: str) -> bool:
+        if a == b:
+            return True
+        a_low, b_low = a.lower(), b.lower()
+        tokens_a = {t for t in re.split(r"[^a-z0-9]+", a_low) if t}
+        tokens_b = {t for t in re.split(r"[^a-z0-9]+", b_low) if t}
+        if tokens_a and tokens_b:
+            union = tokens_a | tokens_b
+            jaccard = len(tokens_a & tokens_b) / len(union) if union else 0.0
+            if jaccard >= cls.DEDUP_TOKEN_JACCARD_THRESHOLD:
+                return True
+        shorter, longer = (a_low, b_low) if len(a_low) <= len(b_low) else (b_low, a_low)
+        return cls._is_inflectional_variant(shorter, longer)
+
     def _deduplicate_candidates(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Merge candidates whose aspect keys are near-duplicates (e.g. 'price' vs 'pricing').
+        """Merge candidates whose aspect keys are near-duplicates (e.g. 'price' vs 'pricing',
+        or the same aspect generated with different separator punctuation).
+
+        Similarity is token-set Jaccard on the aspect_key's words, which is robust to
+        separator/punctuation differences, with a whole-string ratio fallback for
+        single-token keys. Replaces a naive first-4-characters-of-the-key heuristic that
+        merged unrelated aspects sharing a prefix (e.g. 'checkout'/'checkbox' both stemmed
+        to 'chec') while also over-merging plain prefixes like 'log'/'login'.
 
         Keeps the candidate with the higher priority (lower P-number).
         Only deduplicates top-level feature candidates — sub-themes (containing ':')
@@ -294,27 +342,20 @@ class WorkItemCandidateService:
         if len(top_level_candidates) <= 1:
             return candidates
 
-        # Group by stem (first 4 chars of aspect_key) as a simple similarity heuristic
-        groups: Dict[str, List[Dict[str, Any]]] = {}
+        groups: List[List[Dict[str, Any]]] = []
         for c in top_level_candidates:
-            key = c.get("aspect_key", "")
-            stem = key[:4] if len(key) >= 4 else key
-            # Also check if one key starts with another (e.g. 'price' vs 'pricing')
-            merged = False
-            for existing_stem, group in groups.items():
-                existing_key = group[0].get("aspect_key", "")
-                if key.startswith(existing_key) or existing_key.startswith(key):
+            key = str(c.get("aspect_key", ""))
+            placed = False
+            for group in groups:
+                if self._aspect_keys_are_near_duplicate(key, str(group[0].get("aspect_key", ""))):
                     group.append(c)
-                    merged = True
+                    placed = True
                     break
-            if not merged:
-                if stem in groups:
-                    groups[stem].append(c)
-                else:
-                    groups[stem] = [c]
+            if not placed:
+                groups.append([c])
 
         deduplicated = []
-        for stem, group in groups.items():
+        for group in groups:
             if len(group) == 1:
                 deduplicated.append(group[0])
             else:
@@ -370,10 +411,34 @@ class WorkItemCandidateService:
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    def _priority_from_negative(self, neg_pct: float) -> str:
-        if neg_pct >= self.NEGATIVE_PRIORITY_P0:
+    # 95% Wilson lower bound. Used only for PRIORITY (P0/P1/P2), never for
+    # candidate creation eligibility — the adaptive effective_min_comments
+    # relaxation for small datasets is intentional ("don't silently drop
+    # signal"), so existence still runs on raw neg_pct. Priority is different:
+    # raw neg_pct treats 1-of-1 negative the same as 550-of-1000, so a single
+    # comment could reach P0 ("1-comment features (adaptive min_comments=1) ->
+    # 1 negative comment = 100% neg = P0" — the DB audit's dominant inflation
+    # finding, 61/282 candidates were "critical"). The Wilson lower bound
+    # discounts small samples: n=1 at 100% observed negative has a lower bound
+    # of ~21%, correctly reflecting genuine statistical uncertainty.
+    WILSON_Z = 1.96
+
+    @classmethod
+    def _wilson_lower_bound(cls, pos_pct: float, n: int) -> float:
+        if n <= 0:
+            return 0.0
+        z = cls.WILSON_Z
+        phat = max(0.0, min(1.0, pos_pct))
+        denominator = 1 + z * z / n
+        center = phat + z * z / (2 * n)
+        adjustment = z * ((phat * (1 - phat) + z * z / (4 * n)) / n) ** 0.5
+        return max(0.0, (center - adjustment) / denominator)
+
+    def _priority_from_negative(self, neg_pct: float, comment_count: int) -> str:
+        confidence_adjusted = self._wilson_lower_bound(neg_pct, comment_count)
+        if confidence_adjusted >= self.NEGATIVE_PRIORITY_P0:
             return "P0"
-        if neg_pct >= self.NEGATIVE_PRIORITY_P1:
+        if confidence_adjusted >= self.NEGATIVE_PRIORITY_P1:
             return "P1"
         return "P2"
 

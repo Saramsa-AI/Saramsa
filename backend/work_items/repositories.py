@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from authentication.models import UserAccount
 from integrations.models import Project
-from .models import UserStory, WorkItemCandidate, WorkItemQualityRule
+from .models import UserStory, WorkItemCandidate, WorkItemQualityRule, WORK_ITEM_VALID_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +288,34 @@ class WorkItemRepository:
     # Review / candidate operations — pure ORM, no JSON iteration
     # ------------------------------------------------------------------
 
+    def get_status_counts(self, project_id: str, week_start) -> Dict[str, int]:
+        """Return review-queue counts in ONE aggregate query.
+
+        Replaces four separate get_candidates_by_status() calls that each
+        hydrated every column (including the large description/evidence/extra
+        JSON) for every row, only to take len(). For a 165-row project that was
+        four full row transfers from a remote Neon instance just to produce four
+        integers — the dominant cost of the stats endpoint. COUNT runs entirely
+        server-side and transfers 4 numbers.
+        """
+        from django.db.models import Count, Q
+
+        return WorkItemCandidate.objects.filter(project_id=str(project_id)).aggregate(
+            pending=Count("id", filter=Q(status="pending")),
+            snoozed=Count("id", filter=Q(status="snoozed")),
+            # Totals AND week windows. Reporting only the week window made the
+            # card misleading: a project with 6 approved items showed "2",
+            # because the other 4 were approved in earlier weeks.
+            approved=Count("id", filter=Q(status="approved")),
+            dismissed=Count("id", filter=Q(status="dismissed")),
+            approved_this_week=Count(
+                "id", filter=Q(status="approved", status_changed_at__gte=week_start)
+            ),
+            dismissed_this_week=Count(
+                "id", filter=Q(status="dismissed", status_changed_at__gte=week_start)
+            ),
+        )
+
     def get_candidates_by_status(self, project_id: str, status: str) -> List[Dict[str, Any]]:
         import logging
         logger = logging.getLogger(__name__)
@@ -448,9 +476,48 @@ class WorkItemRepository:
             "merged_into": "merged_into",
             "status_changed_by": "status_changed_by",
         }
+        # Char columns have hard DB limits. The CREATE path clamps them (see
+        # _dict_to_candidate_kwargs, e.g. title[:500]) but this UPDATE path did
+        # not, so a title longer than 500 chars raised
+        # "DataError: value too long for type character varying(500)" and
+        # surfaced as a 500. Derive the limits from the model so they can't
+        # drift from the schema.
+        max_lengths = {
+            f.name: f.max_length
+            for f in WorkItemCandidate._meta.get_fields()
+            if getattr(f, "max_length", None)
+        }
+
         for key, attr in field_map.items():
-            if key in updates:
-                setattr(candidate, attr, updates[key])
+            if key not in updates:
+                continue
+            value = updates[key]
+            # WorkItemUpdateView passes the raw client PUT body through to this
+            # method with no whitelist on values (only on which keys are
+            # accepted), so an arbitrary client-supplied `status` (e.g. the
+            # frontend's UI-only ActionItem.status="todo", which is not part of
+            # the backend review lifecycle) previously wrote straight into the
+            # DB, permanently orphaning the candidate from every status-filtered
+            # view (pending/approved/dismissed/snoozed queries all miss it).
+            if key == "status" and value not in WORK_ITEM_VALID_STATUSES:
+                logger.warning(
+                    "Ignoring invalid status update",
+                    extra={"candidate_id": str(candidate.id), "attempted_status": value},
+                )
+                continue
+            limit = max_lengths.get(attr)
+            if limit and isinstance(value, str) and len(value) > limit:
+                logger.warning(
+                    "Truncating oversized field on update",
+                    extra={
+                        "candidate_id": str(candidate.id),
+                        "field": attr,
+                        "length": len(value),
+                        "max_length": limit,
+                    },
+                )
+                value = value[:limit]
+            setattr(candidate, attr, value)
 
         for dt_field in ("status_changed_at", "snooze_until", "pushed_at"):
             if dt_field in updates:

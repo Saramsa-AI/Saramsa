@@ -24,9 +24,13 @@ export interface ReviewCandidate {
 
 export interface ReviewStats {
   pending: number;
+  snoozed: number;
+  /** All-time totals — the headline figures on the stats cards. */
+  approved?: number;
+  dismissed?: number;
+  /** Rolling week windows, shown as secondary context under the total. */
   approved_this_week: number;
   dismissed_this_week: number;
-  snoozed: number;
 }
 
 interface ReviewFilters {
@@ -118,6 +122,25 @@ export const batchApprove = createAsyncThunk<
   return { candidateIds, data: res.data };
 });
 
+/**
+ * Merge one candidate into another: the source becomes status 'merged' and its
+ * evidence is unioned into the target. Field names must be
+ * source_candidate_id / target_candidate_id — that's what CandidateMergeView
+ * validates on.
+ */
+export const mergeCandidates = createAsyncThunk<
+  any,
+  { sourceId: string; targetId: string; projectId: string }
+>('review/merge', async ({ sourceId, targetId, projectId }) => {
+  const res = await apiRequest(
+    'post',
+    '/work-items/review/merge/',
+    { source_candidate_id: sourceId, target_candidate_id: targetId, project_id: projectId },
+    true,
+  );
+  return { sourceId, targetId, data: res.data };
+});
+
 const reviewSlice = createSlice({
   name: 'review',
   initialState,
@@ -194,6 +217,16 @@ const reviewSlice = createSlice({
       })
       .addCase(batchApprove.rejected, (state, action) => {
         state.error = action.error.message || 'Failed to approve selected candidates';
+      })
+      .addCase(mergeCandidates.fulfilled, (state, action) => {
+        // Only the SOURCE leaves the pending queue (it becomes 'merged');
+        // the target stays and now carries the union of both evidence sets.
+        const { sourceId } = action.payload;
+        state.candidates = state.candidates.filter((c) => c.id !== sourceId);
+        state.selectedIds = state.selectedIds.filter((id) => id !== sourceId);
+      })
+      .addCase(mergeCandidates.rejected, (state, action) => {
+        state.error = action.error.message || 'Failed to merge candidates';
       });
   },
 });

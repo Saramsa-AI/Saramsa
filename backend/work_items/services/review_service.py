@@ -7,13 +7,18 @@ on AI-generated work item candidates.
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone, timedelta
+import json
 import logging
 
 from ..repositories import WorkItemRepository
+from ..models import WORK_ITEM_VALID_STATUSES
 
 logger = logging.getLogger(__name__)
 
-VALID_STATUSES = {'pending', 'approved', 'dismissed', 'snoozed', 'merged'}
+# Single source of truth lives in models.py (also enforced in
+# repositories._apply_updates); kept as a local alias so existing references
+# to VALID_STATUSES in this file don't need to change.
+VALID_STATUSES = WORK_ITEM_VALID_STATUSES
 VALID_DISMISS_REASONS = {'not_relevant', 'already_known', 'will_not_fix', 'duplicate'}
 PRIORITY_ORDER = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
 
@@ -25,7 +30,13 @@ class ReviewService:
         self.repo = WorkItemRepository()
 
     def get_pending_candidates(self, project_id: str, filters: Optional[Dict] = None) -> List[Dict[str, Any]]:
-        """Get pending candidates for a project, sorted by priority then date."""
+        """Get pending candidates for a project, sorted by priority then date.
+
+        The queue is project-wide by default (pools every analysis run in the
+        project), which is intentional — it's the project's whole undecided
+        backlog. Pass filters['analysis_id'] to narrow to one upload's items
+        when reviewing a single run in isolation.
+        """
         candidates = self.repo.get_candidates_by_status(project_id, 'pending')
 
         if filters:
@@ -33,6 +44,8 @@ class ReviewService:
                 candidates = [c for c in candidates if c.get('priority') == filters['priority']]
             if filters.get('feature_area'):
                 candidates = [c for c in candidates if c.get('feature_area') == filters['feature_area']]
+            if filters.get('analysis_id'):
+                candidates = [c for c in candidates if c.get('analysis_id') == filters['analysis_id']]
             if filters.get('date_from'):
                 candidates = [c for c in candidates if c.get('createdAt', '') >= filters['date_from']]
             if filters.get('date_to'):
@@ -48,21 +61,20 @@ class ReviewService:
         """Get review queue stats for a project."""
         now = datetime.now(timezone.utc)
         week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-        week_start_iso = week_start.isoformat()
 
-        pending = self.repo.get_candidates_by_status(project_id, 'pending')
-        approved = self.repo.get_candidates_by_status(project_id, 'approved')
-        dismissed = self.repo.get_candidates_by_status(project_id, 'dismissed')
-        snoozed = self.repo.get_candidates_by_status(project_id, 'snoozed')
-
-        approved_this_week = [c for c in approved if c.get('status_changed_at', '') >= week_start_iso]
-        dismissed_this_week = [c for c in dismissed if c.get('status_changed_at', '') >= week_start_iso]
+        # One aggregate COUNT query instead of fetching four full result sets
+        # and calling len() on each — see repositories.get_status_counts.
+        counts = self.repo.get_status_counts(project_id, week_start)
 
         return {
-            'pending': len(pending),
-            'approved_this_week': len(approved_this_week),
-            'dismissed_this_week': len(dismissed_this_week),
-            'snoozed': len(snoozed),
+            'pending': counts.get('pending') or 0,
+            'snoozed': counts.get('snoozed') or 0,
+            # Totals are the headline figures; the *_this_week values are kept
+            # (existing consumers rely on them) and shown as secondary context.
+            'approved': counts.get('approved') or 0,
+            'dismissed': counts.get('dismissed') or 0,
+            'approved_this_week': counts.get('approved_this_week') or 0,
+            'dismissed_this_week': counts.get('dismissed_this_week') or 0,
         }
 
     def approve_candidate(self, candidate_id: str, user_id: str, project_id: str,
@@ -124,7 +136,36 @@ class ReviewService:
 
     def merge_candidates(self, source_id: str, target_id: str, user_id: str,
                          project_id: str) -> Dict[str, Any]:
-        """Merge source candidate into target. Source becomes merged, target gets evidence."""
+        """Merge source candidate into target: source becomes 'merged', and its
+        evidence is unioned into the target's evidence (previously the source's
+        evidence was silently discarded despite the docstring promising it was
+        transferred). Looks up both candidates BEFORE mutating anything, so an
+        invalid target_id fails loudly instead of leaving source marked 'merged'
+        with no reachable target (the prior order looked target up only after
+        source had already been mutated).
+        """
+        source = self.repo.get_candidate_by_id(candidate_id=source_id, project_id=project_id)
+        if not source:
+            raise ValueError(f"Candidate {source_id} not found")
+        target = self.repo.get_candidate_by_id(candidate_id=target_id, project_id=project_id)
+        if not target:
+            raise ValueError(f"Candidate {target_id} not found")
+
+        source_evidence = source.get('evidence') or []
+        if source_evidence:
+            target_evidence = target.get('evidence') or []
+            merged_evidence = list(target_evidence)
+            seen = {
+                json.dumps(item, sort_keys=True) if isinstance(item, dict) else str(item)
+                for item in target_evidence
+            }
+            for item in source_evidence:
+                key = json.dumps(item, sort_keys=True) if isinstance(item, dict) else str(item)
+                if key not in seen:
+                    merged_evidence.append(item)
+                    seen.add(key)
+            target = self.repo.update_candidate_status(target_id, project_id, {'evidence': merged_evidence})
+
         source_updates = {
             'status': 'merged',
             'status_changed_at': datetime.now(timezone.utc).isoformat(),
@@ -132,8 +173,6 @@ class ReviewService:
             'merged_into': target_id,
         }
         self.repo.update_candidate_status(source_id, project_id, source_updates)
-        # Return the target candidate
-        target = self.repo.get_candidate_by_id(candidate_id=target_id, project_id=project_id)
         return target
 
     def batch_approve(self, candidate_ids: List[str], user_id: str,
@@ -255,10 +294,15 @@ class ReviewService:
 
             push_updates = {
                 'push_status': 'pushed',
-                'external_id': (successful_result or {}).get('work_item_id') or (successful_result or {}).get('issue_key') or result.get('external_id'),
-                'external_url': (successful_result or {}).get('url') or result.get('external_url'),
+                'external_id': (successful_result or {}).get('work_item_id') or (successful_result or {}).get('issue_key') or result.get('external_id') or '',
+                'external_url': (successful_result or {}).get('url') or result.get('external_url') or '',
                 'pushed_at': datetime.now(timezone.utc).isoformat(),
-                'push_error': None,
+                # Must be '' not None — push_error is TextField(blank=True,
+                # default="") with NO null=True, so assigning None raised
+                # IntegrityError and made retry-push impossible: a failed push
+                # could never be recovered. Same for external_id/url above,
+                # which are also non-nullable CharFields.
+                'push_error': '',
             }
             return self.repo.update_candidate_status(candidate_id, project_id, push_updates)
         except Exception as e:

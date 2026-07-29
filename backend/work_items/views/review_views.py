@@ -34,7 +34,7 @@ class ReviewQueueListView(APIView):
             return StandardResponse.validation_error(detail="project_id is required.", instance=request.path)
 
         filters = {}
-        for key in ('priority', 'feature_area', 'date_from', 'date_to'):
+        for key in ('priority', 'feature_area', 'analysis_id', 'date_from', 'date_to'):
             val = request.query_params.get(key)
             if val:
                 filters[key] = val

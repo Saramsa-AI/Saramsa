@@ -10,6 +10,7 @@ import {
   dismissCandidate,
   snoozeCandidate,
   batchApprove,
+  mergeCandidates,
   toggleSelected,
   clearSelected,
   selectAll,
@@ -32,6 +33,11 @@ export default function ReviewQueuePage() {
 
   const [projectId, setProjectId] = useState<string | null>(null);
   const [editCandidate, setEditCandidate] = useState<ReviewCandidate | null>(null);
+  // Render the list in pages. Every row is a framer-motion `layout` component,
+  // and this queue routinely holds 150+ candidates — mounting them all at once
+  // is a real cost, so grow the window on demand instead.
+  const PAGE_SIZE = 25;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   // Decrypt project ID
   useEffect(() => {
@@ -78,6 +84,21 @@ export default function ReviewQueuePage() {
     dispatch(batchApprove({ candidateIds: selectedIds, projectId })).then(refresh);
   }, [dispatch, projectId, selectedIds, refresh]);
 
+  // Merge flow: select exactly ONE item (the keeper/target), then hit "Merge"
+  // on any other row to fold it in. The source becomes status 'merged' and its
+  // evidence is unioned into the target.
+  const mergeTargetId = selectedIds.length === 1 ? selectedIds[0] : null;
+  const handleMerge = useCallback((sourceId: string) => {
+    if (!projectId || !mergeTargetId || mergeTargetId === sourceId) return;
+    dispatch(mergeCandidates({ sourceId, targetId: mergeTargetId, projectId })).then(refresh);
+  }, [dispatch, projectId, mergeTargetId, refresh]);
+
+  // Collapse back to the first page whenever the result set changes, so a
+  // filter switch doesn't leave a stale "showing 100 of 12" window.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [filters, projectId]);
+
   const handleSaveApprove = useCallback((candidate: ReviewCandidate, edits: Record<string, any>) => {
     if (!projectId) return;
     dispatch(approveCandidate({ candidateId: candidate.id, projectId, edits })).then(refresh);
@@ -103,8 +124,8 @@ export default function ReviewQueuePage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Review Queue</h1>
-            <p className="text-sm text-muted-foreground mt-1">Review and approve AI-generated work items</p>
+            <h1 className="text-2xl font-bold text-foreground">User Stories</h1>
+            <p className="text-sm text-muted-foreground mt-1">Review and approve AI-generated user stories</p>
           </div>
           <div className="flex items-center gap-2">
             <select
@@ -134,20 +155,38 @@ export default function ReviewQueuePage() {
         {/* Stats */}
         <ReviewQueueStats projectId={projectId} />
 
-        {/* Batch actions */}
-        {selectedIds.length > 0 && (
+        {/* Batch actions. "Select All" lives OUTSIDE the selection check —
+            previously the whole bar (Select All included) only rendered once
+            something was already selected, so Select All could never be the
+            first action you took. */}
+        {candidates.length > 0 && (
           <div className="flex items-center gap-3 p-3 rounded-xl border border-saramsa-brand/20 bg-saramsa-brand/5">
-            <span className="text-sm font-medium text-foreground">{selectedIds.length} selected</span>
-            <Button size="sm" onClick={handleBatchApprove} className="bg-saramsa-brand hover:bg-saramsa-brand/90 text-white">
-              <Check className="w-3.5 h-3.5 mr-1" />
-              Approve All
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => dispatch(clearSelected())} className="hover:bg-accent">
-              Clear
-            </Button>
+            <span className="text-sm font-medium text-foreground">
+              {selectedIds.length > 0
+                ? `${selectedIds.length} selected`
+                /* Label must follow the active status filter — hardcoding
+                   "pending" showed e.g. "6 pending" while viewing Approved. */
+                : `${candidates.length} ${filters.status || 'pending'}`}
+            </span>
             <Button size="sm" variant="ghost" onClick={() => dispatch(selectAll())} className="hover:bg-accent">
               Select All
             </Button>
+            {selectedIds.length > 0 && (
+              <>
+                <Button size="sm" onClick={handleBatchApprove} className="bg-saramsa-brand hover:bg-saramsa-brand/90 text-white">
+                  <Check className="w-3.5 h-3.5 mr-1" />
+                  Approve All
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => dispatch(clearSelected())} className="hover:bg-accent">
+                  Clear
+                </Button>
+              </>
+            )}
+            {mergeTargetId && (
+              <span className="text-xs text-muted-foreground ml-auto">
+                Merge target selected — hit “Merge” on a duplicate to fold it in
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -171,7 +210,7 @@ export default function ReviewQueuePage() {
         ) : (
           <div className="space-y-3">
             <AnimatePresence mode="popLayout">
-              {candidates.map((c) => (
+              {candidates.slice(0, visibleCount).map((c) => (
                 <ReviewQueueItem
                   key={c.id}
                   candidate={c}
@@ -181,9 +220,26 @@ export default function ReviewQueuePage() {
                   onEdit={setEditCandidate}
                   onDismiss={handleDismiss}
                   onSnooze={handleSnooze}
+                  onMerge={mergeTargetId && mergeTargetId !== c.id ? handleMerge : undefined}
                 />
               ))}
             </AnimatePresence>
+
+            {candidates.length > visibleCount && (
+              <div className="flex flex-col items-center gap-2 py-4">
+                <span className="text-xs text-muted-foreground">
+                  Showing {visibleCount} of {candidates.length}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                  className="border-border/70 hover:bg-accent/60"
+                >
+                  Load {Math.min(PAGE_SIZE, candidates.length - visibleCount)} more
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>

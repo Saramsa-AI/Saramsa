@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Check, Edit2, X, Clock, GitMerge, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -19,11 +19,15 @@ interface ReviewQueueItemProps {
   onMerge?: (id: string) => void;
 }
 
+// Numbered 1-4 (1 = most urgent), matching the priority badge on the user
+// stories list. These were P0-P3 here while the list showed the word form,
+// so the same candidate appeared as "P0" in one place and "critical" in the
+// other; keep the two in sync via workItemPriorityNumber().
 const priorityConfig: Record<string, { color: string; label: string }> = {
-  critical: { color: 'bg-red-500/90 text-white dark:bg-red-500/80', label: 'P0' },
-  high: { color: 'bg-saramsa-brand text-white', label: 'P1' },
-  medium: { color: 'bg-muted text-foreground dark:bg-muted/80', label: 'P2' },
-  low: { color: 'bg-secondary text-muted-foreground', label: 'P3' },
+  critical: { color: 'bg-red-500/90 text-white dark:bg-red-500/80', label: '1' },
+  high: { color: 'bg-saramsa-brand text-white', label: '2' },
+  medium: { color: 'bg-muted text-foreground dark:bg-muted/80', label: '3' },
+  low: { color: 'bg-secondary text-muted-foreground', label: '4' },
 };
 
 const dismissReasons = [
@@ -47,10 +51,36 @@ export function ReviewQueueItem({
   onEdit,
   onDismiss,
   onSnooze,
+  onMerge,
 }: ReviewQueueItemProps) {
   const [showDismiss, setShowDismiss] = useState(false);
   const [showSnooze, setShowSnooze] = useState(false);
   const prio = priorityConfig[candidate.priority] || priorityConfig.low;
+  const actionsRef = useRef<HTMLDivElement>(null);
+
+  // Close the Dismiss/Snooze menus on outside click or Escape. Without this
+  // they stayed open indefinitely — and because each row owns its own state,
+  // opening a menu on one row left any already-open menu on another row open too.
+  const anyMenuOpen = showDismiss || showSnooze;
+  useEffect(() => {
+    if (!anyMenuOpen) return;
+    const closeAll = () => {
+      setShowDismiss(false);
+      setShowSnooze(false);
+    };
+    const onPointerDown = (e: MouseEvent) => {
+      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) closeAll();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeAll();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [anyMenuOpen]);
 
   return (
     <motion.div
@@ -68,7 +98,10 @@ export function ReviewQueueItem({
           className="mt-1 data-[state=checked]:bg-saramsa-brand data-[state=checked]:border-saramsa-brand"
         />
 
-        <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${prio.color} shrink-0`}>
+        <span
+          className={`px-2.5 py-1 rounded-lg text-xs font-semibold tabular-nums ${prio.color} shrink-0`}
+          title={`Priority ${prio.label} (${candidate.priority}) — 1 is most urgent`}
+        >
           {prio.label}
         </span>
 
@@ -100,7 +133,7 @@ export function ReviewQueueItem({
       </div>
 
       {/* Action buttons */}
-      <div className="flex items-center gap-2 mt-4 ml-10">
+      <div ref={actionsRef} className="flex items-center gap-2 mt-4 ml-10">
         <Button
           size="sm"
           onClick={() => onApprove(candidate.id)}
@@ -161,7 +194,7 @@ export function ReviewQueueItem({
                 <button
                   key={o.days}
                   onClick={() => { onSnooze(candidate.id, o.days); setShowSnooze(false); }}
-                  className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors"
+                  className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors cursor-pointer"
                 >
                   {o.label}
                 </button>
@@ -169,6 +202,21 @@ export function ReviewQueueItem({
             </div>
           )}
         </div>
+
+        {/* Merge — only rendered when the page supplies a handler. The backend
+            endpoint and service existed all along, but no UI ever called it. */}
+        {onMerge && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onMerge(candidate.id)}
+            className="border-border/70 hover:bg-accent/60"
+            title="Merge this item into another (its evidence moves to the target)"
+          >
+            <GitMerge className="w-3.5 h-3.5 mr-1.5" />
+            Merge
+          </Button>
+        )}
       </div>
     </motion.div>
   );
