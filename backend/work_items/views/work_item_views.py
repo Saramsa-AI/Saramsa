@@ -279,6 +279,9 @@ class WorkItemSubmissionView(APIView):
             )
             
             # Persist push status on each submitted work item, including partial successes.
+            # Any id that reaches the external tracker but fails to persist here is
+            # recorded so the response can report it rather than claiming success.
+            push_writeback_failures: list[str] = []
             if project_id:
                 now_iso = __import__('datetime').datetime.now(
                     __import__('datetime').timezone.utc
@@ -305,7 +308,13 @@ class WorkItemSubmissionView(APIView):
                             extra={"work_item_id": wi_id},
                         )
                         try:
-                            devops_service.work_item_repo.update_candidate_status(
+                            # post() is async — a bare ORM call here raises
+                            # SynchronousOnlyOperation, which the except below
+                            # swallowed, so the push status was never written.
+                            await sync_to_async(
+                                devops_service.work_item_repo.update_candidate_status,
+                                thread_sensitive=True,
+                            )(
                                 wi_id,
                                 project_id,
                                 {
@@ -341,21 +350,39 @@ class WorkItemSubmissionView(APIView):
                             "push_error": result_entry.get("error") or "Push failed",
                         }
                     try:
-                        devops_service.work_item_repo.update_candidate_status(
-                            wi_id, project_id, push_updates
-                        )
+                        # Must be sync_to_async: post() is async, and a bare ORM
+                        # call raised SynchronousOnlyOperation on every push.
+                        # The except below logged it and the endpoint still
+                        # returned 200, so Azure got the ticket but the row kept
+                        # push_status="not_pushed" — the item looked unpushed and
+                        # could be pushed again, creating duplicate tickets.
+                        await sync_to_async(
+                            devops_service.work_item_repo.update_candidate_status,
+                            thread_sensitive=True,
+                        )(wi_id, project_id, push_updates)
                     except Exception:
                         logger.exception("Failed to update push status", extra={"work_item_id": wi_id})
+                        # Surface the failure instead of reporting a clean push:
+                        # the caller must know the ticket exists but isn't tracked.
+                        push_writeback_failures.append(str(wi_id))
 
             if quality_report["items_with_issues"] > 0:
                 submission_result["quality_gate"] = quality_report
                 submission_result["quality_gate"]["allow_push_with_warnings"] = True
 
-            message = (
-                f"Work items submitted to {platform.title()} successfully"
-                if submission_result.get("failed_count", 0) == 0
-                else f"Work items submitted to {platform.title()} with partial failures"
-            )
+            if push_writeback_failures:
+                # The tickets exist externally but this app did not record them.
+                # Saying "success" here is what let the same item be pushed twice.
+                submission_result["push_writeback_failed"] = push_writeback_failures
+                message = (
+                    f"Work items were created in {platform.title()}, but "
+                    f"{len(push_writeback_failures)} could not be recorded locally. "
+                    "Do not push them again — check the tracker before retrying."
+                )
+            elif submission_result.get("failed_count", 0) == 0:
+                message = f"Work items submitted to {platform.title()} successfully"
+            else:
+                message = f"Work items submitted to {platform.title()} with partial failures"
             return StandardResponse.success(data=submission_result, message=message)
             
         except ValueError as e:
