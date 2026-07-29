@@ -8,10 +8,13 @@ import type { ActionItem } from "@/store/features/workItems/workItemsSlice";
 interface WorkItemReviewModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   items: ActionItem[];
   platformLabel: string;
   isSubmitting?: boolean;
+  /** Push failure text. Rendered in place so the modal can stay open on
+   *  failure instead of closing and losing the reason. */
+  errorMessage?: string | null;
 }
 
 export function WorkItemReviewModal({
@@ -21,6 +24,7 @@ export function WorkItemReviewModal({
   items,
   platformLabel,
   isSubmitting = false,
+  errorMessage = null,
 }: WorkItemReviewModalProps) {
   return (
     <BaseModal
@@ -82,16 +86,29 @@ export function WorkItemReviewModal({
           ))}
         </div>
 
+        {errorMessage && (
+          <div
+            role="alert"
+            className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          >
+            <span className="font-medium">Push failed.</span> {errorMessage}
+          </div>
+        )}
+
         <div className="flex items-center justify-end gap-3 pt-2">
           <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </Button>
           <Button
-            onClick={onConfirm}
+            onClick={() => { void onConfirm(); }}
             disabled={items.length === 0 || isSubmitting}
             className="bg-gradient-to-r from-saramsa-gradient-from to-saramsa-gradient-to text-white"
           >
-            {isSubmitting ? "Pushing..." : `Approve & Push`}
+            {isSubmitting
+              ? `Pushing to ${platformLabel}...`
+              : errorMessage
+              ? 'Retry push'
+              : 'Approve & Push'}
           </Button>
         </div>
       </div>

@@ -475,13 +475,22 @@ class DevOpsService:
         if acceptance:
             fields.append({"op": "add", "path": "/fields/Microsoft.VSTS.Common.AcceptanceCriteria", "value": acceptance})
 
+        # feature_area is a Saramsa taxonomy label ("Cleanliness", "staff_service"),
+        # NOT a node in the Azure project's area tree. Sending it as System.AreaPath
+        # made Azure reject every single work item with
+        #   TF401347: Invalid tree name given for work item -1, field 'System.AreaPath'
+        # which is why no push ever succeeded. Carry the feature area as a tag and
+        # let the item land in the project's default (root) area instead.
         tags = self._normalize_tags(work_item.get("tags"))
+        feature_area = str(work_item.get("feature_area") or work_item.get("featurearea") or "").strip()
+        # Compare loosely so "Taxonomy Coverage" doesn't sit next to the existing
+        # "taxonomy-coverage" tag on every pushed item.
+        def _slug(value: str) -> str:
+            return "".join(ch for ch in value.lower() if ch.isalnum())
+        if feature_area and _slug(feature_area) not in {_slug(t) for t in tags}:
+            tags.append(feature_area)
         if tags:
             fields.append({"op": "add", "path": "/fields/System.Tags", "value": "; ".join(tags)})
-
-        feature_area = work_item.get("feature_area") or work_item.get("featurearea") or ""
-        if feature_area:
-            fields.append({"op": "add", "path": "/fields/System.AreaPath", "value": feature_area})
 
         fields.append({
             "op": "add",
@@ -585,11 +594,16 @@ class DevOpsService:
                 )
                 if response.status_code in (200, 201):
                     payload = response.json()
+                    # Prefer the browser link. payload["url"] is the REST endpoint
+                    # (.../_apis/wit/workItems/27) and is always present, so the old
+                    # `url or html` order meant the stored external_url always opened
+                    # raw JSON instead of the work item page.
+                    html_href = payload.get("_links", {}).get("html", {}).get("href")
                     results.append({
                         "success": True,
                         "story_id": work_item.get("id"),
                         "work_item_id": payload.get("id"),
-                        "url": payload.get("url") or payload.get("_links", {}).get("html", {}).get("href"),
+                        "url": html_href or payload.get("url"),
                     })
                 else:
                     results.append({

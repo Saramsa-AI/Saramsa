@@ -11,6 +11,10 @@ import { useAuth } from "@/lib/useAuth";
 
 type TabKey = "general" | "workspace" | "billing" | "integrations" | "prompts";
 
+/** Master switch for the Prompts settings tab. Off while the raw prompt text
+ *  is considered internal. Nothing else needs changing to restore it. */
+const SHOW_PROMPT_SETTINGS = false;
+
 type TabDef = {
   key: TabKey;
   label: string;
@@ -28,6 +32,12 @@ export default function SettingsPage() {
   // appear on the SSR pass and disappear on the client — that swap was
   // triggering a hydration mismatch.
   const isSuperadmin = mounted && !!user?.is_staff;
+  // Temporarily hidden: this tab renders our raw system/technical prompts in
+  // the UI. The page component is deliberately left in place — flip this to
+  // `true` to bring the tab back (see settings/PromptSettingsPage.tsx).
+  // Hiding it here covers the tab strip, the ?tab=prompts deep link, and the
+  // rendered panel; the /work-items/prompts API is unaffected.
+  const canSeePrompts = SHOW_PROMPT_SETTINGS && isSuperadmin;
   const [activeTab, setActiveTab] = useState<TabKey>("general");
 
   useEffect(() => {
@@ -35,12 +45,12 @@ export default function SettingsPage() {
     const tab = new URLSearchParams(window.location.search).get("tab");
     if (tab === "workspace" || tab === "integrations" || tab === "billing" || tab === "general") {
       setActiveTab(tab);
-    } else if (tab === "prompts" && isSuperadmin) {
+    } else if (tab === "prompts" && canSeePrompts) {
       setActiveTab("prompts");
     } else if (tab === "profile") {
       setActiveTab("general");
     }
-  }, [isSuperadmin]);
+  }, [canSeePrompts]);
 
   const tabs = useMemo<TabDef[]>(
     () => {
@@ -50,12 +60,12 @@ export default function SettingsPage() {
         { key: "billing", label: "Billing", Icon: CreditCard, description: "Subscription" },
         { key: "integrations", label: "Integrations", Icon: PlugZap, description: "Connected apps" },
       ];
-      if (isSuperadmin) {
+      if (canSeePrompts) {
         list.push({ key: "prompts", label: "Prompts", Icon: Bot, description: "AI overrides" });
       }
       return list;
     },
-    [isSuperadmin],
+    [canSeePrompts],
   );
 
   const handleSelect = (key: TabKey) => {
@@ -120,7 +130,7 @@ export default function SettingsPage() {
             {activeTab === "workspace" && <WorkspacePage />}
             {activeTab === "billing" && <BillingPage />}
             {activeTab === "integrations" && <IntegrationsPage />}
-            {activeTab === "prompts" && isSuperadmin && <PromptSettingsPage />}
+            {activeTab === "prompts" && canSeePrompts && <PromptSettingsPage />}
           </main>
         </div>
       </div>
