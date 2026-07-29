@@ -23,6 +23,7 @@ from openai import BadRequestError
 
 from aiCore.services.openai_client import get_azure_client, get_azure_deployment_name
 from aiCore.services.circuit_breaker import azure_openai_breaker, CircuitOpenError
+from aiCore.services.usage_tracking import make_usage_accumulator as _make_usage_accumulator
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,16 @@ class LLMAspectService:
         company_name: Optional[str] = None,
         task: Optional[Any] = None,
         on_progress: Optional[Any] = None,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
+        analysis_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Classify each comment. The ``project_id``/``user_id``/
+        ``organization_id``/``analysis_id`` kwargs are attribution only — they
+        route this batch's token cost to the right workspace in the LLM usage
+        ledger and never affect classification.
+        """
         if not comments:
             return []
         if not aspects:
@@ -124,39 +134,63 @@ class LLMAspectService:
         if is_cancelled and is_cancelled():
             raise TaskCancelled("Cancelled before LLM aspect classification started")
 
+        # Token/cost ledger. One LLM call per comment would mean one DB row per
+        # comment, so accumulate across the fan-out and write ONE aggregated
+        # row (call_count=N) after the pool drains. Best-effort throughout:
+        # nothing here can fail the classification run.
+        usage_acc = _make_usage_accumulator(
+            model=self.deployment,
+            task_type="aspect_classification",
+            project_id=project_id,
+            user_id=user_id,
+            organization_id=organization_id,
+            analysis_id=analysis_id,
+            request_id=run_id,
+        )
+
         failures: List[Dict[str, Any]] = []
-        with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
-            future_to_idx = {
-                pool.submit(self._classify_one, client, i, comments[i], canonical, lookup): i
-                for i in range(len(comments))
-            }
-            for fut in as_completed(future_to_idx):
-                idx = future_to_idx[fut]
-                try:
-                    results[idx] = fut.result()
-                except CircuitOpenError as e:
-                    # Systemic outage (breaker open) -> fail loud, abort the whole run.
-                    pool.shutdown(wait=False, cancel_futures=True)
-                    raise RuntimeError(
-                        f"LLM aspect classification aborted — Azure OpenAI circuit open: {e}"
-                    ) from e
-                except TaskCancelled:
-                    pool.shutdown(wait=False, cancel_futures=True)
-                    raise
-                except Exception as e:
-                    # Isolated failure: mark this comment errored (NOT fake UNMAPPED)
-                    # and keep going so the successful comments aren't thrown away.
-                    failures.append({"index": idx, "error": str(e)[:500]})
-                    results[idx] = self._error_result(idx, comments[idx], canonical, e)
-                done += 1
-                if on_progress and done % 25 == 0:
+        try:
+            with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
+                future_to_idx = {
+                    pool.submit(self._classify_one, client, i, comments[i], canonical, lookup, usage_acc): i
+                    for i in range(len(comments))
+                }
+                for fut in as_completed(future_to_idx):
+                    idx = future_to_idx[fut]
                     try:
-                        on_progress(done, len(comments))
-                    except Exception:
-                        logger.debug("Progress callback failed", exc_info=True)
-                if is_cancelled and done % 10 == 0 and is_cancelled():
-                    pool.shutdown(wait=False, cancel_futures=True)
-                    raise TaskCancelled("Cancelled during LLM aspect classification")
+                        results[idx] = fut.result()
+                    except CircuitOpenError as e:
+                        # Systemic outage (breaker open) -> fail loud, abort the whole run.
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        raise RuntimeError(
+                            f"LLM aspect classification aborted — Azure OpenAI circuit open: {e}"
+                        ) from e
+                    except TaskCancelled:
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        raise
+                    except Exception as e:
+                        # Isolated failure: mark this comment errored (NOT fake UNMAPPED)
+                        # and keep going so the successful comments aren't thrown away.
+                        failures.append({"index": idx, "error": str(e)[:500]})
+                        results[idx] = self._error_result(idx, comments[idx], canonical, e)
+                    done += 1
+                    if on_progress and done % 25 == 0:
+                        try:
+                            on_progress(done, len(comments))
+                        except Exception:
+                            logger.debug("Progress callback failed", exc_info=True)
+                    if is_cancelled and done % 10 == 0 and is_cancelled():
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        raise TaskCancelled("Cancelled during LLM aspect classification")
+        finally:
+            # Tokens spent before an abort/cancel are still real money — flush
+            # in `finally` so they land in the ledger either way.
+            if usage_acc is not None:
+                usage_acc.flush(
+                    latency_ms=(time.time() - t0) * 1000,
+                    success=not failures,
+                    extra_metadata={"comment_count": len(comments), "aspect_count": len(canonical)},
+                )
 
         # Systemic-failure guard: if too much failed (without the breaker tripping),
         # treat it as an outage and fail loud rather than return a misleading result.
@@ -185,7 +219,8 @@ class LLMAspectService:
         return results  # type: ignore[return-value]
 
     def _classify_one(
-        self, client, idx: int, comment: str, canonical: List[str], lookup: Dict[str, str]
+        self, client, idx: int, comment: str, canonical: List[str], lookup: Dict[str, str],
+        usage_acc: Optional[Any] = None,
     ) -> Dict[str, Any]:
         text = (comment or "").strip()
         if not text:
@@ -213,6 +248,10 @@ class LLMAspectService:
                     kwargs["reasoning_effort"] = reasoning
                 resp = call.chat.completions.create(**kwargs)
                 azure_openai_breaker.record_success()
+                if usage_acc is not None:
+                    # Thread-safe, non-throwing; the aggregate row is written
+                    # once by the owning thread after the pool drains.
+                    usage_acc.add_completion(resp)
                 content = resp.choices[0].message.content or "{}"
                 return self._parse(content, idx, comment, canonical, lookup)
             except (TypeError, BadRequestError) as e:

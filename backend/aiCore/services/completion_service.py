@@ -2,6 +2,7 @@ from .openai_client import get_azure_client, get_azure_deployment_name
 from .utilities import fix_json_string, validate_json_structure
 from apis.infrastructure.usage_logging import log_token_usage
 from apis.core.error_handlers import handle_service_errors
+from billing.llm_usage import arecord_llm_usage
 import asyncio
 import os
 import time
@@ -192,32 +193,26 @@ async def generate_completions(
         # Log token usage if usage object available
         actual_usage = None
         try:
-            usage = getattr(completion, "usage", None)
-            if usage:
-                input_tokens = getattr(usage, "prompt_tokens", None) or getattr(usage, "input_tokens", None)
-                output_tokens = getattr(usage, "completion_tokens", None) or getattr(usage, "output_tokens", None)
-                total_tokens = getattr(usage, "total_tokens", None)
+            from billing.llm_usage import extract_usage
 
-                # Fallback: if total_tokens is missing but input/output are present, derive it
-                if total_tokens is None and (input_tokens is not None or output_tokens is not None):
-                    total_tokens = (input_tokens or 0) + (output_tokens or 0)
-
+            extracted = extract_usage(completion)
+            if extracted.get("input_tokens") is not None or extracted.get("output_tokens") is not None:
                 actual_usage = {
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "total_tokens": total_tokens,
+                    "input_tokens": extracted["input_tokens"],
+                    "output_tokens": extracted["output_tokens"],
+                    "total_tokens": extracted["total_tokens"],
                 }
-
-                # Log reasoning tokens if present (GPT-5-mini feature)
-                completion_details = getattr(usage, "completion_tokens_details", None)
-                if completion_details:
-                    reasoning_tokens = getattr(completion_details, "reasoning_tokens", 0)
-                    if reasoning_tokens > 0:
-                        logger.debug(
-                            "Model used reasoning tokens",
-                            extra={"reasoning_tokens": reasoning_tokens},
-                        )
-                        actual_usage["reasoning_tokens"] = reasoning_tokens
+                # Reasoning tokens (GPT-5 / o-series) are a SUBSET of
+                # completion_tokens, surfaced for visibility only — the cost
+                # module deliberately does not bill them a second time.
+                if extracted.get("reasoning_tokens"):
+                    logger.debug(
+                        "Model used reasoning tokens",
+                        extra={"reasoning_tokens": extracted["reasoning_tokens"]},
+                    )
+                    actual_usage["reasoning_tokens"] = extracted["reasoning_tokens"]
+                if extracted.get("cached_input_tokens"):
+                    actual_usage["cached_input_tokens"] = extracted["cached_input_tokens"]
 
                 log_token_usage(
                     user_id=user_id,
@@ -232,29 +227,50 @@ async def generate_completions(
                     metadata={"component": "completion_service.generate_completions"},
                 )
 
-                # Record tokens in billing quota system. Token charges should
-                # land on the project's owning workspace, not the user's
-                # active workspace. Caller can pass `organization_id=` to skip
-                # the project lookup; otherwise we look up + cache it.
+                # Resolve the workspace to attribute this call to. Token
+                # charges should land on the project's owning workspace, not
+                # the user's active workspace. Caller can pass
+                # `organization_id=` to skip the project lookup.
+                billing_org_id = organization_id
+                if not billing_org_id and project_id:
+                    try:
+                        from asgiref.sync import sync_to_async
+
+                        billing_org_id = await sync_to_async(
+                            _project_org_id_for_billing
+                        )(str(project_id))
+                    except Exception:
+                        logger.exception("Failed to resolve billing org for project")
+                    if not billing_org_id:
+                        # Project lookup couldn't produce an org (project
+                        # missing or its organization_id still NULL).
+                        # record_usage will fall back to the user's active
+                        # org. Log so audits can correlate.
+                        logger.info(
+                            "No org for project; charging user's active org instead",
+                            extra={"project_id": project_id},
+                        )
+
+                # Cost ledger: one row per LLM call with input/output priced
+                # separately. Independent of the quota counter below — this is
+                # the "what did it cost" record, that one is "may they run it".
+                await arecord_llm_usage(
+                    model=DEFAULT_MODEL,
+                    usage=extracted,
+                    task_type=task_type,
+                    organization_id=billing_org_id,
+                    project_id=project_id,
+                    user_id=user_id,
+                    latency_ms=latency_ms,
+                    success=True,
+                    metadata={"component": "completion_service.generate_completions"},
+                )
+
+                # Record tokens in the billing quota system (unchanged).
                 if user_id and actual_usage.get("total_tokens"):
                     try:
                         from billing.quota import record_usage
                         from asgiref.sync import sync_to_async
-
-                        billing_org_id = organization_id
-                        if not billing_org_id and project_id:
-                            billing_org_id = await sync_to_async(
-                                _project_org_id_for_billing
-                            )(str(project_id))
-                            if not billing_org_id:
-                                # Project lookup couldn't produce an org (project
-                                # missing or its organization_id still NULL).
-                                # record_usage will fall back to the user's
-                                # active org. Log so audits can correlate.
-                                logger.info(
-                                    "No org for project; charging user's active org instead",
-                                    extra={"project_id": project_id},
-                                )
 
                         # Use sync_to_async because record_usage touches the ORM
                         await sync_to_async(record_usage)(
@@ -275,6 +291,19 @@ async def generate_completions(
     except Exception as e:
         err_msg = str(e).strip()
         logger.exception("Azure OpenAI completion failed")
+        # Failed calls still consume prompt tokens on the vendor side often
+        # enough to matter, and a zero-token failure row keeps the ledger a
+        # complete audit trail of attempted spend. Best-effort, never raises.
+        await arecord_llm_usage(
+            model=DEFAULT_MODEL,
+            task_type=task_type,
+            organization_id=organization_id,
+            project_id=project_id,
+            user_id=user_id,
+            success=False,
+            error=err_msg[:2000],
+            metadata={"component": "completion_service.generate_completions"},
+        )
         if "rate limit" in err_msg.lower() or "429" in err_msg:
             raise ConnectionError("Azure OpenAI rate limit exceeded. Please try again later.")
         if "timeout" in err_msg.lower() or "timed out" in err_msg.lower():

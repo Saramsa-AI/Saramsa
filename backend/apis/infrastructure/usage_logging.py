@@ -21,35 +21,31 @@ from ..core.request_context import token_usage_var
 
 logger = logging.getLogger("apis.app")
 
-# ── Model pricing (USD per 1 000 tokens) ──
-# Updated for Azure OpenAI pricing as of 2025-Q2.
-# Keys are normalised lower-case deployment / model names.
-_MODEL_PRICING: Dict[str, Dict[str, float]] = {
-    # GPT-4.1 family
-    "gpt-4.1":          {"input": 0.002,  "output": 0.008},
-    "gpt-4.1-mini":     {"input": 0.0004, "output": 0.0016},
-    "gpt-4.1-nano":     {"input": 0.0001, "output": 0.0004},
-    # GPT-4o family
-    "gpt-4o":           {"input": 0.0025, "output": 0.01},
-    "gpt-4o-mini":      {"input": 0.00015,"output": 0.0006},
-    # GPT-5 family (preview)
-    "gpt-5-mini":       {"input": 0.0004, "output": 0.0016},
-    # o-series reasoning
-    "o3":               {"input": 0.002,  "output": 0.008},
-    "o3-mini":          {"input": 0.00044,"output": 0.00176},
-    "o4-mini":          {"input": 0.00044,"output": 0.00176},
-}
+# ── Model pricing ──
+# The price table lives in ``billing.pricing`` (Decimal, env-overridable) so
+# telemetry and the billing ledger can never disagree about what a call cost.
+# This module only needs a float for OTel metric emission, so the Decimal is
+# converted at the very last step.
 
 
 def _estimate_cost(model: Optional[str], input_tokens: int, output_tokens: int) -> Optional[float]:
-    """Return estimated cost in USD, or None if model is unknown."""
+    """Return estimated cost in USD, or None if model is unknown.
+
+    Telemetry-only float. Anything that has to be *correct* for money reads
+    ``LLMUsageRecord.total_cost`` (Decimal) instead.
+    """
     if not model:
         return None
-    pricing = _MODEL_PRICING.get(model.lower())
-    if not pricing:
+    try:
+        from billing.pricing import compute_cost
+
+        breakdown = compute_cost(model, input_tokens=input_tokens, output_tokens=output_tokens)
+        if not breakdown.priced or breakdown.total_cost is None:
+            return None
+        return float(breakdown.total_cost)
+    except Exception:
+        logger.debug("Cost estimation unavailable", exc_info=True)
         return None
-    cost = (input_tokens / 1_000) * pricing["input"] + (output_tokens / 1_000) * pricing["output"]
-    return round(cost, 6)
 
 
 def log_token_usage(
