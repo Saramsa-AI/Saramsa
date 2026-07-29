@@ -461,6 +461,12 @@ class WorkItemRepository:
             "type": "type",
             "priority": "priority",
             "feature_area": "feature_area",
+            # Alias: the edit drawer's ActionItem calls this field `acceptance`.
+            # Accepting both means a client using the short key silently losing
+            # the edit (200 OK, nothing written) can't happen again. Listed
+            # BEFORE the canonical key so that, if a payload carries both, the
+            # canonical one is applied last and wins.
+            "acceptance": "acceptance_criteria",
             "acceptance_criteria": "acceptance_criteria",
             "business_value": "business_value",
             "effort_estimate": "effort_estimate",

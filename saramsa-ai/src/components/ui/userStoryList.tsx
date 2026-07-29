@@ -128,6 +128,12 @@ export const UserStoryList = ({
   const [qualityLoading, setQualityLoading] = useState(false);
   /** Items staged for the review/push flow (header multi-select or per-row push). */
   const [pushQueueItems, setPushQueueItems] = useState<ActionItem[]>([]);
+  /** Push failure text shown inside the review modal. The modal used to close
+   *  the instant Approve & Push was clicked, so a failure surfaced as a bare
+   *  alert with the modal already gone — and a success looked identical to a
+   *  silent no-op. Now the modal stays up until the call resolves. */
+  const [pushError, setPushError] = useState<string | null>(null);
+  const [pushInFlight, setPushInFlight] = useState(false);
 
   const platformLabel = useMemo(() => getProviderLabel(platform), [platform]);
 
@@ -273,17 +279,29 @@ export const UserStoryList = ({
 
 
   // Set user stories or deep analysis data when component mounts or data changes
+  // Use userStories work items (prioritize prop over Redux state).
+  // Flatten across ALL story records and de-dupe by id — reading only record
+  // [0] silently dropped items when the persisted set was split across
+  // multiple UserStory records (e.g. 22 generated -> 13 shown).
+  const sourceStories = (userStories && userStories.length > 0)
+    ? userStories
+    : (currentProjectUserStories && currentProjectUserStories.length > 0)
+    ? currentProjectUserStories
+    : [];
+
+  // WorkItemsPanel rebuilds the `userStories` prop as a fresh array literal on
+  // every render, so keying the effect below on its *identity* re-ran it on
+  // every render. Each run dispatches clearSelectedActions(), which silently
+  // wiped the checkbox selection between opening the delete modal and
+  // confirming it — the confirm then sent an empty id list and the API
+  // answered 400 "IDs are required for removal." Key on the item-set contents
+  // instead, so the effect only re-runs when the items actually change.
+  const workItemsSignature = sourceStories
+    .flatMap((s: any) => s?.work_items ?? [])
+    .map((w: any) => w?.id ?? w?.candidate_id)
+    .join(',');
+
   useEffect(() => {
-    
-    // Use userStories work items (prioritize prop over Redux state).
-    // Flatten across ALL story records and de-dupe by id — reading only record
-    // [0] silently dropped items when the persisted set was split across
-    // multiple UserStory records (e.g. 22 generated -> 13 shown).
-    const sourceStories = (userStories && userStories.length > 0)
-      ? userStories
-      : (currentProjectUserStories && currentProjectUserStories.length > 0)
-      ? currentProjectUserStories
-      : [];
     const seenWorkItemIds = new Set<string>();
     const workItemsToProcess = sourceStories
       .flatMap((s: any) => s?.work_items ?? [])
@@ -336,7 +354,10 @@ export const UserStoryList = ({
       
     } else {
     }
-  }, [userStories, currentProjectUserStories, dispatch, platform]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the item
+    // set's contents, not the recreated-every-render array identity. See the
+    // workItemsSignature comment above.
+  }, [workItemsSignature, dispatch, platform]);
 
   // Shared with the checkbox's disabled/greyed rendering below, so "looks
   // selectable" and "is selectable" never disagree (previously the checkbox
@@ -375,11 +396,17 @@ export const UserStoryList = ({
         {
           title: updatedAction.title,
           description: updatedAction.description,
-          acceptance: updatedAction.acceptance,
+          // The backend field_map accepts `acceptance_criteria`, not
+          // `acceptance`. Sending the UI's key meant edits to the acceptance
+          // criteria were dropped server-side while the request still returned
+          // 200 — the optimistic local update made it look saved until refresh.
+          acceptance_criteria: updatedAction.acceptance,
           priority: updatedAction.priority,
           type: updatedAction.type,
           tags: updatedAction.tags,
-          status: updatedAction.status,
+          // `status` is deliberately NOT sent: ActionItem.status is the UI-only
+          // todo/in_progress/done vocabulary, never a review-lifecycle value, so
+          // the backend rejects it and logs a warning on every single edit.
           project_id: projectId,
         },
         true
@@ -609,11 +636,13 @@ export const UserStoryList = ({
           ? errorMessages[0] 
           : 'Unknown error occurred';
         
-        alert(`Failed to submit user stories: ${errorMessage}`);
+        // Throw so the caller (the review modal) can stay open and show this
+        // inline, instead of closing on an alert that hides what happened.
+        throw new Error(errorMessage);
       }
     } catch (error) {
       console.error('Failed to submit user stories:', error);
-      alert(`Failed to submit user stories: ${error}`);
+      throw error instanceof Error ? error : new Error(String(error));
     }
   };
 
@@ -720,6 +749,17 @@ export const UserStoryList = ({
 
   const handleConfirmDelete = async () => {
     const toDelete = rowDeleteId ? [rowDeleteId] : [...selectedActions];
+
+    // handleDeleteSelected guards the entry point, but the selection can still
+    // be empty by the time the user confirms. Sending an empty list produced a
+    // bare 400 ("IDs are required for removal.") that surfaced as a failed
+    // delete with no explanation — fail here instead, with a reason.
+    if (toDelete.length === 0) {
+      setShowDeleteModal(false);
+      setRowDeleteId(null);
+      alert('Nothing to delete — the selection was empty. Please select at least one user story and try again.');
+      return;
+    }
 
     try {
       setDeleteLoading(true);
@@ -1250,16 +1290,29 @@ export const UserStoryList = ({
       <WorkItemReviewModal
         isOpen={showReviewModal}
         onClose={() => {
+          if (pushInFlight) return; // don't let the user walk away mid-push
           setShowReviewModal(false);
           setPushQueueItems([]);
+          setPushError(null);
         }}
-        onConfirm={() => {
-          setShowReviewModal(false);
-          handlePushActionItems();
+        onConfirm={async () => {
+          setPushError(null);
+          setPushInFlight(true);
+          try {
+            await handlePushActionItems();
+            // Only dismiss once the push has actually come back clean.
+            setShowReviewModal(false);
+            setPushQueueItems([]);
+          } catch (err) {
+            setPushError(err instanceof Error ? err.message : String(err));
+          } finally {
+            setPushInFlight(false);
+          }
         }}
         items={pushQueueItems}
         platformLabel={getPlatformDisplayName()}
-        isSubmitting={isPushing}
+        isSubmitting={isPushing || pushInFlight}
+        errorMessage={pushError}
       />
 
       <WorkItemQualityGateModal
